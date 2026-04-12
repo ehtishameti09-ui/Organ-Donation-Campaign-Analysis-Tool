@@ -86,7 +86,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     setTimeout(() => {
       try {
         submitAppeal(bannedUserInfo.id, appealExplanation);
-        toast('✅ Appeal submitted successfully! An admin will review your appeal within 7 days.', 'success');
+        toast('Appeal submitted successfully! An admin will review your appeal within 7 days.', 'success');
         setShowAppealModal(false);
         setAppealExplanation('');
         setShowBannedModal(false);
@@ -132,7 +132,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
         validateResetToken(forgotEmail, resetTokenInput);
         setResetToken(resetTokenInput);
         setForgotStep('reset');
-        toast('✅ Reset code verified! You can now set a new password.', 'success');
+        toast('Reset code verified! You can now set a new password.', 'success');
       } catch (err) {
         toast(err.message, 'error');
       } finally {
@@ -161,7 +161,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     setTimeout(() => {
       try {
         resetPassword(forgotEmail, resetToken, newPassword);
-        toast('✅ Password reset successfully! You can now log in with your new password.', 'success');
+        toast('Password reset successfully! You can now log in with your new password.', 'success');
         // Reset forgot password modal
         setShowForgotPassword(false);
         setForgotEmail('');
@@ -182,7 +182,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     try {
       const recovered = restoreDeletedAccount(deletedUserInfo.id);
       if (recovered) {
-        toast('✅ Account restored successfully!', 'success');
+        toast('Account restored successfully!', 'success');
         setShowDeletedRecoveryModal(false);
         setDeletedUserInfo(null);
         // Retry login
@@ -224,7 +224,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
           return;
         } else {
           // Recovery period expired
-          toast('❌ Your account has been permanently deleted. Recovery period has expired.', 'error');
+          toast('Your account has been permanently deleted. Recovery period has expired.', 'error');
           setLoading(false);
           return;
         }

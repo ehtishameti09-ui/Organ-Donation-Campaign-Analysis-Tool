@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { getAllUsers, saveUsers, getCreds, saveCreds, updateUserStatus, deleteUserById, getPendingRegistrations, approveRegistration, rejectRegistration, requestAdditionalInfo, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications } from '../utils/auth';
+import { useState, useEffect, useMemo } from 'react';
+import { getAllUsers, saveUsers, getCreds, saveCreds, updateUserStatus, deleteUserById, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, approveRegistration, rejectRegistration, requestAdditionalInfo, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
@@ -10,7 +10,10 @@ const UserManagement = ({ currentUser }) => {
   const [selectedRegistration, setSelectedRegistration] = useState(null);
   const [modalAction, setModalAction] = useState(''); // 'approve', 'reject', 'info'
   const [modalMessage, setModalMessage] = useState('');
-  const [newAdmin, setNewAdmin] = useState({ name: '', email: '', password: '' });
+  const [newAdmin, setNewAdmin] = useState({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
+  const [hospitalTab, setHospitalTab] = useState('pending'); // 'pending' | 'approved' | 'rejected'
+  const [approvedHospitals, setApprovedHospitals] = useState([]);
+  const [rejectedHospitals, setRejectedHospitals] = useState([]);
   const [showDocumentPreview, setShowDocumentPreview] = useState(false);
   const [previewDocument, setPreviewDocument] = useState(null);
   const [showBanModal, setShowBanModal] = useState(false);
@@ -70,10 +73,21 @@ const UserManagement = ({ currentUser }) => {
 
   const loadUsers = () => {
     setUsers(getAllUsers());
+    setApprovedHospitals(getApprovedHospitals());
+    setRejectedHospitals(getRejectedHospitals());
   };
 
   const loadAppeals = () => {
-    setAppeals(getPendingAppeals());
+    let allAppeals = getPendingAppeals();
+    if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
+      const hospitalUserIds = new Set(
+        getAllUsers()
+          .filter(u => u.preferredHospitalId === currentUser.linkedHospitalId || u.hospitalId === currentUser.linkedHospitalId)
+          .map(u => u.id)
+      );
+      allAppeals = allAppeals.filter(a => hospitalUserIds.has(a.userId));
+    }
+    setAppeals(allAppeals);
   };
 
   const handleApproveUser = (id) => {
@@ -89,6 +103,17 @@ const UserManagement = ({ currentUser }) => {
 
   const handleBanUser = () => {
     const { userId, userName, category, detailedReason, banType, banDuration } = banModalData;
+
+    // Fraud prevention: linked admin can only ban users from their hospital
+    if (currentUser.linkedHospitalId) {
+      const target = getAllUsers().find(u => u.id === userId);
+      const belongsToHospital = target?.preferredHospitalId === currentUser.linkedHospitalId ||
+        target?.hospitalId === currentUser.linkedHospitalId;
+      if (!belongsToHospital) {
+        toast('Access denied. You can only manage users from your assigned hospital.', 'error');
+        return;
+      }
+    }
 
     if (!category) {
       toast('Please select a violation category.', 'error');
@@ -127,6 +152,18 @@ const UserManagement = ({ currentUser }) => {
     if (!categoryModalData.reason.trim()) {
       toast('Please enter a detailed reason.', 'error');
       return;
+    }
+
+    // Fraud prevention: linked admin can only delete users from their hospital
+    if (currentUser.linkedHospitalId) {
+      const target = getAllUsers().find(u => u.id === categoryModalData.userId);
+      const belongsToHospital = target?.preferredHospitalId === currentUser.linkedHospitalId ||
+        target?.hospitalId === currentUser.linkedHospitalId;
+      if (!belongsToHospital) {
+        toast('Access denied. You can only manage users from your assigned hospital.', 'error');
+        setShowCategoryModal(false);
+        return;
+      }
     }
 
     try {
@@ -179,8 +216,8 @@ const UserManagement = ({ currentUser }) => {
   };
 
   const handleAddAdmin = () => {
-    const { name, email, password } = newAdmin;
-    
+    const { name, email, password, linkedHospitalId, linkedHospitalName } = newAdmin;
+
     if (!name || !email || password.length < 8) {
       toast('Please fill all fields correctly. Password must be at least 8 characters.', 'error');
       return;
@@ -198,9 +235,11 @@ const UserManagement = ({ currentUser }) => {
       name,
       role: 'admin',
       status: 'approved',
+      linkedHospitalId: linkedHospitalId || null,
+      linkedHospitalName: linkedHospitalName || null,
       registrationDate: new Date().toISOString()
     });
-    
+
     saveUsers(allUsers);
 
     const creds = getCreds();
@@ -209,7 +248,7 @@ const UserManagement = ({ currentUser }) => {
 
     toast('Administrator added successfully.', 'success');
     setShowAddModal(false);
-    setNewAdmin({ name: '', email: '', password: '' });
+    setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
     loadUsers();
   };
 
@@ -224,21 +263,21 @@ const UserManagement = ({ currentUser }) => {
     if (!selectedRegistration) return;
 
     if (modalAction === 'approve') {
-      approveRegistration(selectedRegistration.id, modalMessage);
+      approveRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
       toast('Hospital registration approved!', 'success');
     } else if (modalAction === 'reject') {
       if (!modalMessage) {
         toast('Please provide a reason for rejection.', 'error');
         return;
       }
-      rejectRegistration(selectedRegistration.id, modalMessage);
+      rejectRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
       toast('Hospital registration rejected.', 'info');
     } else if (modalAction === 'info') {
       if (!modalMessage) {
         toast('Please provide the information request.', 'error');
         return;
       }
-      requestAdditionalInfo(selectedRegistration.id, modalMessage);
+      requestAdditionalInfoWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
       toast('Additional information requested from hospital.', 'info');
     }
 
@@ -248,77 +287,225 @@ const UserManagement = ({ currentUser }) => {
   };
 
   const filteredUsers = users.filter(user => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return true;
     return (
-      user.name.toLowerCase().includes(query) ||
-      user.email.toLowerCase().includes(query) ||
-      user.role.toLowerCase().includes(query)
+      user.name?.toLowerCase().includes(query) ||
+      user.email?.toLowerCase().includes(query) ||
+      user.role?.toLowerCase().includes(query) ||
+      user.hospitalName?.toLowerCase().includes(query) ||
+      user.status?.toLowerCase().includes(query) ||
+      user.bloodType?.toLowerCase().includes(query) ||
+      user.organNeeded?.toLowerCase().includes(query) ||
+      user.registrationNumber?.toLowerCase().includes(query) ||
+      user.phone?.toLowerCase().includes(query)
     );
   });
 
+  // Hospital-scoped users for linked admins
+  const scopedUsers = useMemo(() => {
+    if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
+      return filteredUsers.filter(u =>
+        u.preferredHospitalId === currentUser.linkedHospitalId ||
+        u.hospitalId === currentUser.linkedHospitalId ||
+        (u.role === 'admin' && u.linkedHospitalId === currentUser.linkedHospitalId)
+      );
+    }
+    return filteredUsers;
+  }, [filteredUsers, currentUser]);
+
   const pendingRegistrations = getPendingRegistrations();
-  const approvedUsers = filteredUsers.filter(u => u.status === 'approved');
-  const rejectedUsers = filteredUsers.filter(u => u.status === 'rejected');
-  const bannedUsers = filteredUsers.filter(u => u.banned === true);
-  const deletedUsers = filteredUsers.filter(u => u.deleted === true);
+  const approvedUsers = scopedUsers.filter(u => u.status === 'approved');
+  const rejectedUsers = scopedUsers.filter(u => u.status === 'rejected');
+  const bannedUsers = scopedUsers.filter(u => u.banned === true);
+  const deletedUsers = scopedUsers.filter(u => u.deleted === true);
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <div className="search-bar" style={{ width: '280px' }}>
+      {currentUser.role === 'admin' && currentUser.linkedHospitalId && (
+        <div style={{ background: 'var(--primary-light)', border: '1px solid rgba(26,92,158,.2)', borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '20px' }}>🏥</span>
+          <div>
+            <div style={{ fontWeight: '600', fontSize: '14px' }}>Managing: {currentUser.linkedHospitalName}</div>
+            <div style={{ fontSize: '12px', color: 'var(--text2)' }}>You can only view and manage users associated with your hospital.</div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex justify-between items-center mb-4" style={{ gap: '12px' }}>
+        <div className="search-bar" style={{ flex: 1, maxWidth: '480px' }}>
           <svg viewBox="0 0 24 24" strokeWidth="2">
             <circle cx="11" cy="11" r="8"/>
             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input
             type="text"
-            placeholder="Search users..."
+            placeholder="Search by name, email, role, hospital, blood type, organ, status..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-        {currentUser.role === 'super_admin' && (
-          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-            + Add Admin
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {searchQuery && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setSearchQuery('')}>
+              Clear
+            </button>
+          )}
+          {currentUser.role === 'super_admin' && (
+            <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+              + Add Admin
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Pending Hospital Registrations */}
-      {pendingRegistrations.length > 0 && (
-        <div className="card" style={{ marginBottom: '20px', borderColor: '#fff3cd', background: '#fffbf0' }}>
+      {/* Hospital Management — Super Admin Only */}
+      {currentUser.role === 'super_admin' && (
+        <div className="card" style={{ marginBottom: '20px' }}>
           <div className="card-header">
-            <div className="card-title">🏥 Pending Hospital Registrations ({pendingRegistrations.length})</div>
-            <div className="card-sub">New hospitals awaiting verification</div>
+            <div className="card-title">🏥 Hospital Management</div>
+            <div className="card-sub">Review and manage hospital registrations</div>
           </div>
+
+          {/* Hospital Tabs */}
+          <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border)', padding: '0 16px', marginTop: '12px' }}>
+            {['pending', 'approved', 'rejected'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => setHospitalTab(tab)}
+                style={{
+                  padding: '10px 16px',
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: hospitalTab === tab ? '600' : '400',
+                  color: hospitalTab === tab ? 'var(--primary)' : 'var(--text2)',
+                  borderBottom: hospitalTab === tab ? '2px solid var(--primary)' : 'none',
+                  marginBottom: '-1px'
+                }}
+              >
+                {tab === 'pending' && `Pending & Action Required (${pendingRegistrations.length})`}
+                {tab === 'approved' && `Approved (${approvedHospitals.length})`}
+                {tab === 'rejected' && `Rejected (${rejectedHospitals.length})`}
+              </button>
+            ))}
+          </div>
+
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Hospital</th>
-                  <th>Registration #</th>
-                  <th>Contact Person</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingRegistrations.map(reg => (
-                  <RegistrationRow
-                    key={reg.id}
-                    registration={reg}
-                    onApprove={() => handleRegistrationAction(reg, 'approve')}
-                    onReject={() => handleRegistrationAction(reg, 'reject')}
-                    onRequestInfo={() => handleRegistrationAction(reg, 'info')}
-                  />
-                ))}
-              </tbody>
-            </table>
+            {/* Pending & Action Required Tab */}
+            {hospitalTab === 'pending' && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Hospital</th>
+                    <th>Registration #</th>
+                    <th>Contact Person</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingRegistrations.length > 0 ? (
+                    pendingRegistrations.map(reg => (
+                      <RegistrationRow
+                        key={reg.id}
+                        registration={reg}
+                        onApprove={() => handleRegistrationAction(reg, 'approve')}
+                        onReject={() => handleRegistrationAction(reg, 'reject')}
+                        onRequestInfo={() => handleRegistrationAction(reg, 'info')}
+                      />
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No pending registrations
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+
+            {/* Approved Hospitals Tab */}
+            {hospitalTab === 'approved' && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Hospital</th>
+                    <th>Registration #</th>
+                    <th>Approved</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {approvedHospitals.length > 0 ? (
+                    approvedHospitals.map(hospital => (
+                      <tr key={hospital.id}>
+                        <td>{hospital.hospitalName}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.registrationNumber}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--accent)' }}>✓ Approved</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            className="btn btn-sm btn-outline"
+                            onClick={() => {
+                              setNewAdmin(prev => ({ ...prev, linkedHospitalId: hospital.id, linkedHospitalName: hospital.hospitalName }));
+                              setShowAddModal(true);
+                            }}
+                          >
+                            Assign Admin
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="4" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No approved hospitals
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+
+            {/* Rejected Hospitals Tab */}
+            {hospitalTab === 'rejected' && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>Hospital</th>
+                    <th>Registration #</th>
+                    <th>Rejection Reason</th>
+                    <th>Rejected</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rejectedHospitals.length > 0 ? (
+                    rejectedHospitals.map(hospital => (
+                      <tr key={hospital.id}>
+                        <td>{hospital.hospitalName}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.registrationNumber}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.rejectionReason || 'No reason provided'}</td>
+                        <td style={{ fontSize: '12px', color: 'var(--danger)' }}>✗ Rejected</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="4" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No rejected hospitals
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
 
-      {/* Approved Users */}
+      {/* Approved Users — Admin Only */}
+      {currentUser.role === 'admin' && (
       <div className="card">
         <div className="card-header">
           <div className="card-title">✓ Approved Users</div>
@@ -356,9 +543,10 @@ const UserManagement = ({ currentUser }) => {
           </table>
         </div>
       </div>
+      )}
 
-      {/* Rejected Users */}
-      {rejectedUsers.length > 0 && (
+      {/* Rejected Users — Admin Only */}
+      {currentUser.role === 'admin' && rejectedUsers.length > 0 && (
         <div className="card" style={{ marginTop: '20px' }}>
           <div className="card-header">
             <div className="card-title">✗ Rejected Registrations</div>
@@ -393,8 +581,8 @@ const UserManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Banned Users */}
-      {bannedUsers.length > 0 && (
+      {/* Banned Users — Admin Only */}
+      {currentUser.role === 'admin' && bannedUsers.length > 0 && (
         <div className="card" style={{ marginTop: '20px', borderColor: '#dc2626', background: '#fee2e2' }}>
           <div className="card-header">
             <div className="card-title">🚫 Banned Users ({bannedUsers.length})</div>
@@ -447,8 +635,8 @@ const UserManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Deleted Users */}
-      {deletedUsers.length > 0 && (
+      {/* Deleted Users — Admin Only */}
+      {currentUser.role === 'admin' && deletedUsers.length > 0 && (
         <div className="card" style={{ marginTop: '20px', borderColor: '#9333ea', background: '#f3e8ff' }}>
           <div className="card-header">
             <div className="card-title">🗑️ Deleted Users ({deletedUsers.length})</div>
@@ -490,8 +678,8 @@ const UserManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Pending Appeals */}
-      {appeals.length > 0 && (
+      {/* Pending Appeals — Admin Only */}
+      {currentUser.role === 'admin' && appeals.length > 0 && (
         <div className="card" style={{ marginTop: '20px', borderColor: '#0891b2', background: '#ecf0f1' }}>
           <div className="card-header">
             <div className="card-title">⚖️ Pending Appeals ({appeals.length})</div>
@@ -584,6 +772,27 @@ const UserManagement = ({ currentUser }) => {
                   onChange={(e) => setNewAdmin({ ...newAdmin, password: e.target.value })}
                   placeholder="Min. 8 characters"
                 />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Assign to Hospital (optional)</label>
+                <select
+                  className="form-input"
+                  value={newAdmin.linkedHospitalId}
+                  onChange={(e) => {
+                    const h = approvedHospitals.find(h => h.id === e.target.value);
+                    setNewAdmin({ ...newAdmin, linkedHospitalId: e.target.value, linkedHospitalName: h ? (h.hospitalName || h.name) : '' });
+                  }}
+                >
+                  <option value="">— None (General Admin) —</option>
+                  {approvedHospitals.map(h => (
+                    <option key={h.id} value={h.id}>{h.hospitalName || h.name}</option>
+                  ))}
+                </select>
+                {newAdmin.linkedHospitalId && (
+                  <div style={{ fontSize: '11px', color: 'var(--primary)', marginTop: '6px' }}>
+                    🏥 This admin will only see data for {newAdmin.linkedHospitalName}
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -1353,7 +1562,10 @@ const RegistrationRow = ({ registration, onApprove, onReject, onRequestInfo }) =
         {registration.phone && <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{registration.phone}</div>}
       </td>
       <td>
-        <span className="badge badge-amber">pending</span>
+        {registration.status === 'info_requested'
+          ? <span className="badge badge-amber">⚠ Info Requested</span>
+          : <span className="badge badge-amber">Pending</span>
+        }
       </td>
       <td style={{ textAlign: 'right' }}>
         <button

@@ -965,3 +965,362 @@ code {
 .registration-card:hover .registration-card-content h3 {
   color: var(--primary);
 }
+
+/* ========== IMPROVED BUTTON STYLES ========== */
+.btn {
+  position: relative;
+  overflow: hidden;
+  letter-spacing: .01em;
+}
+.btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0);
+  transition: background .15s;
+}
+.btn:hover::after { background: rgba(255,255,255,.06); }
+.btn:active::after { background: rgba(0,0,0,.06); }
+.btn-primary { box-shadow: 0 1px 3px rgba(26,92,158,.25); }
+.btn-primary:hover { box-shadow: 0 3px 8px rgba(26,92,158,.35); transform: translateY(-1px); }
+.btn-primary:active { transform: none; box-shadow: none; }
+
+/* ========== IMPROVED CARDS ========== */
+.card { box-shadow: var(--shadow-sm); transition: box-shadow .2s; }
+.stat-card { box-shadow: var(--shadow-sm); transition: box-shadow .2s; }
+.stat-card:hover { box-shadow: var(--shadow-md); }
+
+/* ========== PROGRESS TRACKER ========== */
+.progress-step {
+  display: flex;
+  align-items: flex-start;
+}
+.progress-step-circle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+  transition: all .3s;
+}
+.progress-step-line {
+  flex: 1;
+  height: 3px;
+  margin-top: 16px;
+  border-radius: 2px;
+  transition: background .3s;
+}
+
+/* ========== DOCUMENT UPLOAD CARD ========== */
+.doc-upload-card {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  transition: all .2s;
+}
+.doc-upload-card:hover { border-color: var(--primary); background: var(--primary-light); }
+.doc-upload-card.uploaded { border-color: var(--accent); background: var(--accent-light); }
+.doc-upload-card.drag-over { border-color: var(--primary); background: var(--primary-light); }
+
+/* ========== NOTIFICATION BELL ========== */
+.topbar-badge-btn svg { transition: transform .2s; }
+.topbar-badge-btn:hover svg { transform: rotate(-15deg); }
+
+/* ========== RANGE INPUTS ========== */
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(26,92,158,.4);
+}
+
+/* ========== CONSENT FORM ========== */
+.consent-scroll-body {
+  scrollbar-width: thin;
+}
+
+/* ========== NAV ITEM DISABLED ========== */
+.nav-item-disabled {
+  opacity: .4 !important;
+  cursor: not-allowed !important;
+}
+.nav-item-disabled:hover {
+  background: transparent !important;
+}
+
+/* ========== HOSPITAL STATUS BADGE IN SIDEBAR ========== */
+.hospital-status-badge {
+  margin: 0 12px 8px;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ========== IMPROVED TOPBAR ========== */
+#topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0,0,0,.04);
+}
+.topbar-breadcrumb h2 {
+  background: linear-gradient(135deg, var(--text1), var(--primary-dark));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ========== TABLE IMPROVEMENTS ========== */
+thead th { letter-spacing: .4px; font-size: 11px; }
+tbody tr { transition: background .1s; }
+
+/* ========== IMPROVED AUTH PAGES ========== */
+.auth-left {
+  background: linear-gradient(145deg, #0a2d4d 0%, #1a5c9e 55%, #2283c5 100%);
+}
+.auth-headline { font-size: 34px; }
+
+/* ========== IMPROVED MODAL ========== */
+.modal {
+  animation: modalIn .2s ease;
+}
+@keyframes modalIn {
+  from { transform: translateY(-12px) scale(.97); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+/* ========== DONOR/RECIPIENT MANAGEMENT ========== */
+.pipeline-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.pipeline-segment {
+  flex: 1;
+  padding: 14px 16px;
+  background: var(--surface2);
+  border-radius: var(--radius);
+}
+
+/* ========== IMPROVED SCROLLBAR ========== */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+/* ========== TOGGLE SWITCH ========== */
+.toggle-switch {
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  position: relative;
+  cursor: pointer;
+  transition: background .2s;
+}
+.toggle-knob {
+  position: absolute;
+  top: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+
+/* ========== IMPROVED TABS ========== */
+.tab-bar {
+  display: flex;
+  gap: 2px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 6px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+.tab-btn {
+  padding: 8px 16px;
+  border-radius: var(--radius);
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.tab-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+.tab-btn:not(.active) {
+  background: transparent;
+  color: var(--text2);
+}
+.tab-btn:not(.active):hover {
+  background: var(--surface2);
+}
+
+/* ========== IMPROVED FORM INPUTS ========== */
+.form-input:focus, .form-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(26,92,158,.1);
+  outline: none;
+}
+textarea.form-input {
+  height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  line-height: 1.6;
+}
+
+/* ========== SEARCH BAR IMPROVED ========== */
+.search-bar input {
+  transition: border-color .15s, box-shadow .15s;
+}
+.search-bar input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(26,92,158,.1);
+}
+
+/* ========== STATUS COLORS FOR USER CHIPS ========== */
+.user-chip-avatar.super-admin { background: var(--danger); }
+.user-chip-avatar.admin { background: var(--warning); }
+.user-chip-avatar.hospital { background: #7c5cbf; }
+.user-chip-avatar.donor { background: var(--primary); }
+.user-chip-avatar.recipient { background: var(--accent); }
+
+/* ========== RESPONSIVE IMPROVEMENTS ========== */
+@media(max-width:768px) {
+  .content-area { padding: 16px; }
+  .grid4 { grid-template-columns: 1fr 1fr; }
+  #topbar { padding: 0 16px; }
+}
+@media(max-width:500px) {
+  .grid4, .grid3, .grid2 { grid-template-columns: 1fr; }
+  .auth-card { padding: 20px 16px; }
+}
+
+/* ========== HOSPITAL RESTRICTED BANNER ========== */
+.hospital-restricted-banner {
+  background: var(--warning-light);
+  border-bottom: 1px solid var(--warning);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--warning);
+}
+
+/* ========== IMPROVED BADGES ========== */
+.badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  transition: opacity .15s;
+}
+
+/* ========== IMPROVED ALERT ========== */
+.alert {
+  border-radius: var(--radius);
+}
+.alert h4 { font-weight: 700; }
+
+/* ========== SIDEBAR IMPROVEMENTS ========== */
+.nav-item { border-radius: 8px; font-size: 13px; }
+.nav-item.active { font-weight: 600; }
+.sidebar-logo-text h1 { letter-spacing: -.5px; }
+
+/* ========== STEP INDICATORS ========== */
+.step-indicator {
+  display: flex;
+  gap: 6px;
+}
+.step-dot {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background .3s;
+}
+.step-dot.active { background: var(--primary); }
+.step-dot.done { background: var(--accent); }
+
+/* ========== SURVIVAL ESTIMATE BAR ========== */
+.survival-bar {
+  width: 60px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--border);
+}
+.survival-bar-fill {
+  height: 100%;
+  transition: width .5s ease;
+}
+
+/* ========== FORM ENHANCEMENTS ========== */
+.form-input:disabled, .form-input[readonly] {
+  background: var(--surface3);
+  cursor: not-allowed;
+  opacity: .7;
+}
+
+/* ========== TABLE IMPROVEMENTS ========== */
+table { font-size: 13px; }
+table th { user-select: none; }
+table tr:hover td { background: var(--surface2); }
+
+/* ========== MODAL ANIMATIONS ========== */
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ========== NEW ROLE BADGES ========== */
+.badge-teal { background: #e0f2fe; color: #0891b2; }
+.badge-purple { background: #f3f0ff; color: #7c5cbf; }
+.badge-indigo { background: #eef2ff; color: #4f46e5; }
+
+/* ========== CRITICAL FIELD STYLING ========== */
+.critical-field-input {
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0;
+  cursor: not-allowed;
+  color: var(--primary);
+  width: 100%;
+}
+
+/* ========== APPEAL COUNTDOWN ========== */
+.appeal-countdown {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #fca5a5;
+}
+
