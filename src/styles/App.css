@@ -300,7 +300,7 @@ html, body, #root { height: 100%; font-family: var(--font); color: var(--text1);
   overflow: hidden;
 }
 .sidebar-logo-text h1 {
-  font-size: 16px;
+  font-size: 12px !important;
   font-weight: 700;
   color: var(--text1);
   letter-spacing: -.3px;

@@ -259,8 +259,8 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
               </svg>
             </div>
             <div className="auth-logo-text">
-              <h1>ODCAT</h1>
-              <p>Organ Donation Campaign Analysis Tool</p>
+              <h1>Organ Donation Campaign Analysis Tool</h1>
+              <p>Healthcare System</p>
             </div>
           </div>
           <h2 className="auth-headline">
@@ -329,13 +329,13 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                 <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
               </svg>
             </div>
-            <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text1)' }}>ODCAT</div>
+            <div style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text1)' }}>Organ Donation Campaign Analysis Tool</div>
             <div style={{ fontSize: '11px', color: 'var(--text3)' }}>Organ Donation Campaign Analysis Tool</div>
           </div>
 
           <div className="auth-card-header">
             <h2>Welcome back</h2>
-            <p>Sign in to your ODCAT account to continue</p>
+            <p>Sign in to your Organ Donation Campaign Analysis Tool account to continue</p>
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -427,7 +427,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
             <div className="demo-creds">
               <div className="demo-cred"><strong>Super Admin:</strong> admin@odcat.com / Admin@123</div>
               <div className="demo-cred"><strong>Admin:</strong> dr.ali@odcat.com / Admin@123</div>
-              <div className="demo-cred"><strong>Hospital:</strong> cmh@odcat.com / Admin@123</div>
+              <div className="demo-cred"><strong>Hospital:</strong> cmh@odcat.com / Hospital@123</div>
               <div className="demo-cred"><strong>Donor:</strong> ahmed.khan@odcat.com / Donor@123</div>
               <div className="demo-cred"><strong>Recipient:</strong> nadia.qureshi@odcat.com / Recipient@123</div>
             </div>
@@ -451,7 +451,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
           </div>
 
           <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text3)', marginTop: '20px' }}>
-            © 2026 ODCAT Healthcare · Saving lives through organ donation
+            © 2026 Organ Donation Campaign Analysis Tool Healthcare · Saving lives through organ donation
           </p>
         </div>
       </div>

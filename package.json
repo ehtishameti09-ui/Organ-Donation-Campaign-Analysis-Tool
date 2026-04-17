@@ -1,7 +1,7 @@
 {
   "name": "odcat-react-app",
   "version": "1.0.0",
-  "description": "ODCAT - Organ Donation Campaign Analysis Tool (Login, Dashboard, User Management)",
+  "description": "Organ Donation Campaign Analysis Tool (Login, Dashboard, User Management)",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",

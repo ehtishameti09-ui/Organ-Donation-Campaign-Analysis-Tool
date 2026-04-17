@@ -6,6 +6,18 @@ import {
 } from '../utils/auth';
 import { toast } from '../utils/toast';
 
+const formatPKPhone = (value) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.startsWith('92')) {
+    const rest = digits.slice(2, 12);
+    if (rest.length <= 3) return `+92 ${rest}`;
+    return `+92 ${rest.slice(0, 3)} ${rest.slice(3)}`;
+  }
+  const local = digits.slice(0, 11);
+  if (local.length <= 4) return local;
+  return `${local.slice(0, 4)}-${local.slice(4)}`;
+};
+
 const DOCUMENT_CONFIG = {
   registrationCertificate: { label: 'Hospital Registration Certificate', required: true, maxSizeMB: 10, sample: '📋 Official registration from Health Ministry' },
   healthcareLicense: { label: 'Healthcare Institution License', required: true, maxSizeMB: 10, sample: '📜 Valid operating license from PMDC/PHSA' },
@@ -92,6 +104,9 @@ const AccountSettings = ({ user, onUpdate }) => {
   const [actionLogs, setActionLogs] = useState([]);
   const [appeals, setAppeals] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirmPwd, setShowConfirmPwd] = useState(false);
 
   // Document re-upload state
   const [uploadedDocs, setUploadedDocs] = useState({});
@@ -400,7 +415,7 @@ const AccountSettings = ({ user, onUpdate }) => {
             <div className="form-group">
               <label className="form-label">Phone Number</label>
               <input className="form-input" type="tel" value={profileData.phone}
-                onChange={e => setProfileData(p => ({ ...p, phone: e.target.value }))} placeholder="03XX-XXXXXXX" />
+                onChange={e => setProfileData(p => ({ ...p, phone: formatPKPhone(e.target.value) }))} placeholder="03XX-XXXXXXX" />
             </div>
 
             {user.role === 'donor' && (
@@ -510,15 +525,29 @@ const AccountSettings = ({ user, onUpdate }) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxWidth: '420px' }}>
               <div className="form-group">
                 <label className="form-label">Current Password</label>
-                <input type="password" className="form-input" value={pwdData.current}
-                  onChange={e => setPwdData(p => ({ ...p, current: e.target.value }))}
-                  placeholder="Your current password" />
+                <div className="form-input-wrap">
+                  <input type={showCurrent ? 'text' : 'password'} className="form-input" value={pwdData.current}
+                    onChange={e => setPwdData(p => ({ ...p, current: e.target.value }))}
+                    placeholder="Your current password" />
+                  <button type="button" className="form-input-toggle" onClick={() => setShowCurrent(p => !p)}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
               <div className="form-group">
                 <label className="form-label">New Password</label>
-                <input type="password" className="form-input" value={pwdData.newPwd}
-                  onChange={e => setPwdData(p => ({ ...p, newPwd: e.target.value }))}
-                  placeholder="At least 8 chars, 1 uppercase, 1 number" />
+                <div className="form-input-wrap">
+                  <input type={showNew ? 'text' : 'password'} className="form-input" value={pwdData.newPwd}
+                    onChange={e => setPwdData(p => ({ ...p, newPwd: e.target.value }))}
+                    placeholder="At least 8 chars, 1 uppercase, 1 number" />
+                  <button type="button" className="form-input-toggle" onClick={() => setShowNew(p => !p)}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                </div>
                 {pwdData.newPwd && (
                   <div style={{ marginTop: '6px', display: 'flex', gap: '6px' }}>
                     {[pwdData.newPwd.length >= 8, /[A-Z]/.test(pwdData.newPwd), /[0-9]/.test(pwdData.newPwd), /[^A-Za-z0-9]/.test(pwdData.newPwd)].map((ok, i) => (
@@ -529,9 +558,16 @@ const AccountSettings = ({ user, onUpdate }) => {
               </div>
               <div className="form-group">
                 <label className="form-label">Confirm New Password</label>
-                <input type="password" className="form-input" value={pwdData.confirmPwd}
-                  onChange={e => setPwdData(p => ({ ...p, confirmPwd: e.target.value }))}
-                  placeholder="Repeat new password" />
+                <div className="form-input-wrap">
+                  <input type={showConfirmPwd ? 'text' : 'password'} className="form-input" value={pwdData.confirmPwd}
+                    onChange={e => setPwdData(p => ({ ...p, confirmPwd: e.target.value }))}
+                    placeholder="Repeat new password" />
+                  <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPwd(p => !p)}>
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                </div>
                 {pwdData.confirmPwd && (
                   <div style={{ fontSize: '11px', marginTop: '4px', color: pwdData.newPwd === pwdData.confirmPwd ? 'var(--accent)' : 'var(--danger)' }}>
                     {pwdData.newPwd === pwdData.confirmPwd ? '✓ Passwords match' : '✗ Passwords do not match'}
@@ -730,7 +766,7 @@ const AccountSettings = ({ user, onUpdate }) => {
                 style={{ width: '16px', height: '16px' }} />
               <div>
                 <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text1)' }}>Available for Urgent Calls</div>
-                <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Allow ODCAT to contact you for urgent matching opportunities.</div>
+                <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Allow Organ Donation Campaign Analysis Tool to contact you for urgent matching opportunities.</div>
               </div>
             </label>
           </div>
@@ -752,7 +788,7 @@ const AccountSettings = ({ user, onUpdate }) => {
               onChange={e => setDonorPrefs(p => ({ ...p, willingness: e.target.value }))}>
               <option value="open">Open to all organ types</option>
               <option value="specific">Only specific organs (selected below)</option>
-              <option value="restricted">Restricted (contact ODCAT for case review)</option>
+              <option value="restricted">Restricted (contact Organ Donation Campaign Analysis Tool for case review)</option>
             </select>
           </div>
 
@@ -843,7 +879,7 @@ const AccountSettings = ({ user, onUpdate }) => {
               <option value="high">High — declining health</option>
               <option value="critical">Critical — life-threatening</option>
             </select>
-            <p className="form-hint">Final urgency score is set by your treating doctor and ODCAT review.</p>
+            <p className="form-hint">Final urgency score is set by your treating doctor and Organ Donation Campaign Analysis Tool review.</p>
           </div>
 
           <div style={{ marginBottom: '20px' }}>

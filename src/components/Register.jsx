@@ -161,10 +161,24 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const [uploadedDocs, setUploadedDocs] = useState({});
   const [complianceDecl, setComplianceDecl] = useState({ lawsCompliance: false, platformTerms: false });
   const [submitting, setSubmitting] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
+
+  const formatPKPhone = (value) => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.startsWith('92')) {
+      const rest = digits.slice(2, 12);
+      if (rest.length <= 3) return `+92 ${rest}`;
+      return `+92 ${rest.slice(0, 3)} ${rest.slice(3)}`;
+    }
+    const local = digits.slice(0, 11);
+    if (local.length <= 4) return local;
+    return `${local.slice(0, 4)}-${local.slice(4)}`;
+  };
 
   const handleInput = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData(prev => ({ ...prev, [name]: name === 'phone' ? formatPKPhone(value) : value }));
   };
 
   // ============================================================
@@ -318,7 +332,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <div className="auth-logo-icon">
                 <svg viewBox="0 0 24 24" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
               </div>
-              <div className="auth-logo-text"><h1>ODCAT</h1><p>Healthcare System</p></div>
+              <div className="auth-logo-text"><h1>Organ Donation Campaign Analysis Tool</h1><p>Healthcare System</p></div>
             </div>
             <div className="auth-headline">Join Pakistan's<br />Organ Donation<br />Network</div>
             <div className="auth-subtext">Create your account to become part of a life-saving mission. Every registration matters.</div>
@@ -333,7 +347,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
         <div className="auth-right">
           <div className="auth-card" style={{ maxWidth: '480px' }}>
             <div className="auth-mobile-brand">
-              <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--primary)' }}>ODCAT</div>
+              <div style={{ fontSize: '24px', fontWeight: '700', color: 'var(--primary)' }}>Organ Donation Campaign Analysis Tool</div>
             </div>
             <div className="auth-card-header">
               <h2>Create Your Account</h2>
@@ -344,7 +358,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               {[
                 { type: 'donor', icon: '❤️', title: 'Organ Donor', desc: 'Quick signup. After login, complete your donor registration to start saving lives.' },
                 { type: 'recipient', icon: '🏥', title: 'Transplant Recipient', desc: 'Quick signup. After login, complete your case registration to get matched with donors.' },
-                { type: 'hospital', icon: '🏨', title: 'Hospital / Medical Center', desc: 'Register your hospital to access the ODCAT transplant coordination network.' },
+                { type: 'hospital', icon: '🏨', title: 'Hospital / Medical Center', desc: 'Register your hospital to access the Organ Donation Campaign Analysis Tool transplant coordination network.' },
               ].map(card => (
                 <button key={card.type} type="button" onClick={() => { setAccountType(card.type); setStep(2); }}
                   className="registration-card" style={{ textAlign: 'left', width: '100%', border: '2px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '16px', background: 'var(--surface)', cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: '14px', transition: 'all .2s' }}
@@ -383,7 +397,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <div className="auth-logo-icon">
                 <svg viewBox="0 0 24 24" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
               </div>
-              <div className="auth-logo-text"><h1>ODCAT</h1><p>Healthcare System</p></div>
+              <div className="auth-logo-text"><h1>Organ Donation Campaign Analysis Tool</h1><p>Healthcare System</p></div>
             </div>
             <div className="auth-headline">{accountType === 'donor' ? 'Become a Life Saver' : 'Register for Transplant'}</div>
             <div className="auth-subtext">
@@ -441,13 +455,27 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <div className="grid2">
                 <div className="form-group">
                   <label className="form-label">Password *</label>
-                  <input className="form-input" name="password" type="password" value={formData.password}
-                    onChange={handleInput} placeholder="Min. 8 chars, 1 upper, 1 number" required />
+                  <div className="form-input-wrap">
+                    <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
+                      onChange={handleInput} placeholder="Min. 8 chars, 1 upper, 1 number" required />
+                    <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
+                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Confirm Password *</label>
-                  <input className="form-input" name="confirmPassword" type="password" value={formData.confirmPassword}
-                    onChange={handleInput} placeholder="Repeat password" required />
+                  <div className="form-input-wrap">
+                    <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
+                      onChange={handleInput} placeholder="Repeat password" required />
+                    <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
+                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -485,7 +513,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <div className="auth-logo-icon">
                 <svg viewBox="0 0 24 24" strokeWidth="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
               </div>
-              <div className="auth-logo-text"><h1>ODCAT</h1><p>Healthcare System</p></div>
+              <div className="auth-logo-text"><h1>Organ Donation Campaign Analysis Tool</h1><p>Healthcare System</p></div>
             </div>
             <div className="auth-headline">Hospital Registration</div>
             <div className="auth-subtext">Join Pakistan's premier organ transplant coordination network. Your hospital will be verified before getting full access.</div>
@@ -543,13 +571,27 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                 <div className="grid2">
                   <div className="form-group">
                     <label className="form-label">Password *</label>
-                    <input className="form-input" name="password" type="password" value={formData.password}
-                      onChange={handleInput} placeholder="Min. 8 chars" required />
+                    <div className="form-input-wrap">
+                      <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
+                        onChange={handleInput} placeholder="Min. 8 chars" required />
+                      <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Confirm Password *</label>
-                    <input className="form-input" name="confirmPassword" type="password" value={formData.confirmPassword}
-                      onChange={handleInput} placeholder="Repeat" required />
+                    <div className="form-input-wrap">
+                      <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
+                        onChange={handleInput} placeholder="Repeat" required />
+                      <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div style={{ background: 'var(--accent-light)', border: '1px solid rgba(14,176,122,.2)', borderRadius: 'var(--radius)', padding: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--accent)' }}>
@@ -623,7 +665,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                   <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)', marginBottom: '10px' }}>Compliance Declarations</div>
                   {[
                     { key: 'lawsCompliance', label: 'I certify that this hospital complies with all applicable laws, HOTA regulations, and PMDC guidelines regarding organ donation and transplantation.' },
-                    { key: 'platformTerms', label: 'I agree to the ODCAT platform terms, data handling policies, and accept responsibility for the accuracy of all submitted information.' },
+                    { key: 'platformTerms', label: 'I agree to the Organ Donation Campaign Analysis Tool platform terms, data handling policies, and accept responsibility for the accuracy of all submitted information.' },
                   ].map(d => (
                     <label key={d.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer', marginBottom: '10px' }}>
                       <input type="checkbox" checked={complianceDecl[d.key]}

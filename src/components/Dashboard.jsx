@@ -7,6 +7,7 @@ import {
   submitMultiAdminAppeal, getUserAppeals, submitHospitalCaseAppeal, getUserCaseAppeals
 } from '../utils/auth';
 import { toast } from '../utils/toast';
+import { generateRegistrationPDF } from '../utils/pdfReport';
 
 Chart.register(...registerables);
 
@@ -20,7 +21,7 @@ const DONOR_DOC_CHECKLIST = [
 
 const RECIPIENT_DOC_CHECKLIST = [
   { key: 'cnic', label: 'CNIC (Front & Back)', required: true },
-  { key: 'medicalReport', label: 'Medical Diagnosis Report', required: true },
+  { key: 'medicalReport', label: 'Medical Diagnosis Report', required: false },
   { key: 'labReports', label: 'Recent Lab Reports', required: true },
   { key: 'doctorReferral', label: 'Doctor Referral Letter', required: true },
   { key: 'insuranceProof', label: 'Insurance/Treatment Coverage', required: false },
@@ -440,7 +441,7 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
                           ? 'e.g. "Please upload a clearer copy of your medical certificate and provide an updated lab report."'
                           : reviewAction === 'reject'
                             ? 'e.g. "Documents do not meet minimum requirements."'
-                            : 'e.g. "All documents verified, welcome to ODCAT."'} />
+                            : 'e.g. "All documents verified, welcome to Organ Donation Campaign Analysis Tool."'} />
                     </div>
                   )}
                 </div>
@@ -996,7 +997,7 @@ const Dashboard = ({ user, onNavigate }) => {
           <span className="alert-icon">🏥</span>
           <div className="alert-content">
             <h4>Welcome, {user.hospitalName}!</h4>
-            <p>Your hospital is fully approved and active in the ODCAT network.</p>
+            <p>Your hospital is fully approved and active in the Organ Donation Campaign Analysis Tool network.</p>
           </div>
         </div>
 
@@ -1147,8 +1148,20 @@ const Dashboard = ({ user, onNavigate }) => {
         {/* Verification Progress */}
         <div className="card" style={{ marginBottom: '20px' }}>
           <div className="card-header">
-            <div className="card-title">Your Verification Progress</div>
-            <div className="card-sub">Steps to become a verified active donor</div>
+            <div>
+              <div className="card-title">Your Verification Progress</div>
+              <div className="card-sub">Steps to become a verified active donor</div>
+            </div>
+            {(isUnderReview || isApproved) && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => generateRegistrationPDF(user)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', flexShrink: 0 }}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Report
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '20px 0' }}>
             {['Registered', 'Submitted', 'Under Review', 'Approved', 'Active Donor'].map((step, i, arr) => {
@@ -1178,7 +1191,7 @@ const Dashboard = ({ user, onNavigate }) => {
           <div className="card" style={{ marginBottom: '20px' }}>
             <div className="card-header">
               <div className="card-title">Preferred Hospitals</div>
-              <div className="card-sub">ODCAT-verified hospitals in our network</div>
+              <div className="card-sub">Organ Donation Campaign Analysis Tool-verified hospitals in our network</div>
             </div>
             <div className="grid2">
               {preferredHospitals.map(h => (
@@ -1186,7 +1199,7 @@ const Dashboard = ({ user, onNavigate }) => {
                   <div style={{ width: '40px', height: '40px', background: 'var(--primary-light)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>🏥</div>
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>{h.hospitalName}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{h.hospitalAddress || 'ODCAT Certified'}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{h.hospitalAddress || 'Organ Donation Campaign Analysis Tool Certified'}</div>
                     <span className="badge badge-green" style={{ fontSize: '10px', marginTop: '4px' }}>Verified</span>
                   </div>
                 </div>
@@ -1246,7 +1259,7 @@ const Dashboard = ({ user, onNavigate }) => {
           {[
             { label: 'Role', value: roleTitles[user.role], color: 'var(--primary)', bg: 'var(--primary-light)' },
             { label: 'Status', value: user.status === 'suspended' ? 'Suspended' : 'Active', color: user.status === 'suspended' ? 'var(--danger)' : 'var(--accent)', bg: user.status === 'suspended' ? 'var(--danger-light)' : 'var(--accent-light)' },
-            { label: 'Hospital', value: user.hospitalName || 'ODCAT System', color: '#7c5cbf', bg: '#f3f0ff' },
+            { label: 'Hospital', value: user.hospitalName || 'Organ Donation Campaign Analysis Tool System', color: '#7c5cbf', bg: '#f3f0ff' },
           ].map((s, i) => (
             <div key={i} style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
               <div style={{ fontSize: '12px', color: 'var(--text3)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: '8px' }}>{s.label}</div>
@@ -1354,7 +1367,7 @@ const Dashboard = ({ user, onNavigate }) => {
             <span className="alert-icon">🏥</span>
             <div className="alert-content">
               <h4>Welcome, {user.name}</h4>
-              <p>Your recipient case is being managed by the ODCAT team. We'll notify you of any updates.</p>
+              <p>Your recipient case is being managed by the Organ Donation Campaign Analysis Tool team. We'll notify you of any updates.</p>
             </div>
           </div>
         )}
@@ -1377,8 +1390,20 @@ const Dashboard = ({ user, onNavigate }) => {
         {/* Case Status Bar */}
         <div className="card" style={{ marginBottom: '20px' }}>
           <div className="card-header">
-            <div className="card-title">Case Progress</div>
-            <div className="card-sub">Your recipient case journey</div>
+            <div>
+              <div className="card-title">Case Progress</div>
+              <div className="card-sub">Your recipient case journey</div>
+            </div>
+            {(isUnderReview || isApproved) && (
+              <button
+                className="btn btn-ghost"
+                onClick={() => generateRegistrationPDF(user)}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '6px 12px', flexShrink: 0 }}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Report
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '20px 0' }}>
             {caseSteps.map((step, i, arr) => {
@@ -1415,7 +1440,7 @@ const Dashboard = ({ user, onNavigate }) => {
                   <div style={{ width: '40px', height: '40px', background: 'var(--accent-light)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>🏥</div>
                   <div>
                     <div style={{ fontSize: '13px', fontWeight: '600' }}>{h.hospitalName}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{h.hospitalAddress || 'ODCAT Certified'}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{h.hospitalAddress || 'Organ Donation Campaign Analysis Tool Certified'}</div>
                     <span className="badge badge-green" style={{ fontSize: '10px', marginTop: '4px' }}>Verified</span>
                   </div>
                 </div>
