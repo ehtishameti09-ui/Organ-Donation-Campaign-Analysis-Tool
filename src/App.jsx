@@ -270,7 +270,7 @@ function App() {
                 </svg>
               </div>
               <div className="sidebar-logo-text">
-                <h1>ODCAT</h1>
+                <h1>Organ Donation Campaign Analysis Tool</h1>
                 <p>Healthcare System</p>
               </div>
             </div>

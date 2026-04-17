@@ -6,10 +6,30 @@ import {
   calculateAgeFromDOB,
 } from '../utils/auth';
 import { toast } from '../utils/toast';
+import { generateRegistrationPDF } from '../utils/pdfReport';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const ORGANS = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow'];
 const GENDERS = ['Male', 'Female', 'Other'];
+
+const formatCNIC = (value) => {
+  const digits = value.replace(/\D/g, '').slice(0, 13);
+  if (digits.length <= 5) return digits;
+  if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
+};
+
+const formatPKPhone = (value) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.startsWith('92')) {
+    const rest = digits.slice(2, 12);
+    if (rest.length <= 3) return `+92 ${rest}`;
+    return `+92 ${rest.slice(0, 3)} ${rest.slice(3)}`;
+  }
+  const local = digits.slice(0, 11);
+  if (local.length <= 4) return local;
+  return `${local.slice(0, 4)}-${local.slice(4)}`;
+};
 
 // Document configurations
 const DONOR_DOCS = {
@@ -21,7 +41,7 @@ const DONOR_DOCS = {
 
 const RECIPIENT_DOCS = {
   cnic: { label: 'CNIC (Front & Back)', required: true, maxSizeMB: 5, hint: 'Clear photo of both sides of your CNIC' },
-  medicalReport: { label: 'Medical Diagnosis Report', required: true, maxSizeMB: 10, hint: 'Detailed diagnosis from your treating physician' },
+  medicalReport: { label: 'Medical Diagnosis Report (Optional)', required: false, maxSizeMB: 10, hint: 'Detailed diagnosis from your treating physician' },
   labReports: { label: 'Recent Lab Reports', required: true, maxSizeMB: 10, hint: 'Latest blood work, organ function tests' },
   doctorReferral: { label: 'Doctor Referral Letter', required: true, maxSizeMB: 5, hint: 'Letter from treating doctor recommending transplant' },
   insuranceProof: { label: 'Insurance / Treatment Coverage (Optional)', required: false, maxSizeMB: 5, hint: 'Insurance card or coverage proof if applicable' },
@@ -44,7 +64,7 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
     }
   };
 
-  const canSign = agreed && witnessed && readToBottom && signature.trim() && cnic.trim().length >= 13;
+  const canSign = agreed && witnessed && readToBottom && signature.trim() && cnic.replace(/\D/g, '').length >= 13;
 
   const handleAccept = () => {
     if (!canSign) {
@@ -83,10 +103,10 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
             Form Reference
           </div>
           <div style={{ fontSize: '12px', color: '#555' }}>
-            <strong>Document No:</strong> ODCAT/{userType.toUpperCase()}/{Date.now().toString().slice(-8)}<br />
+            <strong>Document No:</strong> Organ Donation Campaign Analysis Tool/{userType.toUpperCase()}/{Date.now().toString().slice(-8)}<br />
             <strong>Date:</strong> {new Date().toLocaleDateString('en-PK', { day: '2-digit', month: 'long', year: 'numeric' })}<br />
             <strong>Issuing Authority:</strong> Human Organ Transplant Authority (HOTA), Pakistan<br />
-            <strong>Platform:</strong> ODCAT — Organ Donation Coordination &amp; Transplant System
+            <strong>Platform:</strong> Organ Donation Campaign Analysis Tool
           </div>
         </div>
 
@@ -117,15 +137,15 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
               <li>The use of my donated organs solely for therapeutic purposes and not for commercial sale or trade,
                 as expressly prohibited under Section 6 of THOTA 2010.</li>
               <li>The disclosure of my anonymized medical information to authorized transplant coordinators,
-                hospitals registered with HOTA, and ODCAT platform staff.</li>
-              <li>The ODCAT platform contacting my family / next of kin in the event of a successful match.</li>
+                hospitals registered with HOTA, and Organ Donation Campaign Analysis Tool platform staff.</li>
+              <li>The Organ Donation Campaign Analysis Tool platform contacting my family / next of kin in the event of a successful match.</li>
             </ol>
           </>
         ) : (
           <>
             <p>
               In accordance with the provisions of the <strong>Transplantation of Human Organs and Tissues Act, 2010
-              (THOTA)</strong>, I hereby register myself as a transplant recipient on the ODCAT platform and consent
+              (THOTA)</strong>, I hereby register myself as a transplant recipient on the Organ Donation Campaign Analysis Tool platform and consent
               to be placed on the National Organ Waiting List under the supervision of the Human Organ Transplant Authority (HOTA).
             </p>
             <p>I further consent to:</p>
@@ -147,7 +167,7 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
         <p>I understand and acknowledge that:</p>
         <ul>
           <li>I have the absolute right to withdraw this consent at any time, without giving any reason, by submitting
-            a written withdrawal request through the ODCAT platform or the registered hospital.</li>
+            a written withdrawal request through the Organ Donation Campaign Analysis Tool platform or the registered hospital.</li>
           <li>Withdrawal of consent shall not affect any other medical treatment I may receive.</li>
           <li>My personal and medical information will be handled in accordance with the Personal Data Protection
             Bill of Pakistan and shall not be disclosed without my consent except as required by law.</li>
@@ -179,7 +199,7 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
         <p style={{ background: '#fff5f5', border: '1px solid #fbd5d5', padding: '12px', borderRadius: '6px', fontSize: '12px', color: '#9b2c2c' }}>
           <strong>⚠️ NOTICE:</strong> Any commercial dealing in human organs is a punishable offence under
           Section 6 of THOTA 2010, with imprisonment up to ten (10) years and a fine of up to one (1) million Pakistani Rupees.
-          ODCAT does not tolerate or facilitate any such activity.
+          Organ Donation Campaign Analysis Tool does not tolerate or facilitate any such activity.
         </p>
 
         <p style={{ marginTop: '20px', textAlign: 'center', fontSize: '11px', color: '#888', borderTop: '1px dashed #ccc', paddingTop: '14px' }}>
@@ -208,7 +228,7 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
           <div className="form-group">
             <label className="form-label" style={{ fontSize: '11px' }}>CNIC Number *</label>
             <input className="form-input" value={cnic}
-              onChange={e => setCnic(e.target.value.replace(/[^0-9-]/g, '').slice(0, 15))}
+              onChange={e => setCnic(formatCNIC(e.target.value))}
               placeholder="XXXXX-XXXXXXX-X" disabled={!readToBottom} />
           </div>
         </div>
@@ -338,6 +358,12 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const isDonor = user.role === 'donor';
 
+  const maxDOB = (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 18);
+    return d.toISOString().split('T')[0];
+  })();
+
   // Consent data
   const [consentData, setConsentData] = useState(null);
 
@@ -415,11 +441,14 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   // ===== STEP VALIDATION =====
   const validateClinical = () => {
-    if (!clinical.cnic || clinical.cnic.length < 13) {
+    if (!clinical.cnic || clinical.cnic.replace(/\D/g, '').length < 13) {
       toast('Please enter a valid 13-digit CNIC.', 'error'); return false;
     }
     if (!clinical.dob || !clinical.gender || !clinical.bloodType || !clinical.age) {
       toast('Please fill all basic identity fields.', 'error'); return false;
+    }
+    if (parseInt(clinical.age) < 18) {
+      toast('You must be at least 18 years old to register.', 'error'); return false;
     }
     if (!clinical.phone || !clinical.address) {
       toast('Phone and address are required.', 'error'); return false;
@@ -473,6 +502,9 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const handleConsentAccepted = (data) => {
     setConsentData(data);
+    if (data.cnic) {
+      setClinical(prev => ({ ...prev, cnic: data.cnic }));
+    }
     toast('Consent form signed successfully.', 'success');
     setCurrentStep(2);
   };
@@ -594,12 +626,12 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               <div className="form-group">
                 <label className="form-label">CNIC Number *</label>
                 <input className="form-input" name="cnic" value={clinical.cnic}
-                  onChange={e => setClinical(p => ({ ...p, cnic: e.target.value.replace(/[^0-9-]/g, '').slice(0, 15) }))}
+                  onChange={e => setClinical(p => ({ ...p, cnic: formatCNIC(e.target.value) }))}
                   placeholder="XXXXX-XXXXXXX-X" required />
               </div>
               <div className="form-group">
                 <label className="form-label">Date of Birth *</label>
-                <input className="form-input" name="dob" type="date" value={clinical.dob} onChange={handleClinicalChange} required />
+                <input className="form-input" name="dob" type="date" value={clinical.dob} onChange={handleClinicalChange} max={maxDOB} required />
               </div>
               <div className="form-group">
                 <label className="form-label">Gender *</label>
@@ -610,7 +642,9 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               </div>
               <div className="form-group">
                 <label className="form-label">Age *</label>
-                <input className="form-input" name="age" type="number" value={clinical.age} onChange={handleClinicalChange} min="1" max="120" required />
+                <input className="form-input" name="age" type="number" value={clinical.age} readOnly
+                  style={{ background: 'var(--surface2)', cursor: 'not-allowed' }}
+                  tabIndex={-1} />
               </div>
               <div className="form-group">
                 <label className="form-label">Blood Type *</label>
@@ -621,7 +655,9 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               </div>
               <div className="form-group">
                 <label className="form-label">Phone *</label>
-                <input className="form-input" name="phone" type="tel" value={clinical.phone} onChange={handleClinicalChange} required placeholder="03XX-XXXXXXX" />
+                <input className="form-input" name="phone" type="tel" value={clinical.phone}
+                  onChange={e => setClinical(p => ({ ...p, phone: formatPKPhone(e.target.value) }))}
+                  required placeholder="03XX-XXXXXXX" />
               </div>
             </div>
             <div className="form-group">
@@ -639,7 +675,9 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               </div>
               <div className="form-group">
                 <label className="form-label">Phone *</label>
-                <input className="form-input" name="emergencyContactPhone" type="tel" value={clinical.emergencyContactPhone} onChange={handleClinicalChange} required />
+                <input className="form-input" name="emergencyContactPhone" type="tel" value={clinical.emergencyContactPhone}
+                  onChange={e => setClinical(p => ({ ...p, emergencyContactPhone: formatPKPhone(e.target.value) }))}
+                  required placeholder="03XX-XXXXXXX" />
               </div>
               <div className="form-group">
                 <label className="form-label">Relationship</label>
@@ -701,7 +739,11 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Urgency (1-10)</label>
-                  <input className="form-input" type="number" name="urgencyScore" value={clinical.urgencyScore} onChange={handleClinicalChange} min="1" max="10" />
+                  <input className="form-input" type="number" name="urgencyScore" value={clinical.urgencyScore} min="1" max="10"
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      setClinical(p => ({ ...p, urgencyScore: isNaN(v) ? '' : Math.min(10, Math.max(1, v)) }));
+                    }} />
                 </div>
               </div>
               <div className="form-group">
@@ -825,16 +867,33 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
       {/* Navigation Footer */}
       {currentStep > 1 && (
-        <div className="card" style={{ marginTop: '16px', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="card" style={{ marginTop: '16px', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
           <button onClick={goBack} className="btn btn-ghost" disabled={(isResubmit && currentStep === 2) || (!isResubmit && currentStep === 1)}>
             ← Back
           </button>
           <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Step {currentStep} of {totalSteps}</div>
-          <button onClick={goNext} className="btn btn-primary" disabled={submitting}>
-            {currentStep === 4
-              ? (submitting ? 'Submitting...' : (isResubmit ? '📤 Resubmit to Hospital' : '📤 Submit to Hospital'))
-              : 'Next →'}
-          </button>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            {currentStep === 4 && (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => generateRegistrationPDF({
+                  ...user,
+                  ...clinical,
+                  preferredHospitalName: approvedHospitals.find(h => h.id === preferredHospitalId)?.hospitalName || user.preferredHospitalName,
+                })}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download Report
+              </button>
+            )}
+            <button onClick={goNext} className="btn btn-primary" disabled={submitting}>
+              {currentStep === 4
+                ? (submitting ? 'Submitting...' : (isResubmit ? '📤 Resubmit to Hospital' : '📤 Submit to Hospital'))
+                : 'Next →'}
+            </button>
+          </div>
         </div>
       )}
     </div>

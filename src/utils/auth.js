@@ -1136,7 +1136,7 @@ export const registerBasicAccount = (name, email, password, role, phone = '') =>
   createNotification(
     userId,
     'welcome',
-    `Welcome to ODCAT, ${name}!`,
+    `Welcome to Organ Donation Campaign Analysis Tool, ${name}!`,
     `Your account has been created. Please complete your ${role} registration to access all features.`,
     {}
   );
