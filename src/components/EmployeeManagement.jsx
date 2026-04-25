@@ -2,6 +2,18 @@ import { useState, useMemo } from 'react';
 import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getAllUsers } from '../utils/auth';
 import { toast } from '../utils/toast';
 
+const formatPKPhone = (value) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.startsWith('92')) {
+    const rest = digits.slice(2, 12);
+    if (rest.length <= 3) return `+92 ${rest}`;
+    return `+92 ${rest.slice(0, 3)} ${rest.slice(3)}`;
+  }
+  const local = digits.slice(0, 11);
+  if (local.length <= 4) return local;
+  return `${local.slice(0, 4)}-${local.slice(4)}`;
+};
+
 const ROLES = [
   { value: 'doctor', label: 'Doctor' },
   { value: 'data_entry', label: 'Data Entry Operator' },
@@ -37,11 +49,23 @@ const EmployeeManagement = ({ currentUser }) => {
   }, [employees, search, roleFilter, statusFilter, currentUser]);
 
   const hospitals = useMemo(() => {
-    return getAllUsers().filter(u => u.role === 'hospital' && u.status === 'approved' && !u.deleted);
-  }, []);
+    const all = getAllUsers().filter(u => u.role === 'hospital' && u.status === 'approved' && !u.deleted);
+    if (currentUser?.linkedHospitalId) {
+      return all.filter(h => h.id === currentUser.linkedHospitalId);
+    }
+    return all;
+  }, [currentUser]);
 
   const resetForm = () => {
-    setFormData({ name: '', email: '', role: 'doctor', department: '', phone: '', specialization: '', password: '', hospitalId: '', hospitalName: '' });
+    const ownHospital = currentUser?.linkedHospitalId
+      ? hospitals.find(h => h.id === currentUser.linkedHospitalId)
+      : null;
+    setFormData({
+      name: '', email: '', role: 'doctor', department: '', phone: '',
+      specialization: '', password: '',
+      hospitalId: ownHospital?.id || '',
+      hospitalName: ownHospital?.hospitalName || ownHospital?.name || '',
+    });
     setEditingEmployee(null);
   };
 
@@ -49,6 +73,12 @@ const EmployeeManagement = ({ currentUser }) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim()) {
       toast('Name and email are required.', 'error'); return;
+    }
+    if (!formData.phone.trim()) {
+      toast('Phone number is required.', 'error'); return;
+    }
+    if (formData.phone.replace(/\D/g, '').length < 10) {
+      toast('Please enter a valid phone number (e.g. 0302-5191070).', 'error'); return;
     }
 
     try {
@@ -173,14 +203,14 @@ const EmployeeManagement = ({ currentUser }) => {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
-              {['Name', 'Email', 'Role', 'Department', 'Status', 'Actions'].map(h => (
+              {['Name', 'Email', 'Role', 'Department', 'Assigned Hospital', 'Status', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 && (
-              <tr><td colSpan={6} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No employees found.</td></tr>
+              <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No employees found.</td></tr>
             )}
             {filtered.map(emp => (
               <tr key={emp.id} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -198,6 +228,7 @@ const EmployeeManagement = ({ currentUser }) => {
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.email}</td>
                 <td style={{ padding: '12px 16px' }}>{getRoleBadge(emp.role)}</td>
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.department || '—'}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.hospitalName || '—'}</td>
                 <td style={{ padding: '12px 16px' }}>{getStatusBadge(emp.status)}</td>
                 <td style={{ padding: '12px 16px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
@@ -257,9 +288,10 @@ const EmployeeManagement = ({ currentUser }) => {
               </div>
               <div className="grid2">
                 <div className="form-group">
-                  <label className="form-label">Phone</label>
-                  <input className="form-input" value={formData.phone}
-                    onChange={e => setFormData(p => ({ ...p, phone: e.target.value }))} placeholder="03XX-XXXXXXX" />
+                  <label className="form-label">Phone *</label>
+                  <input className="form-input" type="tel" value={formData.phone}
+                    onChange={e => setFormData(p => ({ ...p, phone: formatPKPhone(e.target.value) }))}
+                    placeholder="03XX-XXXXXXX" required />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Specialization</label>
@@ -270,20 +302,25 @@ const EmployeeManagement = ({ currentUser }) => {
               {hospitals.length > 0 && (
                 <div className="form-group">
                   <label className="form-label">Assigned Hospital</label>
-                  <select className="form-input" value={formData.hospitalId}
-                    onChange={e => {
-                      const h = hospitals.find(h => h.id === e.target.value);
-                      setFormData(p => ({ ...p, hospitalId: e.target.value, hospitalName: h ? (h.hospitalName || h.name) : '' }));
-                    }}>
-                    <option value="">— None —</option>
-                    {hospitals.map(h => <option key={h.id} value={h.id}>{h.hospitalName || h.name}</option>)}
-                  </select>
+                  {currentUser?.linkedHospitalId ? (
+                    <input className="form-input" value={formData.hospitalName} readOnly
+                      style={{ background: 'var(--bg2)', color: 'var(--text2)', cursor: 'not-allowed' }} />
+                  ) : (
+                    <select className="form-input" value={formData.hospitalId}
+                      onChange={e => {
+                        const h = hospitals.find(h => h.id === e.target.value);
+                        setFormData(p => ({ ...p, hospitalId: e.target.value, hospitalName: h ? (h.hospitalName || h.name) : '' }));
+                      }}>
+                      <option value="">— None —</option>
+                      {hospitals.map(h => <option key={h.id} value={h.id}>{h.hospitalName || h.name}</option>)}
+                    </select>
+                  )}
                 </div>
               )}
               {!editingEmployee && (
                 <div className="form-group">
                   <label className="form-label">Initial Password</label>
-                  <input className="form-input" type="password" value={formData.password}
+                  <input className="form-input" type="password" autoComplete="new-password" value={formData.password}
                     onChange={e => setFormData(p => ({ ...p, password: e.target.value }))} placeholder="Leave blank for Temp@1234" />
                 </div>
               )}

@@ -21,7 +21,21 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState(null);
+
+  // Sync browser back/forward with app page state
+  useEffect(() => {
+    const handlePopState = (e) => {
+      const page = e.state?.page || 'dashboard';
+      const tab = e.state?.settingsTab || null;
+      setCurrentPage(page);
+      setSettingsTab(tab);
+    };
+    window.addEventListener('popstate', handlePopState);
+    // Replace the initial history entry so state is set from the start
+    window.history.replaceState({ page: 'dashboard', settingsTab: null }, '');
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     initSuperAdmin();
@@ -67,14 +81,15 @@ function App() {
     logout();
     setCurrentUser(null);
     setCurrentPage('dashboard');
-    setNotifPanelOpen(false);
+    setSettingsTab(null);
     toast('Signed out successfully.', 'info');
   };
 
-  const navigateTo = (page) => {
+  const navigateTo = (page, tab = null) => {
+    const newTab = page === 'settings' ? tab : null;
+    window.history.pushState({ page, settingsTab: newTab }, '');
     setCurrentPage(page);
-    setNotifPanelOpen(false);
-    // Refresh user on navigation
+    setSettingsTab(newTab);
     refreshCurrentUser();
   };
 
@@ -207,6 +222,7 @@ function App() {
         return (
           <AccountSettings
             user={currentUser}
+            initialTab={settingsTab}
             onUpdate={(updatedUser) => {
               setCurrentUser(updatedUser);
               localStorage.setItem('odcat_current', JSON.stringify(updatedUser));
@@ -296,7 +312,7 @@ function App() {
                 <a
                   key={item.id}
                   className={`nav-item ${currentPage === item.id ? 'active' : ''} ${isDisabled ? 'nav-item-disabled' : ''}`}
-                  onClick={() => !isDisabled && navigateTo(item.id)}
+                  onClick={(e) => { e.preventDefault(); !isDisabled && navigateTo(item.id); }}
                   href="#"
                   title={isDisabled ? 'Available after approval' : item.label}
                   style={{ opacity: isDisabled ? 0.4 : 1, cursor: isDisabled ? 'not-allowed' : 'pointer' }}
@@ -347,7 +363,7 @@ function App() {
             </div>
             <div className="topbar-actions">
               {/* Notification Bell */}
-              <button className="topbar-badge-btn" onClick={() => { setNotifPanelOpen(!notifPanelOpen); navigateTo('settings'); }}
+              <button className="topbar-badge-btn" onClick={() => navigateTo('settings', 'activity')}
                 title="Notifications" style={{ position: 'relative' }}>
                 <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" strokeWidth="2">
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
@@ -360,7 +376,7 @@ function App() {
                 )}
               </button>
 
-              <div className="user-chip">
+              <div className="user-chip" onClick={() => navigateTo('settings')} style={{ cursor: 'pointer' }} title="Account Settings">
                 <div className="user-chip-avatar" style={{ background: currentUser.role === 'super_admin' ? 'var(--danger)' : currentUser.role === 'admin' ? 'var(--warning)' : currentUser.role === 'hospital' ? '#7c5cbf' : currentUser.role === 'doctor' ? '#0891b2' : currentUser.role === 'auditor' ? '#a16207' : currentUser.role === 'data_entry' ? '#7c3aed' : 'var(--primary)' }}>
                   {initials}
                 </div>

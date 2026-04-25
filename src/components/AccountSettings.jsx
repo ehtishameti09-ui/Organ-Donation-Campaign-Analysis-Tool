@@ -29,7 +29,7 @@ const DOCUMENT_CONFIG = {
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const ORGANS_LIST = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow'];
 
-const AccountSettings = ({ user, onUpdate }) => {
+const AccountSettings = ({ user, onUpdate, initialTab }) => {
   // Determine tabs based on role
   const getTabs = () => {
     const base = [
@@ -51,8 +51,13 @@ const AccountSettings = ({ user, onUpdate }) => {
   };
 
   const tabs = getTabs();
-  const defaultTab = user.role === 'hospital' && user.status === 'info_requested' ? 'documents' : 'profile';
+  const defaultTab = initialTab || (user.role === 'hospital' && user.status === 'info_requested' ? 'documents' : 'profile');
   const [activeTab, setActiveTab] = useState(defaultTab);
+
+  useEffect(() => {
+    const resolved = initialTab || (user.role === 'hospital' && user.status === 'info_requested' ? 'documents' : 'profile');
+    setActiveTab(resolved);
+  }, [initialTab]);
 
   const [profileData, setProfileData] = useState({
     name: user.name || '',
@@ -141,14 +146,36 @@ const AccountSettings = ({ user, onUpdate }) => {
     if (!profileData.name || !profileData.email) {
       toast('Name and email are required.', 'error'); return;
     }
+    if (profileData.age && parseInt(profileData.age) < 18) {
+      toast('Age must be at least 18.', 'error'); return;
+    }
     setSaving(true);
     setTimeout(() => {
       const users = getAllUsers();
       const idx = users.findIndex(u => u.id === user.id);
       if (idx !== -1) {
-        users[idx] = { ...users[idx], ...profileData };
+        const fieldLabels = {
+          name: 'Full Name', email: 'Email Address', phone: 'Phone Number',
+          bloodType: 'Blood Type', age: 'Age', organNeeded: 'Organ Needed',
+          diagnosis: 'Diagnosis', medicalHistory: 'Medical History',
+          hospitalName: 'Hospital Name', registrationNumber: 'Registration Number',
+          licenseNumber: 'License Number', hospitalAddress: 'Hospital Address',
+        };
+        const old = users[idx];
+        const changedFields = Object.keys(profileData)
+          .filter(k => fieldLabels[k] && String(profileData[k] ?? '') !== String(old[k] ?? ''))
+          .map(k => ({ key: k, label: fieldLabels[k], oldValue: old[k] ?? '', newValue: profileData[k] ?? '' }));
+
+        const updatedUser = { ...old, ...profileData };
+        if (changedFields.length > 0) {
+          updatedUser.profileChangelog = [
+            ...(old.profileChangelog || []),
+            { changedAt: new Date().toISOString(), fields: changedFields },
+          ];
+        }
+        users[idx] = updatedUser;
         saveUsers(users);
-        onUpdate && onUpdate({ ...user, ...profileData });
+        onUpdate && onUpdate(updatedUser);
         toast('Profile updated!', 'success');
       }
       setSaving(false);
@@ -431,7 +458,11 @@ const AccountSettings = ({ user, onUpdate }) => {
                 <div className="form-group">
                   <label className="form-label">Age</label>
                   <input type="number" className="form-input" value={profileData.age}
-                    onChange={e => setProfileData(p => ({ ...p, age: e.target.value }))} min="1" max="120" />
+                    onChange={e => {
+                      const v = parseInt(e.target.value);
+                      if (!isNaN(v) && v < 18) { toast('Age must be at least 18.', 'error'); return; }
+                      setProfileData(p => ({ ...p, age: e.target.value }));
+                    }} min="18" max="120" />
                 </div>
               </>
             )}
@@ -449,7 +480,11 @@ const AccountSettings = ({ user, onUpdate }) => {
                 <div className="form-group">
                   <label className="form-label">Age</label>
                   <input type="number" className="form-input" value={profileData.age}
-                    onChange={e => setProfileData(p => ({ ...p, age: e.target.value }))} />
+                    onChange={e => {
+                      const v = parseInt(e.target.value);
+                      if (!isNaN(v) && v < 18) { toast('Age must be at least 18.', 'error'); return; }
+                      setProfileData(p => ({ ...p, age: e.target.value }));
+                    }} min="18" max="120" />
                 </div>
                 <div className="form-group" style={{ gridColumn: '1/-1' }}>
                   <label className="form-label">Diagnosis</label>
@@ -500,6 +535,10 @@ const AccountSettings = ({ user, onUpdate }) => {
             <button className="btn btn-primary" onClick={saveProfile} disabled={saving}>
               {saving ? 'Saving...' : 'Save Profile'}
             </button>
+            <button type="button" className="btn btn-ghost" onClick={() => setActiveTab('security')}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              🔒 Change Password
+            </button>
           </div>
 
           {/* Danger Zone */}
@@ -526,7 +565,7 @@ const AccountSettings = ({ user, onUpdate }) => {
               <div className="form-group">
                 <label className="form-label">Current Password</label>
                 <div className="form-input-wrap">
-                  <input type={showCurrent ? 'text' : 'password'} className="form-input" value={pwdData.current}
+                  <input type={showCurrent ? 'text' : 'password'} className="form-input" autoComplete="new-password" value={pwdData.current}
                     onChange={e => setPwdData(p => ({ ...p, current: e.target.value }))}
                     placeholder="Your current password" />
                   <button type="button" className="form-input-toggle" onClick={() => setShowCurrent(p => !p)}>
@@ -539,7 +578,7 @@ const AccountSettings = ({ user, onUpdate }) => {
               <div className="form-group">
                 <label className="form-label">New Password</label>
                 <div className="form-input-wrap">
-                  <input type={showNew ? 'text' : 'password'} className="form-input" value={pwdData.newPwd}
+                  <input type={showNew ? 'text' : 'password'} className="form-input" autoComplete="new-password" value={pwdData.newPwd}
                     onChange={e => setPwdData(p => ({ ...p, newPwd: e.target.value }))}
                     placeholder="At least 8 chars, 1 uppercase, 1 number" />
                   <button type="button" className="form-input-toggle" onClick={() => setShowNew(p => !p)}>
@@ -559,7 +598,7 @@ const AccountSettings = ({ user, onUpdate }) => {
               <div className="form-group">
                 <label className="form-label">Confirm New Password</label>
                 <div className="form-input-wrap">
-                  <input type={showConfirmPwd ? 'text' : 'password'} className="form-input" value={pwdData.confirmPwd}
+                  <input type={showConfirmPwd ? 'text' : 'password'} className="form-input" autoComplete="new-password" value={pwdData.confirmPwd}
                     onChange={e => setPwdData(p => ({ ...p, confirmPwd: e.target.value }))}
                     placeholder="Repeat new password" />
                   <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPwd(p => !p)}>

@@ -62,9 +62,10 @@ html, body, #root { height: 100%; font-family: var(--font); color: var(--text1);
 @media(max-width:600px){.grid4,.grid3,.grid2{grid-template-columns:1fr;}}
 
 /* ========== SCROLLBAR ========== */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 14px; height: 14px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text3); }
 
 /* ========== AUTH PAGES ========== */
 .auth-wrapper {
@@ -1052,7 +1053,7 @@ input[type=range]::-webkit-slider-thumb {
 
 /* ========== CONSENT FORM ========== */
 .consent-scroll-body {
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 /* ========== NAV ITEM DISABLED ========== */
@@ -1122,8 +1123,8 @@ tbody tr { transition: background .1s; }
 }
 
 /* ========== IMPROVED SCROLLBAR ========== */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+::-webkit-scrollbar { width: 14px; height: 14px; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
 
 /* ========== TOGGLE SWITCH ========== */
