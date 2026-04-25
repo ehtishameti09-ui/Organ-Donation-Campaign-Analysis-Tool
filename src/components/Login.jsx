@@ -377,7 +377,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   required
-                  autoComplete="current-password"
+                  autoComplete="new-password"
                 />
                 <button
                   type="button"
@@ -725,6 +725,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                       onChange={(e) => setNewPassword(e.target.value)}
                       placeholder="Enter strong new password"
                       disabled={forgotLoading}
+                      autoComplete="new-password"
                       style={{ fontSize: '12px' }}
                     />
                   </div>
@@ -740,6 +741,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="Re-enter new password"
                       disabled={forgotLoading}
+                      autoComplete="new-password"
                       style={{
                         fontSize: '12px',
                         borderColor: confirmPassword && newPassword !== confirmPassword ? '#dc2626' : 'var(--border)',

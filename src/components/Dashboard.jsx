@@ -13,17 +13,19 @@ Chart.register(...registerables);
 
 // Document checklists - correct document keys per wizard
 const DONOR_DOC_CHECKLIST = [
-  { key: 'cnic', label: 'CNIC (Front & Back)', required: true },
-  { key: 'medicalCertificate', label: 'Medical Fitness Certificate', required: true },
-  { key: 'bloodTypeReport', label: 'Blood Type Lab Report', required: true },
+  { key: 'cnic_front', label: 'CNIC — Front Side', required: true },
+  { key: 'cnic_back', label: 'CNIC — Back Side', required: true },
+  { key: 'medicalCertificate', label: 'Medical Fitness Certificate', required: false },
+  { key: 'bloodTypeReport', label: 'Blood Type Lab Report', required: false },
   { key: 'consentWitness', label: 'Witness Signed Consent', required: false },
 ];
 
 const RECIPIENT_DOC_CHECKLIST = [
-  { key: 'cnic', label: 'CNIC (Front & Back)', required: true },
+  { key: 'cnic_front', label: 'CNIC — Front Side', required: true },
+  { key: 'cnic_back', label: 'CNIC — Back Side', required: true },
   { key: 'medicalReport', label: 'Medical Diagnosis Report', required: false },
-  { key: 'labReports', label: 'Recent Lab Reports', required: true },
-  { key: 'doctorReferral', label: 'Doctor Referral Letter', required: true },
+  { key: 'labReports', label: 'Recent Lab Reports', required: false },
+  { key: 'doctorReferral', label: 'Doctor Referral Letter', required: false },
   { key: 'insuranceProof', label: 'Insurance/Treatment Coverage', required: false },
 ];
 
@@ -367,6 +369,40 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
                       <strong>Current Medications:</strong> {selectedCase.currentMedications}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Profile Change History */}
+              {(selectedCase.profileChangelog || []).length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--warning)', letterSpacing: '.5px', marginBottom: '10px' }}>
+                    ✏️ Profile Change History ({selectedCase.profileChangelog.length} update{selectedCase.profileChangelog.length !== 1 ? 's' : ''})
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {[...selectedCase.profileChangelog].reverse().map((entry, i) => (
+                      <div key={i} style={{ border: '1px solid var(--warning-light)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                        <div style={{ background: 'var(--warning-light)', padding: '6px 12px', fontSize: '11px', fontWeight: '600', color: 'var(--warning)', display: 'flex', justifyContent: 'space-between' }}>
+                          <span>Update #{selectedCase.profileChangelog.length - i}</span>
+                          <span>{new Date(entry.changedAt).toLocaleString('en-PK', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                        </div>
+                        <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          {entry.fields.map((f, j) => (
+                            <div key={j} style={{ fontSize: '12px', display: 'grid', gridTemplateColumns: '120px 1fr 1fr', gap: '8px', alignItems: 'start' }}>
+                              <span style={{ fontWeight: '600', color: 'var(--text2)', fontSize: '11px', paddingTop: '2px' }}>{f.label}</span>
+                              <div style={{ background: '#fee2e2', borderRadius: '4px', padding: '3px 8px', color: '#991b1b' }}>
+                                <span style={{ fontSize: '9px', fontWeight: '700', display: 'block', marginBottom: '1px' }}>BEFORE</span>
+                                {f.oldValue || <em style={{ color: '#ccc' }}>empty</em>}
+                              </div>
+                              <div style={{ background: '#dcfce7', borderRadius: '4px', padding: '3px 8px', color: '#166534' }}>
+                                <span style={{ fontSize: '9px', fontWeight: '700', display: 'block', marginBottom: '1px' }}>AFTER</span>
+                                {f.newValue || <em style={{ color: '#ccc' }}>empty</em>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 

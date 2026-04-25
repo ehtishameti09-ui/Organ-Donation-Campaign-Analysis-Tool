@@ -33,18 +33,20 @@ const formatPKPhone = (value) => {
 
 // Document configurations
 const DONOR_DOCS = {
-  cnic: { label: 'CNIC (Front & Back)', required: true, maxSizeMB: 5, hint: 'Clear photo of both sides of your CNIC' },
-  medicalCertificate: { label: 'Medical Fitness Certificate', required: true, maxSizeMB: 5, hint: 'Issued by a licensed physician within the last 3 months' },
-  bloodTypeReport: { label: 'Blood Type Lab Report', required: true, maxSizeMB: 5, hint: 'Recent blood typing test report' },
-  consentWitness: { label: 'Witness Signed Consent (Optional)', required: false, maxSizeMB: 5, hint: 'Family member or guardian witness signature' },
+  cnic_front: { label: 'CNIC — Front Side', required: true, maxSizeMB: 5, hint: 'Photo of the front of your CNIC card' },
+  cnic_back: { label: 'CNIC — Back Side', required: true, maxSizeMB: 5, hint: 'Photo of the back of your CNIC card' },
+  medicalCertificate: { label: 'Medical Fitness Certificate', required: false, maxSizeMB: 5, hint: 'Issued by a licensed physician within the last 3 months' },
+  bloodTypeReport: { label: 'Blood Type Lab Report', required: false, maxSizeMB: 5, hint: 'Recent blood typing test report' },
+  consentWitness: { label: 'Witness Signed Consent', required: false, maxSizeMB: 5, hint: 'Family member or guardian witness signature' },
 };
 
 const RECIPIENT_DOCS = {
-  cnic: { label: 'CNIC (Front & Back)', required: true, maxSizeMB: 5, hint: 'Clear photo of both sides of your CNIC' },
-  medicalReport: { label: 'Medical Diagnosis Report (Optional)', required: false, maxSizeMB: 10, hint: 'Detailed diagnosis from your treating physician' },
-  labReports: { label: 'Recent Lab Reports', required: true, maxSizeMB: 10, hint: 'Latest blood work, organ function tests' },
-  doctorReferral: { label: 'Doctor Referral Letter', required: true, maxSizeMB: 5, hint: 'Letter from treating doctor recommending transplant' },
-  insuranceProof: { label: 'Insurance / Treatment Coverage (Optional)', required: false, maxSizeMB: 5, hint: 'Insurance card or coverage proof if applicable' },
+  cnic_front: { label: 'CNIC — Front Side', required: true, maxSizeMB: 5, hint: 'Photo of the front of your CNIC card' },
+  cnic_back: { label: 'CNIC — Back Side', required: true, maxSizeMB: 5, hint: 'Photo of the back of your CNIC card' },
+  medicalReport: { label: 'Medical Diagnosis Report', required: false, maxSizeMB: 10, hint: 'Detailed diagnosis from your treating physician' },
+  labReports: { label: 'Recent Lab Reports', required: false, maxSizeMB: 10, hint: 'Latest blood work, organ function tests' },
+  doctorReferral: { label: 'Doctor Referral Letter', required: false, maxSizeMB: 5, hint: 'Letter from treating doctor recommending transplant' },
+  insuranceProof: { label: 'Insurance / Treatment Coverage', required: false, maxSizeMB: 5, hint: 'Insurance card or coverage proof if applicable' },
 };
 
 // ============================================================
@@ -264,6 +266,84 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
 // ============================================================
 // DOCUMENT UPLOAD CARD
 // ============================================================
+// ============================================================
+// CNIC DOUBLE-UPLOAD CARD (front + back)
+// ============================================================
+const CnicDocCard = ({ uploadedFront, uploadedBack, onUpload, onRemove }) => {
+  const processFile = (side, file) => {
+    if (!file) return;
+    const validMime = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    if (!validMime.includes(file.type)) {
+      toast('Invalid file type. Please upload a JPEG, PNG, WebP, GIF, or PDF.', 'error'); return;
+    }
+    const maxBytes = 5 * 1024 * 1024;
+    if (file.size > maxBytes) { toast('File too large. Maximum 5 MB.', 'error'); return; }
+    if (file.size < 5000) { toast('File appears too small or blank.', 'warning'); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const key = side === 'front' ? 'cnic_front' : 'cnic_back';
+      onUpload(key, { name: file.name, type: file.type, size: file.size, data: reader.result, documentType: key, uploadedAt: new Date().toISOString() });
+      toast(`CNIC ${side} uploaded.`, 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const bothDone = uploadedFront && uploadedBack;
+
+  const Slot = ({ side, uploaded }) => (
+    <div style={{
+      flex: 1, border: `2px dashed ${uploaded ? 'var(--accent)' : 'var(--border)'}`,
+      borderRadius: 'var(--radius)', padding: '12px', background: uploaded ? 'var(--accent-light)' : 'var(--surface2)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', textAlign: 'center'
+    }}>
+      <div style={{ fontSize: '28px' }}>{uploaded ? '✅' : side === 'front' ? '🪪' : '🔄'}</div>
+      <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text1)' }}>
+        {side === 'front' ? 'Front Side' : 'Back Side'}
+      </div>
+      {uploaded
+        ? <div style={{ fontSize: '10px', color: 'var(--text2)', wordBreak: 'break-all' }}>{uploaded.name}</div>
+        : <div style={{ fontSize: '10px', color: 'var(--text3)' }}>{side === 'front' ? 'Photo with name & CNIC no.' : 'Photo with address & barcode'}</div>
+      }
+      <label style={{ cursor: 'pointer', marginTop: '4px' }}>
+        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf"
+          onChange={e => processFile(side, e.target.files[0])} />
+        <span className={`btn btn-xs ${uploaded ? 'btn-ghost' : 'btn-outline'}`} style={{ cursor: 'pointer' }}>
+          {uploaded ? 'Replace' : 'Upload'}
+        </span>
+      </label>
+      {uploaded && (
+        <button type="button" className="btn btn-xs"
+          onClick={() => onRemove(side === 'front' ? 'cnic_front' : 'cnic_back')}
+          style={{ background: 'var(--danger-light)', color: 'var(--danger)', border: 'none' }}>
+          Remove
+        </button>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{
+      border: `2px dashed ${bothDone ? 'var(--accent)' : 'var(--border)'}`,
+      borderRadius: 'var(--radius-lg)', padding: '14px', marginBottom: '10px',
+      background: bothDone ? 'var(--accent-light)' : 'var(--surface)'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+        <span style={{ fontSize: '16px' }}>🪪</span>
+        <div>
+          <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>
+            CNIC (Front &amp; Back) <span className="badge badge-red" style={{ fontSize: '9px', marginLeft: '4px' }}>Required</span>
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text2)' }}>Upload both sides of your National Identity Card</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <Slot side="front" uploaded={uploadedFront} />
+        <Slot side="back" uploaded={uploadedBack} />
+      </div>
+    </div>
+  );
+};
+
 const DocCard = ({ docKey, config, uploaded, onUpload, onRemove }) => {
   const [dragOver, setDragOver] = useState(false);
 
@@ -313,7 +393,10 @@ const DocCard = ({ docKey, config, uploaded, onUpload, onRemove }) => {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>
-            {config.label} {config.required && <span className="badge badge-red" style={{ fontSize: '9px', marginLeft: '4px' }}>Required</span>}
+            {config.label}
+            {config.required
+              ? <span className="badge badge-red" style={{ fontSize: '9px', marginLeft: '4px' }}>Required</span>
+              : <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)', marginLeft: '6px', fontStyle: 'italic' }}>optional</span>}
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text2)', marginTop: '2px' }}>{config.hint}</div>
           <div style={{ fontSize: '10px', color: 'var(--text3)', marginTop: '2px' }}>Max {config.maxSizeMB} MB • Images or PDF</div>
@@ -326,10 +409,6 @@ const DocCard = ({ docKey, config, uploaded, onUpload, onRemove }) => {
               {uploaded ? 'Replace' : 'Upload'}
             </span>
           </label>
-          <button type="button" className="btn btn-xs btn-ghost" onClick={() => setShowSample(true)}
-            style={{ fontSize: '11px' }}>
-            Sample Doc
-          </button>
           {uploaded && (
             <button type="button" className="btn btn-xs" onClick={() => onRemove(docKey)}
               style={{ background: 'var(--danger-light)', color: 'var(--danger)', border: 'none' }}>
@@ -415,6 +494,14 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const handleClinicalChange = (e) => {
     const { name, value, type, checked } = e.target;
+    if (name === 'dob' && value) {
+      // Clamp typed year: if the entered date is after maxDOB, reset to maxDOB
+      if (value > maxDOB) {
+        setClinical(prev => ({ ...prev, dob: maxDOB }));
+        toast('You must be at least 18 years old.', 'warning');
+        return;
+      }
+    }
     setClinical(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
@@ -453,14 +540,14 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
     if (!clinical.phone || !clinical.address) {
       toast('Phone and address are required.', 'error'); return false;
     }
-    if (!clinical.emergencyContactName || !clinical.emergencyContactPhone) {
-      toast('Please provide emergency contact details.', 'error'); return false;
+    if (isDonor && (!clinical.emergencyContactName || !clinical.emergencyContactPhone || !clinical.emergencyContactRelation)) {
+      toast('Please provide emergency contact name, phone, and relationship.', 'error'); return false;
     }
     if (isDonor && (!clinical.pledgedOrgans || clinical.pledgedOrgans.length === 0)) {
       toast('Please select at least one organ to pledge.', 'error'); return false;
     }
-    if (!isDonor && (!clinical.organNeeded || !clinical.diagnosis)) {
-      toast('Organ needed and diagnosis are required.', 'error'); return false;
+    if (!isDonor && !clinical.organNeeded) {
+      toast('Organ needed is required.', 'error'); return false;
     }
     return true;
   };
@@ -670,18 +757,18 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
             <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '12px' }}>Emergency Contact</h4>
             <div className="grid2">
               <div className="form-group">
-                <label className="form-label">Name *</label>
-                <input className="form-input" name="emergencyContactName" value={clinical.emergencyContactName} onChange={handleClinicalChange} required />
+                <label className="form-label">Name {isDonor ? '*' : <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)', fontStyle: 'italic' }}>optional</span>}</label>
+                <input className="form-input" name="emergencyContactName" value={clinical.emergencyContactName} onChange={handleClinicalChange} required={isDonor} />
               </div>
               <div className="form-group">
-                <label className="form-label">Phone *</label>
+                <label className="form-label">Phone {isDonor ? '*' : <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)', fontStyle: 'italic' }}>optional</span>}</label>
                 <input className="form-input" name="emergencyContactPhone" type="tel" value={clinical.emergencyContactPhone}
                   onChange={e => setClinical(p => ({ ...p, emergencyContactPhone: formatPKPhone(e.target.value) }))}
-                  required placeholder="03XX-XXXXXXX" />
+                  required={isDonor} placeholder="03XX-XXXXXXX" />
               </div>
               <div className="form-group">
-                <label className="form-label">Relationship</label>
-                <input className="form-input" name="emergencyContactRelation" value={clinical.emergencyContactRelation} onChange={handleClinicalChange} placeholder="e.g. Father, Spouse, Sibling" />
+                <label className="form-label">Relationship {isDonor ? '*' : <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)', fontStyle: 'italic' }}>optional</span>}</label>
+                <input className="form-input" name="emergencyContactRelation" value={clinical.emergencyContactRelation} onChange={handleClinicalChange} placeholder="e.g. Father, Spouse, Sibling" required={isDonor} />
               </div>
             </div>
           </div>
@@ -747,8 +834,8 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
                 </div>
               </div>
               <div className="form-group">
-                <label className="form-label">Primary Diagnosis *</label>
-                <input className="form-input" name="diagnosis" value={clinical.diagnosis} onChange={handleClinicalChange} required placeholder="e.g. End-Stage Renal Disease (ESRD)" />
+                <label className="form-label">Primary Diagnosis <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)', fontStyle: 'italic' }}>optional</span></label>
+                <input className="form-input" name="diagnosis" value={clinical.diagnosis} onChange={handleClinicalChange} placeholder="e.g. End-Stage Renal Disease (ESRD)" />
               </div>
               <div className="grid2">
                 <div className="form-group">
@@ -785,7 +872,13 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
             Please upload clear, legible copies. Blurry or low-quality scans may be flagged for re-upload.
           </p>
 
-          {Object.entries(docConfig).map(([key, config]) => (
+          <CnicDocCard
+            uploadedFront={documents.cnic_front}
+            uploadedBack={documents.cnic_back}
+            onUpload={handleDocUpload}
+            onRemove={handleDocRemove}
+          />
+          {Object.entries(docConfig).filter(([key]) => key !== 'cnic_front' && key !== 'cnic_back').map(([key, config]) => (
             <div key={key}>
               <DocCard docKey={key} config={config}
                 uploaded={documents[key]} onUpload={handleDocUpload} onRemove={handleDocRemove} />

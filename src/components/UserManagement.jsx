@@ -768,6 +768,7 @@ const UserManagement = ({ currentUser }) => {
                 <input
                   className="form-input"
                   type="password"
+                  autoComplete="new-password"
                   value={newAdmin.password}
                   onChange={(e) => setNewAdmin({ ...newAdmin, password: e.target.value })}
                   placeholder="Min. 8 characters"

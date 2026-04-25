@@ -176,9 +176,15 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     return `${local.slice(0, 4)}-${local.slice(4)}`;
   };
 
+  const formatHospitalId = (value) =>
+    value.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '').slice(0, 30);
+
   const handleInput = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: name === 'phone' ? formatPKPhone(value) : value }));
+    let formatted = value;
+    if (name === 'phone') formatted = formatPKPhone(value);
+    else if (name === 'registrationNumber' || name === 'licenseNumber') formatted = formatHospitalId(value);
+    setFormData(prev => ({ ...prev, [name]: formatted }));
   };
 
   // ============================================================
@@ -220,6 +226,14 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     if (formData.password !== formData.confirmPassword) {
       toast('Passwords do not match.', 'error'); return false;
     }
+    if (accountType !== 'hospital') {
+      if (!formData.phone.trim()) {
+        toast('Phone number is required.', 'error'); return false;
+      }
+      if (formData.phone.replace(/\D/g, '').length < 10) {
+        toast('Please enter a valid phone number.', 'error'); return false;
+      }
+    }
     const users = getAllUsers();
     if (users.some(u => u.email === formData.email && !u.deleted)) {
       toast('This email is already registered.', 'error'); return false;
@@ -231,6 +245,41 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     if (!formData.hospitalName.trim() || !formData.registrationNumber.trim() || !formData.licenseNumber.trim() || !formData.phone.trim() || !formData.hospitalAddress.trim()) {
       toast('Please fill all hospital information fields.', 'error'); return false;
     }
+
+    const regNo = formData.registrationNumber.trim();
+    const licNo = formData.licenseNumber.trim();
+
+    // Registration Number: min 5 chars, must contain at least one letter and one digit
+    if (regNo.length < 5) {
+      toast('Registration Number must be at least 5 characters (e.g. PHSA-2024-001).', 'error'); return false;
+    }
+    if (!/[A-Z]/.test(regNo)) {
+      toast('Registration Number must contain at least one letter (e.g. PHSA-2024-001).', 'error'); return false;
+    }
+    if (!/[0-9]/.test(regNo)) {
+      toast('Registration Number must contain at least one digit (e.g. PHSA-2024-001).', 'error'); return false;
+    }
+
+    // License Number: min 5 chars, must contain at least one letter and one digit
+    if (licNo.length < 5) {
+      toast('License Number must be at least 5 characters (e.g. LIC-PMDC-001).', 'error'); return false;
+    }
+    if (!/[A-Z]/.test(licNo)) {
+      toast('License Number must contain at least one letter (e.g. LIC-PMDC-001).', 'error'); return false;
+    }
+    if (!/[0-9]/.test(licNo)) {
+      toast('License Number must contain at least one digit (e.g. LIC-PMDC-001).', 'error'); return false;
+    }
+
+    // Uniqueness — no two hospitals share the same registration or license number
+    const existing = getAllUsers().filter(u => u.role === 'hospital');
+    if (existing.some(u => u.registrationNumber && u.registrationNumber.toUpperCase() === regNo)) {
+      toast('This Registration Number is already in use by another hospital.', 'error'); return false;
+    }
+    if (existing.some(u => u.licenseNumber && u.licenseNumber.toUpperCase() === licNo)) {
+      toast('This License Number is already in use by another hospital.', 'error'); return false;
+    }
+
     return true;
   };
 
@@ -448,16 +497,16 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                   onChange={handleInput} placeholder="your@email.com" required />
               </div>
               <div className="form-group">
-                <label className="form-label">Phone Number</label>
+                <label className="form-label">Phone Number *</label>
                 <input className="form-input" name="phone" type="tel" value={formData.phone}
-                  onChange={handleInput} placeholder="03XX-XXXXXXX" />
+                  onChange={handleInput} placeholder="03XX-XXXXXXX" required />
               </div>
               <div className="grid2">
                 <div className="form-group">
                   <label className="form-label">Password *</label>
                   <div className="form-input-wrap">
                     <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
-                      onChange={handleInput} placeholder="Min. 8 chars, 1 upper, 1 number" required />
+                      onChange={handleInput} placeholder="Min. 8 chars, 1 upper, 1 number" required autoComplete="new-password" />
                     <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
                       <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -469,7 +518,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                   <label className="form-label">Confirm Password *</label>
                   <div className="form-input-wrap">
                     <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
-                      onChange={handleInput} placeholder="Repeat password" required />
+                      onChange={handleInput} placeholder="Repeat password" required autoComplete="new-password" />
                     <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
                       <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -573,7 +622,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                     <label className="form-label">Password *</label>
                     <div className="form-input-wrap">
                       <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
-                        onChange={handleInput} placeholder="Min. 8 chars" required />
+                        onChange={handleInput} placeholder="Min. 8 chars" required autoComplete="new-password" />
                       <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -585,7 +634,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                     <label className="form-label">Confirm Password *</label>
                     <div className="form-input-wrap">
                       <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
-                        onChange={handleInput} placeholder="Repeat" required />
+                        onChange={handleInput} placeholder="Repeat" required autoComplete="new-password" />
                       <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -614,12 +663,18 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                   <div className="form-group">
                     <label className="form-label">Registration Number *</label>
                     <input className="form-input" name="registrationNumber" value={formData.registrationNumber}
-                      onChange={handleInput} placeholder="e.g. PHSA-2024-001" required />
+                      onChange={handleInput} placeholder="e.g. PHSA-2024-001" maxLength={30} required />
+                    <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
+                      Letters, digits and dashes only · min 5 chars · auto-uppercased
+                    </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label">License Number *</label>
                     <input className="form-input" name="licenseNumber" value={formData.licenseNumber}
-                      onChange={handleInput} placeholder="e.g. LIC-PMDC-001" required />
+                      onChange={handleInput} placeholder="e.g. LIC-PMDC-001" maxLength={30} required />
+                    <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
+                      Letters, digits and dashes only · min 5 chars · must be unique
+                    </div>
                   </div>
                 </div>
                 <div className="form-group">
