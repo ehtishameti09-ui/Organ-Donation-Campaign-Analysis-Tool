@@ -4,7 +4,19 @@ import {
   getVerificationMetrics, getAllUsers, saveUsers,
   createNotification, logUserAction, addActivity
 } from '../utils/auth';
+import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
+
+// Helper to download a single document file (used in row download button)
+const downloadDocument = (doc) => {
+  if (!doc?.data) return;
+  const link = document.createElement('a');
+  link.href = doc.data;
+  link.download = doc.name || 'document';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const ORGANS = ['kidney', 'liver', 'heart', 'lung', 'pancreas', 'cornea', 'bone marrow'];
@@ -392,6 +404,31 @@ const DonorManagement = ({ currentUser }) => {
                 </div>
               </div>
 
+              {/* Patient Info Header — View / Download */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                  Patient Information
+                </div>
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    type="button"
+                    className="btn btn-xs btn-outline"
+                    onClick={() => generateRegistrationPDF(selectedDonor)}
+                    title="Open full patient report in a new tab"
+                  >
+                    👁 View Full Info
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-xs btn-primary"
+                    onClick={() => generateRegistrationPDF(selectedDonor)}
+                    title="Open patient report — use Save as PDF / Print to download"
+                  >
+                    ⬇ Download Report
+                  </button>
+                </div>
+              </div>
+
               {/* Donor Info */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                 {[
@@ -442,13 +479,14 @@ const DonorManagement = ({ currentUser }) => {
                               {doc.documentType?.replace(/([A-Z])/g, ' $1').trim()} • {(doc.size / 1024).toFixed(1)} KB
                             </div>
                           </div>
-                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                             {ds.status && (
                               <span className={`badge ${ds.status === 'approved' ? 'badge-green' : ds.status === 'rejected' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: '10px' }}>
                                 {ds.status}
                               </span>
                             )}
-                            <button className="btn btn-xs btn-outline" onClick={() => setLightboxDoc(doc)}>View</button>
+                            <button className="btn btn-xs btn-outline" onClick={() => setLightboxDoc(doc)} title="View document in viewer">👁 View</button>
+                            <button className="btn btn-xs btn-outline" onClick={() => downloadDocument(doc)} title="Download document file">⬇ Download</button>
                             <button className="btn btn-ghost btn-xs" onClick={() => handleDocStatus(doc.documentType, 'approved')}>✓ OK</button>
                             <button className="btn btn-xs" style={{ background: 'var(--danger-light)', color: 'var(--danger)', border: 'none' }}
                               onClick={() => handleDocStatus(doc.documentType, 'rejected')}>✗ Reject</button>

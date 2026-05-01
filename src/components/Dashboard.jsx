@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Chart, registerables } from 'chart.js';
 import {
-  getRecentActivities, getApprovedHospitals,
+  getRecentActivities, getRecentActivitiesForUser, getApprovedHospitals,
   getAllUsers, getDonors, getRecipients, getVerificationMetrics,
   getHospitalAssignedCases, hospitalReviewCase,
   submitMultiAdminAppeal, getUserAppeals, submitHospitalCaseAppeal, getUserCaseAppeals
@@ -676,7 +676,7 @@ const Dashboard = ({ user, onNavigate }) => {
 
   useEffect(() => {
     // Load real data
-    setActivities(getRecentActivities(8));
+    setActivities(getRecentActivitiesForUser(user, 8));
     setApprovedHospitals(getApprovedHospitals());
     setMetrics(getVerificationMetrics());
 
@@ -950,22 +950,17 @@ const Dashboard = ({ user, onNavigate }) => {
               <div className="card-title">Recent Activity</div>
               <div className="card-sub">Real-time system events</div>
             </div>
-            {activities.length === 0 ? (
-              <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>
-                No recent activity yet. Activity will appear as users register and actions are performed.
-              </div>
-            ) : (
-              activities.map((act, i) => (
-                <ActivityItem key={i} icon={act.icon || '📋'} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
-              ))
-            )}
-            {activities.length > 0 && (
-              <>
-                {/* Fallback static activities */}
-                <ActivityItem icon="💉" action="Transplant completed" user="City General Hospital" time="1h ago" />
-                <ActivityItem icon="🔗" action="Organ matched" user="System Auto-Match" time="2h ago" />
-              </>
-            )}
+            <div className="scroll-list-md">
+              {activities.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>
+                  No recent activity yet. Activity will appear as users register and actions are performed.
+                </div>
+              ) : (
+                activities.map((act, i) => (
+                  <ActivityItem key={i} icon={act.icon || '📋'} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
+                ))
+              )}
+            </div>
           </div>
 
           <div className="card">
@@ -1062,13 +1057,15 @@ const Dashboard = ({ user, onNavigate }) => {
             <div className="card-header">
               <div className="card-title">Recent Activity</div>
             </div>
-            {activities.length === 0 ? (
-              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>No recent activity</div>
-            ) : (
-              activities.slice(0, 4).map((act, i) => (
-                <ActivityItem key={i} icon={act.icon} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
-              ))
-            )}
+            <div className="scroll-list-sm">
+              {activities.length === 0 ? (
+                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>No recent activity</div>
+              ) : (
+                activities.map((act, i) => (
+                  <ActivityItem key={i} icon={act.icon} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
+                ))
+              )}
+            </div>
           </div>
         </div>
       </div>

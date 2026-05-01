@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getAllUsers, saveUsers, getCreds, saveCreds, updateUserStatus, deleteUserById, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, approveRegistration, rejectRegistration, requestAdditionalInfo, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications } from '../utils/auth';
+import { getAllUsers, saveUsers, getCreds, saveCreds, updateUserStatus, deleteUserById, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, approveRegistration, rejectRegistration, requestAdditionalInfo, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
@@ -218,21 +218,49 @@ const UserManagement = ({ currentUser }) => {
   const handleAddAdmin = () => {
     const { name, email, password, linkedHospitalId, linkedHospitalName } = newAdmin;
 
-    if (!name || !email || password.length < 8) {
-      toast('Please fill all fields correctly. Password must be at least 8 characters.', 'error');
+    // Name validation
+    const nameCheck = validateName(name);
+    if (!nameCheck.ok) {
+      toast(nameCheck.error, 'error');
+      return;
+    }
+
+    // Email validation
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.ok) {
+      toast(emailCheck.error, 'error');
+      return;
+    }
+
+    // Password strength validation
+    if (!password || password.length < 8) {
+      toast('Password must be at least 8 characters.', 'error');
+      return;
+    }
+    if (!/[A-Z]/.test(password)) {
+      toast('Password must contain at least one uppercase letter.', 'error');
+      return;
+    }
+    if (!/[a-z]/.test(password)) {
+      toast('Password must contain at least one lowercase letter.', 'error');
+      return;
+    }
+    if (!/[0-9]/.test(password)) {
+      toast('Password must contain at least one number.', 'error');
       return;
     }
 
     const allUsers = getAllUsers();
-    if (allUsers.some(u => u.email === email)) {
+    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase() && !u.deleted)) {
       toast('Email already in use.', 'error');
       return;
     }
 
+    const newAdminId = 'admin-' + Date.now();
     allUsers.push({
-      id: 'admin-' + Date.now(),
-      email,
-      name,
+      id: newAdminId,
+      email: email.toLowerCase().trim(),
+      name: name.trim(),
       role: 'admin',
       status: 'approved',
       linkedHospitalId: linkedHospitalId || null,
@@ -243,8 +271,17 @@ const UserManagement = ({ currentUser }) => {
     saveUsers(allUsers);
 
     const creds = getCreds();
-    creds[email] = password;
+    creds[email.toLowerCase().trim()] = password;
     saveCreds(creds);
+
+    // Log activity for transparency (super_admin & hospital scope)
+    if (linkedHospitalId) {
+      addActivity('admin_added', '👤', 'Hospital Admin Assigned',
+        `${name.trim()} was assigned as admin to ${linkedHospitalName}`, linkedHospitalId);
+    } else {
+      addActivity('admin_added', '👤', 'New Admin Created',
+        `${name.trim()} added as a general administrator`, currentUser.id);
+    }
 
     toast('Administrator added successfully.', 'success');
     setShowAddModal(false);
@@ -429,44 +466,76 @@ const UserManagement = ({ currentUser }) => {
 
             {/* Approved Hospitals Tab */}
             {hospitalTab === 'approved' && (
-              <table>
-                <thead>
-                  <tr>
-                    <th>Hospital</th>
-                    <th>Registration #</th>
-                    <th>Approved</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {approvedHospitals.length > 0 ? (
-                    approvedHospitals.map(hospital => (
-                      <tr key={hospital.id}>
-                        <td>{hospital.hospitalName}</td>
-                        <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.registrationNumber}</td>
-                        <td style={{ fontSize: '12px', color: 'var(--accent)' }}>✓ Approved</td>
-                        <td style={{ textAlign: 'right' }}>
+              <div className="scroll-list-lg" style={{ padding: '12px' }}>
+                {approvedHospitals.length > 0 ? (
+                  approvedHospitals.map(hospital => {
+                    const admins = getHospitalAdmins(hospital.id);
+                    return (
+                      <div key={hospital.id} style={{ background: 'var(--surface2)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: '12px', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                          <div style={{ flex: 1, minWidth: '220px' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)', marginBottom: '4px' }}>
+                              🏥 {hospital.hospitalName}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text2)' }}>
+                              Reg #: <strong>{hospital.registrationNumber || '—'}</strong>
+                              {' · '}
+                              License: <strong>{hospital.licenseNumber || '—'}</strong>
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '2px' }}>✓ Approved</div>
+                          </div>
                           <button
-                            className="btn btn-sm btn-outline"
+                            className="btn btn-sm btn-primary"
                             onClick={() => {
-                              setNewAdmin(prev => ({ ...prev, linkedHospitalId: hospital.id, linkedHospitalName: hospital.hospitalName }));
+                              setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: hospital.id, linkedHospitalName: hospital.hospitalName });
                               setShowAddModal(true);
                             }}
                           >
-                            Assign Admin
+                            + Assign Admin
                           </button>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan="4" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
-                        No approved hospitals
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                        </div>
+
+                        {/* Admin list under this hospital */}
+                        <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px dashed var(--border)' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '.5px', color: 'var(--text3)', marginBottom: '8px' }}>
+                            👤 Assigned Admins ({admins.length})
+                          </div>
+                          {admins.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {admins.map(admin => (
+                                <div key={admin.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface)', borderRadius: 'var(--radius)', padding: '8px 12px', border: '1px solid var(--border)' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0 }}>
+                                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '700', flexShrink: 0 }}>
+                                      {admin.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                      <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {admin.name}
+                                      </div>
+                                      <div style={{ fontSize: '11px', color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {admin.email}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <span className="badge badge-green" style={{ flexShrink: 0 }}>Active</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic', padding: '8px 0' }}>
+                              No admins assigned yet. Click "Assign Admin" to add one.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                    No approved hospitals
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Rejected Hospitals Tab */}
