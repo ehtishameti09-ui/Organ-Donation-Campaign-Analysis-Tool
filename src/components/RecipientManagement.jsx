@@ -3,6 +3,7 @@ import {
   getRecipients, getRecipientsByHospital, updateRecipientCase, calculateSurvivalEstimate,
   getWaitingTimeAnalytics, createNotification, getAllUsers, saveUsers
 } from '../utils/auth';
+import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
 
 const ORGANS = ['kidney', 'liver', 'heart', 'lung', 'pancreas', 'cornea', 'bone marrow'];
@@ -363,7 +364,25 @@ const RecipientManagement = ({ currentUser }) => {
                 <h3>Case Management — {selectedRecipient.name}</h3>
                 <div style={{ fontSize: '12px', color: 'var(--text3)', marginTop: '2px' }}>{selectedRecipient.email}</div>
               </div>
-              <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-outline"
+                  onClick={() => generateRegistrationPDF(selectedRecipient)}
+                  title="Open full patient report in a new tab"
+                >
+                  👁 View Info
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-xs btn-primary"
+                  onClick={() => generateRegistrationPDF(selectedRecipient)}
+                  title="Open patient report — use Save as PDF / Print to download"
+                >
+                  ⬇ Download Report
+                </button>
+                <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+              </div>
             </div>
             <div className="modal-body" style={{ maxHeight: '75vh' }}>
 

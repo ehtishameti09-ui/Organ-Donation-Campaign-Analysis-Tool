@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { registerUser, registerBasicAccount, getAllUsers, addActivity } from '../utils/auth';
+import { registerUser, registerBasicAccount, getAllUsers, addActivity, validateEmail, validateName } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 // ============================================================
@@ -179,11 +179,18 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const formatHospitalId = (value) =>
     value.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '').slice(0, 30);
 
+  const formatPersonName = (value) => {
+    // Strip digits and most special chars; keep letters, spaces, dots, hyphens, apostrophes
+    return value.replace(/[^A-Za-zÀ-ÿ\s.'\-]/g, '').replace(/\s{2,}/g, ' ').slice(0, 60);
+  };
+
   const handleInput = (e) => {
     const { name, value } = e.target;
     let formatted = value;
     if (name === 'phone') formatted = formatPKPhone(value);
     else if (name === 'registrationNumber' || name === 'licenseNumber') formatted = formatHospitalId(value);
+    else if (name === 'name' || name === 'contactPerson') formatted = formatPersonName(value);
+    else if (name === 'email') formatted = value.toLowerCase().slice(0, 100);
     setFormData(prev => ({ ...prev, [name]: formatted }));
   };
 
@@ -196,15 +203,18 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const validateCredentials = () => {
     const displayName = accountType === 'hospital' ? formData.contactPerson : formData.name;
 
-    if (!displayName || !displayName.trim()) {
-      toast('Please enter your full name.', 'error'); return false;
+    // Name validation (centralised)
+    const nameCheck = validateName(displayName);
+    if (!nameCheck.ok) {
+      toast(nameCheck.error, 'error'); return false;
     }
-    if (!formData.email.trim()) {
-      toast('Email is required.', 'error'); return false;
+
+    // Email validation (centralised)
+    const emailCheck = validateEmail(formData.email);
+    if (!emailCheck.ok) {
+      toast(emailCheck.error, 'error'); return false;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      toast('Please enter a valid email address.', 'error'); return false;
-    }
+
     if (!formData.password) {
       toast('Password is required.', 'error'); return false;
     }
@@ -235,7 +245,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
       }
     }
     const users = getAllUsers();
-    if (users.some(u => u.email === formData.email && !u.deleted)) {
+    if (users.some(u => u.email.toLowerCase() === formData.email.trim().toLowerCase() && !u.deleted)) {
       toast('This email is already registered.', 'error'); return false;
     }
     return true;
@@ -246,33 +256,54 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
       toast('Please fill all hospital information fields.', 'error'); return false;
     }
 
-    const regNo = formData.registrationNumber.trim();
-    const licNo = formData.licenseNumber.trim();
+    const regNo = formData.registrationNumber.trim().toUpperCase();
+    const licNo = formData.licenseNumber.trim().toUpperCase();
 
-    // Registration Number: min 5 chars, must contain at least one letter and one digit
-    if (regNo.length < 5) {
-      toast('Registration Number must be at least 5 characters (e.g. PHSA-2024-001).', 'error'); return false;
+    // Format: must look like CODE-YEAR-NUMBER (letters-digits-digits) with optional sub-segments
+    // Examples valid: PHSA-2024-001, MOH-PK-2023-1234, PMDC/2024/0567
+    const idShape = /^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/;
+
+    // Registration Number checks
+    if (regNo.length < 7) {
+      toast('Registration Number must be at least 7 characters (e.g. PHSA-2024-001).', 'error'); return false;
+    }
+    if (regNo.length > 30) {
+      toast('Registration Number is too long (max 30 characters).', 'error'); return false;
     }
     if (!/[A-Z]/.test(regNo)) {
-      toast('Registration Number must contain at least one letter (e.g. PHSA-2024-001).', 'error'); return false;
+      toast('Registration Number must contain at least one letter.', 'error'); return false;
     }
     if (!/[0-9]/.test(regNo)) {
-      toast('Registration Number must contain at least one digit (e.g. PHSA-2024-001).', 'error'); return false;
+      toast('Registration Number must contain at least one digit.', 'error'); return false;
+    }
+    if (!idShape.test(regNo)) {
+      toast('Registration Number must follow format CODE-YEAR-NUMBER (e.g. PHSA-2024-001).', 'error'); return false;
     }
 
-    // License Number: min 5 chars, must contain at least one letter and one digit
-    if (licNo.length < 5) {
-      toast('License Number must be at least 5 characters (e.g. LIC-PMDC-001).', 'error'); return false;
+    // License Number checks
+    if (licNo.length < 7) {
+      toast('License Number must be at least 7 characters (e.g. LIC-PMDC-001).', 'error'); return false;
+    }
+    if (licNo.length > 30) {
+      toast('License Number is too long (max 30 characters).', 'error'); return false;
     }
     if (!/[A-Z]/.test(licNo)) {
-      toast('License Number must contain at least one letter (e.g. LIC-PMDC-001).', 'error'); return false;
+      toast('License Number must contain at least one letter.', 'error'); return false;
     }
     if (!/[0-9]/.test(licNo)) {
-      toast('License Number must contain at least one digit (e.g. LIC-PMDC-001).', 'error'); return false;
+      toast('License Number must contain at least one digit.', 'error'); return false;
+    }
+    if (!idShape.test(licNo)) {
+      toast('License Number must follow format CODE-AUTHORITY-NUMBER (e.g. LIC-PMDC-001).', 'error'); return false;
+    }
+
+    // Reg and license must not be identical
+    if (regNo === licNo) {
+      toast('Registration Number and License Number cannot be identical.', 'error'); return false;
     }
 
     // Uniqueness — no two hospitals share the same registration or license number
-    const existing = getAllUsers().filter(u => u.role === 'hospital');
+    const existing = getAllUsers().filter(u => u.role === 'hospital' && !u.deleted);
     if (existing.some(u => u.registrationNumber && u.registrationNumber.toUpperCase() === regNo)) {
       toast('This Registration Number is already in use by another hospital.', 'error'); return false;
     }
@@ -506,7 +537,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                   <label className="form-label">Password *</label>
                   <div className="form-input-wrap">
                     <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
-                      onChange={handleInput} placeholder="Min. 8 chars, 1 upper, 1 number" required autoComplete="new-password" />
+                      onChange={handleInput} placeholder="Strong password" required autoComplete="new-password" />
                     <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
                       <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
@@ -665,7 +696,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                     <input className="form-input" name="registrationNumber" value={formData.registrationNumber}
                       onChange={handleInput} placeholder="e.g. PHSA-2024-001" maxLength={30} required />
                     <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
-                      Letters, digits and dashes only · min 5 chars · auto-uppercased
+                      Format: CODE-YEAR-NUMBER · letters &amp; digits with dashes · min 7 chars
                     </div>
                   </div>
                   <div className="form-group">
@@ -673,7 +704,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                     <input className="form-input" name="licenseNumber" value={formData.licenseNumber}
                       onChange={handleInput} placeholder="e.g. LIC-PMDC-001" maxLength={30} required />
                     <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
-                      Letters, digits and dashes only · min 5 chars · must be unique
+                      Format: CODE-AUTHORITY-NUMBER · must be unique &amp; different from Reg #
                     </div>
                   </div>
                 </div>

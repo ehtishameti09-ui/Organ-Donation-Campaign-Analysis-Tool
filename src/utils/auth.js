@@ -1,5 +1,83 @@
 // Authentication and User Management Utilities
 
+// ===== INPUT VALIDATORS =====
+
+// Common disposable / invalid email domains we reject
+const INVALID_EMAIL_DOMAINS = [
+  'test.com', 'example.com', 'example.org', 'test.test',
+  'mailinator.com', 'tempmail.com', 'fakeinbox.com', 'trashmail.com',
+  '10minutemail.com', 'yopmail.com', 'guerrillamail.com',
+];
+
+// Allowed top-level domains (basic whitelist of common ones)
+const VALID_TLD_REGEX = /\.(com|org|net|edu|gov|pk|io|co|uk|in|info|biz|me|app|tech|health|hospital|ai)(\.[a-z]{2})?$/i;
+
+// Validate email address with strict checks
+// Returns { ok: bool, error?: string }
+export const validateEmail = (email) => {
+  if (!email || typeof email !== 'string') return { ok: false, error: 'Email is required.' };
+  const e = email.trim().toLowerCase();
+  if (e.length < 5) return { ok: false, error: 'Email is too short.' };
+  if (e.length > 100) return { ok: false, error: 'Email is too long.' };
+
+  // Standard structure check: local@domain.tld
+  const basic = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
+  if (!basic.test(e)) return { ok: false, error: 'Please enter a valid email address.' };
+
+  // No consecutive dots, no leading/trailing dot in local part
+  const [local, domain] = e.split('@');
+  if (!local || !domain) return { ok: false, error: 'Invalid email format.' };
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) {
+    return { ok: false, error: 'Email username cannot start/end with a dot or contain consecutive dots.' };
+  }
+  if (domain.startsWith('-') || domain.endsWith('-') || domain.includes('..')) {
+    return { ok: false, error: 'Email domain is invalid.' };
+  }
+
+  // TLD whitelist
+  if (!VALID_TLD_REGEX.test(e)) {
+    return { ok: false, error: 'Email must use a valid domain (e.g. .com, .org, .pk, .edu).' };
+  }
+
+  // Reject disposable / fake domains
+  if (INVALID_EMAIL_DOMAINS.includes(domain)) {
+    return { ok: false, error: 'This email domain is not accepted. Please use a real email.' };
+  }
+
+  return { ok: true };
+};
+
+// Validate person's name (allows letters, spaces, dots, hyphens, apostrophes)
+// Returns { ok: bool, error?: string }
+export const validateName = (name) => {
+  if (!name || typeof name !== 'string') return { ok: false, error: 'Name is required.' };
+  const n = name.trim();
+  if (n.length < 2) return { ok: false, error: 'Name must be at least 2 characters.' };
+  if (n.length > 60) return { ok: false, error: 'Name must be 60 characters or fewer.' };
+
+  // Allow only letters (incl. accents), spaces, dots, hyphens, apostrophes
+  if (!/^[A-Za-zÀ-ÿ\s.'\-]+$/.test(n)) {
+    return { ok: false, error: 'Name can only contain letters, spaces, dots, hyphens, and apostrophes.' };
+  }
+
+  // No digits anywhere
+  if (/\d/.test(n)) {
+    return { ok: false, error: 'Name cannot contain numbers.' };
+  }
+
+  // Must have at least 2 letters in a row (avoid single chars only)
+  if (!/[A-Za-z]{2,}/.test(n)) {
+    return { ok: false, error: 'Name must contain at least one real word.' };
+  }
+
+  // Reject names that are only spaces/punctuation
+  if (n.replace(/[\s.'\-]/g, '').length < 2) {
+    return { ok: false, error: 'Please enter a valid name.' };
+  }
+
+  return { ok: true };
+};
+
 // Utility: Calculate age from date of birth
 export const calculateAgeFromDOB = (dobString) => {
   if (!dobString) return '';
@@ -828,6 +906,90 @@ export const getRecentActivities = (limit = 20) => {
   return activities.slice(0, limit);
 };
 
+// Get activities filtered & sanitized for a specific user
+// - super_admin: hospital registrations, admin assignments (no patient PII)
+// - admin (general): all admin actions
+// - admin (linked to hospital): only their hospital's events
+// - hospital: events involving their donors/recipients/cases
+// - donor/recipient: only their own activities
+// - other roles: only events tagged to their userId
+export const getRecentActivitiesForUser = (currentUser, limit = 20) => {
+  const all = JSON.parse(localStorage.getItem('odcat_activities') || '[]');
+  if (!currentUser) return [];
+
+  const users = getAllUsers();
+  const findUserById = (id) => users.find(u => u.id === id);
+
+  // Helper: redact a name to first name + role abbreviation for non-privileged viewers
+  const redactDescription = (desc) => {
+    // Replace anything that looks like a CNIC pattern xxxxx-xxxxxxx-x with masked form
+    return (desc || '').replace(/\b\d{5}-\d{7}-\d\b/g, '*****-*******-*');
+  };
+
+  let filtered = [];
+
+  if (currentUser.role === 'super_admin') {
+    // Super admin sees: hospital registrations, hospital approvals/rejections, admin actions on hospitals
+    const allowedTypes = new Set([
+      'hospital_registered', 'hospital_approved', 'hospital_rejected',
+      'hospital_info_requested', 'hospital_resubmit', 'admin_added',
+    ]);
+    filtered = all.filter(a => allowedTypes.has(a.type));
+  } else if (currentUser.role === 'admin') {
+    if (currentUser.linkedHospitalId) {
+      // Linked hospital admin - only events involving their hospital's users
+      const hospitalUserIds = new Set(
+        users
+          .filter(u =>
+            u.preferredHospitalId === currentUser.linkedHospitalId ||
+            u.hospitalId === currentUser.linkedHospitalId ||
+            u.id === currentUser.linkedHospitalId
+          )
+          .map(u => u.id)
+      );
+      filtered = all.filter(a =>
+        hospitalUserIds.has(a.userId) ||
+        a.userId === currentUser.id ||
+        a.type === 'hospital_approved' && a.userId === currentUser.linkedHospitalId
+      );
+    } else {
+      // General admin sees user-management events (bans, appeals, deletions, employees, hospitals)
+      const allowedTypes = new Set([
+        'hospital_registered', 'hospital_approved', 'hospital_rejected', 'hospital_info_requested',
+        'admin_added', 'employee_added', 'employee_updated', 'employee_status',
+        'multi_appeal_approved', 'multi_appeal_denied',
+      ]);
+      filtered = all.filter(a =>
+        allowedTypes.has(a.type) ||
+        a.type?.startsWith('user_') ||
+        a.type?.startsWith('ban_') ||
+        a.type?.startsWith('appeal_')
+      );
+    }
+  } else if (currentUser.role === 'hospital') {
+    // Hospital sees activities for users assigned to them + their own actions
+    const hospitalUserIds = new Set(
+      users
+        .filter(u =>
+          u.preferredHospitalId === currentUser.id ||
+          u.hospitalId === currentUser.id
+        )
+        .map(u => u.id)
+    );
+    hospitalUserIds.add(currentUser.id);
+    filtered = all.filter(a => hospitalUserIds.has(a.userId));
+  } else {
+    // Donor / recipient / doctor / data_entry / auditor — only see their own activities
+    filtered = all.filter(a => a.userId === currentUser.id);
+  }
+
+  // Redact PII in descriptions and return up to limit
+  return filtered.slice(0, limit).map(a => ({
+    ...a,
+    description: redactDescription(a.description),
+  }));
+};
+
 // ===== DONOR MANAGEMENT =====
 
 export const getDonors = () => {
@@ -1009,6 +1171,15 @@ export const getApprovedHospitals = () => {
 
 export const getRejectedHospitals = () => {
   return getAllUsers().filter(u => u.role === 'hospital' && u.status === 'rejected' && !u.deleted);
+};
+
+// Get all hospital admins (admin role with linkedHospitalId)
+export const getHospitalAdmins = (hospitalId) => {
+  return getAllUsers().filter(u =>
+    u.role === 'admin' &&
+    u.linkedHospitalId === hospitalId &&
+    !u.deleted
+  );
 };
 
 export const uploadAdditionalHospitalDocuments = (hospitalId, newDocuments) => {

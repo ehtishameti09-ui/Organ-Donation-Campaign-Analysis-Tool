@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { login, getAllUsers, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, requestPasswordReset, validateResetToken, resetPassword, submitAppeal } from '../utils/auth';
+import { login, getAllUsers, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, requestPasswordReset, validateResetToken, resetPassword, submitAppeal, validateEmail } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
@@ -100,8 +100,9 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   };
 
   const handleForgotPassword = () => {
-    if (!forgotEmail.trim()) {
-      toast('🚨 Please enter your email address.', 'error');
+    const emailCheck = validateEmail(forgotEmail);
+    if (!emailCheck.ok) {
+      toast(emailCheck.error, 'error');
       return;
     }
 
@@ -199,12 +200,24 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    // Validate email format before hitting backend
+    const emailCheck = validateEmail(email);
+    if (!emailCheck.ok) {
+      toast(emailCheck.error, 'error');
+      return;
+    }
+    if (!password.trim()) {
+      toast('Please enter your password.', 'error');
+      return;
+    }
+
     setLoading(true);
 
     setTimeout(() => {
       // Check if user exists and their status
       const allUsers = getAllUsers();
-      const userRecord = allUsers.find(u => u.email === email);
+      const userRecord = allUsers.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
 
       // Check for banned users
       if (userRecord && userRecord.banned) {

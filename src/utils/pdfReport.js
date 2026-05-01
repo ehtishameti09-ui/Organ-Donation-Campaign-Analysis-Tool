@@ -20,14 +20,6 @@ export const generateRegistrationPDF = (user) => {
   };
 
   const docs = (user.uploadedDocuments || []);
-  const docRows = docs.length
-    ? docs.map(d => `
-        <div class="doc-item">
-          <span class="doc-check">✓</span>
-          <span class="doc-name">${d.name || d.documentType || 'Document'}</span>
-          <span class="doc-date">${d.uploadedAt ? new Date(d.uploadedAt).toLocaleDateString('en-PK') : ''}</span>
-        </div>`).join('')
-    : '<div class="doc-item" style="color:#999;font-style:italic;">No documents on record</div>';
 
   const pledgedOrgans = Array.isArray(user.pledgedOrgans)
     ? user.pledgedOrgans.join(' &nbsp;·&nbsp; ')
@@ -53,29 +45,50 @@ export const generateRegistrationPDF = (user) => {
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-  body {
-    font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
-    font-size: 12.5px;
-    color: #1e293b;
-    background: #f8fafc;
-    min-height: 100vh;
+  /* Force browsers to print background colors / gradients */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
 
-  @page { size: A4; margin: 0; }
+  html, body {
+    font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 12.5px;
+    color: #1e293b;
+    background: #eef2f7;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  @page {
+    size: A4;
+    margin: 8mm;
+  }
   @media print {
-    body { background: #fff; }
+    html, body { background: #fff; }
     .no-print { display: none !important; }
-    .page { box-shadow: none; margin: 0; border-radius: 0; }
+    .page {
+      box-shadow: none;
+      margin: 0 !important;
+      border-radius: 0;
+      max-width: 100%;
+      page-break-inside: avoid;
+    }
+    .section { page-break-inside: avoid; }
+    .sig-block { page-break-inside: avoid; }
   }
 
   /* ── PAGE WRAPPER ── */
   .page {
     max-width: 820px;
-    margin: 32px auto;
+    margin: 28px auto;
     background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 8px 40px rgba(0,0,0,.12);
+    border-radius: 14px;
+    box-shadow: 0 10px 45px rgba(15,52,96,.18);
     overflow: hidden;
+    border: 1px solid #e2e8f0;
   }
 
   /* ── HEADER ── */
@@ -214,122 +227,161 @@ export const generateRegistrationPDF = (user) => {
   }
 
   /* ── BODY ── */
-  .body { padding: 28px 36px; }
+  .body { padding: 30px 36px; }
 
   /* ── SECTIONS ── */
-  .section { margin-bottom: 22px; }
+  .section { margin-bottom: 24px; }
   .section-title {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 10px;
-    font-weight: 700;
+    gap: 10px;
+    font-size: 11px;
+    font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 1.2px;
     color: #1a5c9e;
-    padding-bottom: 7px;
-    border-bottom: 1.5px solid #e2e8f0;
-    margin-bottom: 10px;
+    padding-bottom: 9px;
+    border-bottom: 2px solid #e2e8f0;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .section-title::before {
+    content: '';
+    position: absolute;
+    left: 0; bottom: -2px;
+    width: 60px; height: 2px;
+    background: linear-gradient(90deg, #1a5c9e, #0eb07a);
   }
   .section-icon {
-    width: 22px; height: 22px;
-    background: #eff6ff;
-    border-radius: 6px;
+    width: 26px; height: 26px;
+    background: linear-gradient(135deg, #eff6ff, #dbeafe);
+    border-radius: 7px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 12px;
+    font-size: 13px;
     flex-shrink: 0;
+    border: 1px solid #dbeafe;
   }
 
   /* ── TABLE ── */
-  .info-table { width: 100%; border-collapse: collapse; }
+  .info-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+  }
   .info-table tr:nth-child(even) td { background: #f8fafc; }
+  .info-table tr:hover td { background: #f1f5f9; }
   .info-table td {
-    padding: 7px 10px;
+    padding: 9px 14px;
     vertical-align: top;
     border-bottom: 1px solid #f1f5f9;
-    line-height: 1.5;
+    line-height: 1.55;
   }
+  .info-table tr:last-child td { border-bottom: none; }
   .info-table .label {
-    width: 34%;
+    width: 36%;
     color: #64748b;
     font-weight: 500;
     font-size: 11.5px;
+    background: #fafbfc !important;
+    border-right: 1px solid #f1f5f9;
   }
   .info-table .value {
     color: #0f172a;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 12.5px;
   }
 
   /* ── DOCUMENTS ── */
-  .doc-grid { display: flex; flex-direction: column; gap: 4px; }
+  .doc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
   .doc-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 7px 10px;
-    border-radius: 6px;
-    background: #f8fafc;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
     border: 1px solid #e2e8f0;
     font-size: 11.5px;
   }
   .doc-check {
-    width: 18px; height: 18px;
+    width: 22px; height: 22px;
     background: #dcfce7;
     color: #166534;
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     flex-shrink: 0;
+    border: 1.5px solid #86efac;
   }
-  .doc-name { flex: 1; color: #1e293b; font-weight: 500; }
+  .doc-name {
+    flex: 1;
+    color: #1e293b;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .doc-date { color: #94a3b8; font-size: 10.5px; flex-shrink: 0; }
 
   /* ── SIGNATURE BLOCK ── */
   .sig-block {
     margin-top: 28px;
-    display: flex;
-    gap: 20px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
   }
   .sig-box {
-    flex: 1;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
-    padding: 14px 16px;
-    background: #fafbfc;
+    border-radius: 10px;
+    padding: 16px 18px;
+    background: linear-gradient(180deg, #ffffff, #f8fafc);
+    min-height: 105px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
   }
   .sig-label {
     font-size: 9.5px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: .7px;
-    color: #94a3b8;
-    margin-bottom: 18px;
+    letter-spacing: .9px;
+    color: #1a5c9e;
   }
   .sig-line {
     border-top: 1.5px solid #cbd5e1;
-    margin-top: 8px;
-    padding-top: 5px;
+    padding-top: 6px;
     font-size: 10px;
     color: #64748b;
   }
 
   /* ── FOOTER ── */
   .footer {
-    background: #f8fafc;
-    border-top: 1.5px solid #e2e8f0;
-    padding: 14px 36px;
+    background: linear-gradient(180deg, #f8fafc, #eef2f7);
+    border-top: 2px solid #e2e8f0;
+    padding: 16px 36px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     font-size: 10px;
-    color: #94a3b8;
+    color: #64748b;
   }
-  .footer-left strong { color: #1a5c9e; font-size: 10.5px; }
-  .footer-right { text-align: right; line-height: 1.6; }
+  .footer-left strong {
+    color: #1a5c9e;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+  }
+  .footer-right { text-align: right; line-height: 1.7; }
+  .footer-right strong { color: #0eb07a; }
 
   /* ── PRINT BUTTON ── */
   .print-fab {
@@ -450,15 +502,6 @@ export const generateRegistrationPDF = (user) => {
       row('Hospital Review Notes', user.hospitalReviewNotes),
     ])}
 
-    <!-- DOCUMENTS -->
-    <div class="section">
-      <div class="section-title">
-        <span class="section-icon">📁</span>
-        Uploaded Documents &nbsp;<span style="font-weight:400;color:#94a3b8;letter-spacing:0;">(${docs.length} file${docs.length !== 1 ? 's' : ''})</span>
-      </div>
-      <div class="doc-grid">${docRows}</div>
-    </div>
-
     <!-- SIGNATURE BLOCK -->
     <div class="sig-block">
       <div class="sig-box">
@@ -486,8 +529,8 @@ export const generateRegistrationPDF = (user) => {
       This document is auto-generated and is legally valid under THOTA 2010.
     </div>
     <div class="footer-right">
-      Reference No: ${refId}<br/>
-      Generated: ${today}
+      Reference No: <strong>${refId}</strong><br/>
+      Generated: <strong>${today}</strong>
     </div>
   </div>
 
