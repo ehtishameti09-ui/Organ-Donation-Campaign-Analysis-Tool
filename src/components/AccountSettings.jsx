@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
-  getAllUsers, saveUsers, userSelfDeleteAccount, getCreds, saveCreds,
+  userSelfDeleteAccount,
   getNotifications, markNotificationRead, getUserActionLogs, getUserAppeals,
   submitAppeal, uploadAdditionalHospitalDocuments, addActivity
 } from '../utils/auth';
+import { updateUserViaAPI, changePasswordViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const formatPKPhone = (value) => {
@@ -129,9 +130,16 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
   const [submittingAppeal, setSubmittingAppeal] = useState(false);
 
   useEffect(() => {
-    setUserNotifs(getNotifications(user.id));
-    setActionLogs(getUserActionLogs(user.id));
-    setAppeals(getUserAppeals(user.id));
+    (async () => {
+      const [notifs, logs, userAppeals] = await Promise.all([
+        getNotifications(user.id),
+        getUserActionLogs(user.id),
+        getUserAppeals(user.id),
+      ]);
+      setUserNotifs(notifs);
+      setActionLogs(logs);
+      setAppeals(userAppeals);
+    })();
   }, [user.id]);
 
   useEffect(() => {
@@ -142,7 +150,7 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const saveProfile = () => {
+  const saveProfile = async () => {
     if (!profileData.name || !profileData.email) {
       toast('Name and email are required.', 'error'); return;
     }
@@ -150,45 +158,21 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
       toast('Age must be at least 18.', 'error'); return;
     }
     setSaving(true);
-    setTimeout(() => {
-      const users = getAllUsers();
-      const idx = users.findIndex(u => u.id === user.id);
-      if (idx !== -1) {
-        const fieldLabels = {
-          name: 'Full Name', email: 'Email Address', phone: 'Phone Number',
-          bloodType: 'Blood Type', age: 'Age', organNeeded: 'Organ Needed',
-          diagnosis: 'Diagnosis', medicalHistory: 'Medical History',
-          hospitalName: 'Hospital Name', registrationNumber: 'Registration Number',
-          licenseNumber: 'License Number', hospitalAddress: 'Hospital Address',
-        };
-        const old = users[idx];
-        const changedFields = Object.keys(profileData)
-          .filter(k => fieldLabels[k] && String(profileData[k] ?? '') !== String(old[k] ?? ''))
-          .map(k => ({ key: k, label: fieldLabels[k], oldValue: old[k] ?? '', newValue: profileData[k] ?? '' }));
-
-        const updatedUser = { ...old, ...profileData };
-        if (changedFields.length > 0) {
-          updatedUser.profileChangelog = [
-            ...(old.profileChangelog || []),
-            { changedAt: new Date().toISOString(), fields: changedFields },
-          ];
-        }
-        users[idx] = updatedUser;
-        saveUsers(users);
-        onUpdate && onUpdate(updatedUser);
-        toast('Profile updated!', 'success');
-      }
+    try {
+      const result = await updateUserViaAPI(user.id, profileData);
+      const updatedUser = result.user || { ...user, ...profileData };
+      onUpdate && onUpdate(updatedUser);
+      toast('Profile updated!', 'success');
+    } catch (err) {
+      toast(err.message || 'Profile update failed.', 'error');
+    } finally {
       setSaving(false);
-    }, 500);
+    }
   };
 
-  const savePassword = () => {
+  const savePassword = async () => {
     if (!pwdData.current || !pwdData.newPwd || !pwdData.confirmPwd) {
       toast('All password fields are required.', 'error'); return;
-    }
-    const creds = getCreds();
-    if (creds[user.email] !== pwdData.current) {
-      toast('Current password is incorrect.', 'error'); return;
     }
     if (pwdData.newPwd !== pwdData.confirmPwd) {
       toast('New passwords do not match.', 'error'); return;
@@ -199,78 +183,72 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
     if (!/(?=.*[A-Z])(?=.*[0-9])/.test(pwdData.newPwd)) {
       toast('Password must contain uppercase letter and number.', 'error'); return;
     }
-    creds[user.email] = pwdData.newPwd;
-    saveCreds(creds);
-    setPwdData({ current: '', newPwd: '', confirmPwd: '' });
-    toast('Password changed successfully!', 'success');
-    addActivity('password_changed', '🔒', 'Password Changed', `${user.name} changed their password`, user.id);
+    try {
+      await changePasswordViaAPI(user.id, pwdData.current, pwdData.newPwd);
+      setPwdData({ current: '', newPwd: '', confirmPwd: '' });
+      toast('Password changed successfully!', 'success');
+    } catch (err) {
+      toast(err.message || 'Password change failed.', 'error');
+    }
   };
 
-  const saveNotifPrefs = () => {
+  const saveNotifPrefs = async () => {
     setSaving(true);
-    setTimeout(() => {
-      const users = getAllUsers();
-      const idx = users.findIndex(u => u.id === user.id);
-      if (idx !== -1) {
-        users[idx] = { ...users[idx], ...notifPrefs };
-        saveUsers(users);
-        onUpdate && onUpdate({ ...user, ...notifPrefs });
-        toast('Notification preferences saved!', 'success');
-      }
+    try {
+      await updateUserViaAPI(user.id, notifPrefs);
+      onUpdate && onUpdate({ ...user, ...notifPrefs });
+      toast('Notification preferences saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed.', 'error');
+    } finally {
       setSaving(false);
-    }, 400);
+    }
   };
 
-  const saveDonorPrefs = () => {
+  const saveDonorPrefs = async () => {
     setSaving(true);
-    setTimeout(() => {
-      const users = getAllUsers();
-      const idx = users.findIndex(u => u.id === user.id);
-      if (idx !== -1) {
-        const updates = {
-          donationConsent: donorPrefs.donationConsent,
-          donationWillingness: donorPrefs.willingness,
-          familyNotified: donorPrefs.familyNotified,
-          pledgedOrgans: donorPrefs.pledgedOrgans,
-          donationType: donorPrefs.donationType,
-          nextOfKin: donorPrefs.nextOfKin,
-          contactPreference: donorPrefs.contactPreference,
-          availableForUrgent: donorPrefs.availableForUrgent,
-        };
-        users[idx] = { ...users[idx], ...updates };
-        saveUsers(users);
-        onUpdate && onUpdate({ ...user, ...updates });
-        addActivity('donor_prefs_updated', '⚙️', 'Donor Preferences Updated', `${user.name} updated donor preferences`, user.id);
-        toast('Donor preferences saved!', 'success');
-      }
+    const updates = {
+      donationConsent: donorPrefs.donationConsent,
+      donationWillingness: donorPrefs.willingness,
+      familyNotified: donorPrefs.familyNotified,
+      pledgedOrgans: donorPrefs.pledgedOrgans,
+      donationType: donorPrefs.donationType,
+      nextOfKin: donorPrefs.nextOfKin,
+      contactPreference: donorPrefs.contactPreference,
+      availableForUrgent: donorPrefs.availableForUrgent,
+    };
+    try {
+      await updateUserViaAPI(user.id, updates);
+      onUpdate && onUpdate({ ...user, ...updates });
+      toast('Donor preferences saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed.', 'error');
+    } finally {
       setSaving(false);
-    }, 400);
+    }
   };
 
-  const saveRecipientPrefs = () => {
+  const saveRecipientPrefs = async () => {
     setSaving(true);
-    setTimeout(() => {
-      const users = getAllUsers();
-      const idx = users.findIndex(u => u.id === user.id);
-      if (idx !== -1) {
-        const updates = {
-          organNeeded: recipientPrefs.organNeeded,
-          bloodCompatibility: recipientPrefs.bloodCompatibility,
-          urgencySelf: recipientPrefs.urgencySelf,
-          waitingListVisibility: recipientPrefs.waitingListVisibility,
-          travelReady: recipientPrefs.travelReady,
-          contactPreference: recipientPrefs.contactPreference,
-          notifyOnMatch: recipientPrefs.notifyOnMatch,
-          preferredHospitalNotes: recipientPrefs.preferredHospitalNotes,
-        };
-        users[idx] = { ...users[idx], ...updates };
-        saveUsers(users);
-        onUpdate && onUpdate({ ...user, ...updates });
-        addActivity('recipient_prefs_updated', '⚙️', 'Recipient Preferences Updated', `${user.name} updated recipient preferences`, user.id);
-        toast('Recipient preferences saved!', 'success');
-      }
+    const updates = {
+      organNeeded: recipientPrefs.organNeeded,
+      bloodCompatibility: recipientPrefs.bloodCompatibility,
+      urgencySelf: recipientPrefs.urgencySelf,
+      waitingListVisibility: recipientPrefs.waitingListVisibility,
+      travelReady: recipientPrefs.travelReady,
+      contactPreference: recipientPrefs.contactPreference,
+      notifyOnMatch: recipientPrefs.notifyOnMatch,
+      preferredHospitalNotes: recipientPrefs.preferredHospitalNotes,
+    };
+    try {
+      await updateUserViaAPI(user.id, updates);
+      onUpdate && onUpdate({ ...user, ...updates });
+      toast('Recipient preferences saved!', 'success');
+    } catch (err) {
+      toast(err.message || 'Save failed.', 'error');
+    } finally {
       setSaving(false);
-    }, 400);
+    }
   };
 
   const toggleOrganPledge = (organ) => {
@@ -299,57 +277,61 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
     reader.readAsDataURL(file);
   };
 
-  const handleReuploadSubmit = () => {
+  const handleReuploadSubmit = async () => {
     if (Object.keys(uploadedDocs).length === 0) {
       toast('Please select at least one document to upload.', 'error'); return;
     }
     setReuploadSubmitting(true);
-    setTimeout(() => {
-      uploadAdditionalHospitalDocuments(user.id, Object.values(uploadedDocs));
-      const updatedUsers = getAllUsers();
-      const updatedUser = updatedUsers.find(u => u.id === user.id);
-      if (updatedUser) onUpdate && onUpdate(updatedUser);
+    try {
+      await uploadAdditionalHospitalDocuments(user.id, Object.values(uploadedDocs));
       setUploadedDocs({});
       toast('Documents submitted for review!', 'success');
+    } catch (err) {
+      toast(err.message || 'Document upload failed.', 'error');
+    } finally {
       setReuploadSubmitting(false);
-    }, 700);
+    }
   };
 
-  const handleDeleteAccount = () => {
+  const handleDeleteAccount = async () => {
     if (deleteConfirm !== 'DELETE') {
       toast('Type DELETE to confirm.', 'error'); return;
     }
     setDeletingAccount(true);
-    setTimeout(() => {
-      userSelfDeleteAccount(user.id, deleteReason);
+    try {
+      await userSelfDeleteAccount(user.id, deleteReason);
       toast('Account marked for deletion. You have 30 days to recover it.', 'info', 5000);
       setShowDeleteModal(false);
+    } catch (err) {
+      toast(err.message || 'Account deletion failed.', 'error');
+    } finally {
       setDeletingAccount(false);
-    }, 600);
+    }
   };
 
-  const handleAppealSubmit = () => {
+  const handleAppealSubmit = async () => {
     if (!appealText.trim()) {
       toast('Please provide an explanation for your appeal.', 'error'); return;
     }
     setSubmittingAppeal(true);
-    setTimeout(() => {
-      try {
-        submitAppeal(user.id, appealText);
-        toast('Appeal submitted successfully!', 'success');
-        setShowAppealModal(false);
-        setAppealText('');
-        setAppeals(getUserAppeals(user.id));
-      } catch (err) {
-        toast(err.message || 'Appeal submission failed.', 'error');
-      }
+    try {
+      await submitAppeal(user.id, appealText);
+      toast('Appeal submitted successfully!', 'success');
+      setShowAppealModal(false);
+      setAppealText('');
+      const updated = await getUserAppeals(user.id);
+      setAppeals(updated);
+    } catch (err) {
+      toast(err.message || 'Appeal submission failed.', 'error');
+    } finally {
       setSubmittingAppeal(false);
-    }, 500);
+    }
   };
 
-  const markRead = (id) => {
-    markNotificationRead(id);
-    setUserNotifs(getNotifications(user.id));
+  const markRead = async (id) => {
+    await markNotificationRead(id);
+    const updated = await getNotifications(user.id);
+    setUserNotifs(updated);
   };
 
   const timeAgo = (iso) => {
@@ -397,9 +379,9 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
             {t.id === 'documents' && user.status === 'info_requested' && (
               <span style={{ width: '8px', height: '8px', background: 'var(--warning)', borderRadius: '50%', display: 'inline-block' }}></span>
             )}
-            {t.id === 'activity' && userNotifs.filter(n => !n.read).length > 0 && (
+            {t.id === 'activity' && userNotifs.filter(n => !n.read_at).length > 0 && (
               <span style={{ background: 'var(--danger)', color: '#fff', borderRadius: '999px', fontSize: '10px', padding: '1px 6px', minWidth: '18px', textAlign: 'center' }}>
-                {userNotifs.filter(n => !n.read).length}
+                {userNotifs.filter(n => !n.read_at).length}
               </span>
             )}
           </button>
@@ -1025,10 +1007,14 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
             <div className="card-header flex justify-between items-center">
               <div>
                 <div className="card-title">Notifications</div>
-                <div className="card-sub">{userNotifs.filter(n => !n.read).length} unread</div>
+                <div className="card-sub">{userNotifs.filter(n => !n.read_at).length} unread</div>
               </div>
-              {userNotifs.some(n => !n.read) && (
-                <button className="btn btn-ghost btn-sm" onClick={() => { userNotifs.forEach(n => markNotificationRead(n.id)); setUserNotifs(getNotifications(user.id)); }}>
+              {userNotifs.some(n => !n.read_at) && (
+                <button className="btn btn-ghost btn-sm" onClick={async () => {
+                  await Promise.all(userNotifs.filter(n => !n.read_at).map(n => markNotificationRead(n.id)));
+                  const updated = await getNotifications(user.id);
+                  setUserNotifs(updated);
+                }}>
                   Mark all read
                 </button>
               )}
@@ -1043,7 +1029,7 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {userNotifs.map(n => (
                   <div key={n.id} onClick={() => markRead(n.id)}
-                    style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: 'var(--radius)', background: n.read ? 'var(--surface)' : 'var(--primary-light)', border: `1px solid ${n.read ? 'var(--border)' : 'rgba(26,92,158,.2)'}`, cursor: 'pointer', transition: 'background .15s' }}>
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 14px', borderRadius: 'var(--radius)', background: n.read_at ? 'var(--surface)' : 'var(--primary-light)', border: `1px solid ${n.read_at ? 'var(--border)' : 'rgba(26,92,158,.2)'}`, cursor: 'pointer', transition: 'background .15s' }}>
                     <div style={{ width: '32px', height: '32px', background: n.type === 'ban' ? 'var(--danger-light)' : n.type === 'warning' ? 'var(--warning-light)' : 'var(--accent-light)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
                       {n.type === 'ban' ? '🚫' : n.type === 'warning' ? '⚠️' : n.type === 'delete' ? '🗑️' : n.type === 'appeal_status' ? '⚖️' : '📋'}
                     </div>
@@ -1051,13 +1037,13 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
                         <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>{n.title}</span>
                         {/* Single tick = delivered, not read */}
-                        {!n.read && <span style={{ fontSize: '12px', color: 'var(--primary)' }}>✓</span>}
+                        {!n.read_at && <span style={{ fontSize: '12px', color: 'var(--primary)' }}>✓</span>}
                         {/* Double tick = read (removed per user request - now only 1 tick) */}
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--text2)', lineHeight: '1.5' }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>{timeAgo(n.timestamp)}</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>{timeAgo(n.created_at || n.timestamp)}</div>
                     </div>
-                    {!n.read && (
+                    {!n.read_at && (
                       <div style={{ width: '8px', height: '8px', background: 'var(--primary)', borderRadius: '50%', flexShrink: 0, marginTop: '4px' }}></div>
                     )}
                   </div>
@@ -1118,7 +1104,7 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
                         <span className={`badge ${appeal.status === 'approved' ? 'badge-green' : appeal.status === 'denied' ? 'badge-red' : 'badge-amber'}`}>
                           {appeal.status}
                         </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text3)' }}>{timeAgo(appeal.submittedDate)}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text3)' }}>{timeAgo(appeal.submitted_date || appeal.submittedDate)}</span>
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--text2)' }}>{appeal.explanation}</div>
                       {appeal.reviewNotes && (

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { getAllUsers, getDonors, getRecipients, hospitalReviewCase, getHospitalAssignedCases } from '../utils/auth';
+import { useState, useEffect } from 'react';
+import { hospitalReviewCase, getHospitalAssignedCases } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 const DoctorDashboard = ({ currentUser }) => {
@@ -8,37 +8,29 @@ const DoctorDashboard = ({ currentUser }) => {
   const [reviewAction, setReviewAction] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [cases, setCases] = useState([]);
 
-  const allUsers = useMemo(() => getAllUsers(), [refreshKey]);
-
-  // Cases assigned to the doctor's hospital or directly to them
-  const cases = useMemo(() => {
-    const hospitalId = currentUser.hospitalId || currentUser.id;
-    const assigned = getHospitalAssignedCases(hospitalId);
-    // Also get cases directly assigned to doctor
-    const directCases = allUsers.filter(u =>
-      (u.role === 'donor' || u.role === 'recipient') &&
-      u.registrationComplete &&
-      !u.deleted &&
-      (u.preferredHospitalId === currentUser.id || u.hospitalReviewedBy === currentUser.id)
-    );
-    const all = [...assigned];
-    directCases.forEach(c => { if (!all.some(a => a.id === c.id)) all.push(c); });
-    return all;
-  }, [currentUser, allUsers, refreshKey]);
+  useEffect(() => {
+    const load = async () => {
+      const hospitalId = currentUser.hospitalId || currentUser.linkedHospitalId || currentUser.id;
+      const data = await getHospitalAssignedCases(hospitalId);
+      setCases(data);
+    };
+    load();
+  }, [currentUser, refreshKey]);
 
   const incoming = cases.filter(c => c.status === 'submitted' || c.verificationStatus === 'submitted');
   const reviewed = cases.filter(c => ['approved', 'rejected', 'info_requested'].includes(c.status) && c.hospitalReviewedBy);
 
   const displayCases = tab === 'incoming' ? incoming : reviewed;
 
-  const handleReview = () => {
+  const handleReview = async () => {
     if (!reviewAction) { toast('Please select an action.', 'error'); return; }
     if (reviewAction === 'reject' && !reviewNotes.trim()) { toast('Please provide a reason for rejection.', 'error'); return; }
     if (reviewAction === 'request_info' && !reviewNotes.trim()) { toast('Please specify what additional information is needed.', 'error'); return; }
 
     try {
-      hospitalReviewCase(reviewModal.id, reviewAction, reviewNotes, currentUser.hospitalId || currentUser.id);
+      await hospitalReviewCase(reviewModal.id, reviewAction, reviewNotes, currentUser.hospitalId || currentUser.id);
       toast(
         reviewAction === 'approve' ? 'Case approved successfully.' :
         reviewAction === 'reject' ? 'Case rejected.' : 'Additional information requested.',

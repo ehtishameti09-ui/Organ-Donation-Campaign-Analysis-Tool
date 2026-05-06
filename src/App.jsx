@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getCurrentUser, logout, initSuperAdmin, login, getUnreadNotifications, getAllUsers } from './utils/auth';
+import { getCurrentUser, logout, initSuperAdmin, login, getUnreadNotifications } from './utils/auth';
+import { getMeViaAPI } from './utils/api';
 import { toast } from './utils/toast';
 import Login from './components/Login';
 import Register from './components/Register';
@@ -39,46 +40,54 @@ function App() {
 
   useEffect(() => {
     initSuperAdmin();
-    const user = getCurrentUser();
-    if (user) {
-      // Refresh user data from storage
-      const users = getAllUsers();
-      const fresh = users.find(u => u.id === user.id) || user;
-      setCurrentUser(fresh);
-      localStorage.setItem('odcat_current', JSON.stringify(fresh));
-    }
+    const token = localStorage.getItem('odcat_token');
+    const cached = getCurrentUser();
+    if (!token || !cached) return; // no session to restore
+    // Show cached user immediately for instant UI, then validate token in background
+    setCurrentUser(cached);
+    getMeViaAPI()
+      .then(fresh => setCurrentUser(fresh))
+      .catch(() => {
+        // Token expired or revoked — clear everything and show login
+        localStorage.removeItem('odcat_token');
+        localStorage.removeItem('odcat_user');
+        localStorage.removeItem('odcat_current');
+        setCurrentUser(null);
+      });
   }, []);
 
   useEffect(() => {
-    if (currentUser) {
-      const unread = getUnreadNotifications(currentUser.id);
-      setUnreadCount(unread.length);
+    if (!currentUser || !localStorage.getItem('odcat_token')) {
+      setUnreadCount(0);
+      return;
     }
-  }, [currentUser]);
+    getUnreadNotifications(currentUser.id)
+      .then(unread => setUnreadCount(unread.length))
+      .catch(() => setUnreadCount(0));
+  }, [currentUser?.id]); // only re-run when the user ID changes, not on every object reference change
 
-  // Refresh user from storage (for status changes)
-  const refreshCurrentUser = () => {
-    const users = getAllUsers();
-    if (currentUser) {
-      const fresh = users.find(u => u.id === currentUser.id);
-      if (fresh) {
-        setCurrentUser(fresh);
-        localStorage.setItem('odcat_current', JSON.stringify(fresh));
+  // Refresh current user from API
+  const refreshCurrentUser = async () => {
+    try {
+      const user = await getMeViaAPI();
+      if (user) {
+        localStorage.setItem('odcat_current', JSON.stringify(user));
+        setCurrentUser(user);
       }
+    } catch {
+      const user = getCurrentUser();
+      if (user) setCurrentUser(user);
     }
   };
 
   const handleLoginSuccess = (user) => {
-    // Always get fresh user data
-    const users = getAllUsers();
-    const fresh = users.find(u => u.id === user.id) || user;
-    setCurrentUser(fresh);
-    localStorage.setItem('odcat_current', JSON.stringify(fresh));
+    // User data is already from API, no need to look up in storage
+    setCurrentUser(user);
     setCurrentPage('dashboard');
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     setCurrentUser(null);
     setCurrentPage('dashboard');
     setSettingsTab(null);
@@ -98,23 +107,19 @@ function App() {
       <>
         <div id="toast-container" className="toast-container"></div>
         <Register
-          onRegistrationSuccess={(regData) => {
-            if (regData.type === 'hospital') {
-              // Hospital gets instant login
-              const loginResult = login(regData.email, regData.password);
-              if (loginResult) {
-                setCurrentUser(loginResult);
-                setShowRegister(false);
-                toast(`Welcome, ${loginResult.hospitalName || loginResult.name}! Your registration is under review.`, 'success');
-              }
-            } else {
-              // Donor/recipient auto-login
-              const loginResult = login(regData.email, regData.password);
-              if (loginResult) {
-                setCurrentUser(loginResult);
-                setShowRegister(false);
+          onRegistrationSuccess={async (regData) => {
+            try {
+              const loginResult = await login(regData.email, regData.password);
+              setCurrentUser(loginResult);
+              setShowRegister(false);
+              if (regData.type === 'hospital') {
+                toast(`Welcome, ${loginResult.name}! Your registration is under review.`, 'success');
+              } else {
                 toast(`Welcome, ${loginResult.name}! Your account is ready.`, 'success');
               }
+            } catch {
+              setShowRegister(false);
+              toast('Registration complete! Please sign in.', 'success');
             }
           }}
           onBackToLogin={() => setShowRegister(false)}

@@ -2,7 +2,7 @@ export const generateRegistrationPDF = (user) => {
   const isDonor = user.role === 'donor';
   const title = isDonor ? 'Organ Donor Registration Report' : 'Organ Recipient Registration Report';
   const today = new Date().toLocaleDateString('en-PK', { year: 'numeric', month: 'long', day: 'numeric' });
-  const refId = (user.id || user.email || 'N/A').toString().toUpperCase().slice(0, 12);
+  const uniqueId = user.uniqueId || user.unique_id || `${isDonor ? 'DON' : 'REC'}-${new Date().getFullYear()}-${String(user.id || '0').padStart(4, '0')}`;
 
   const row = (label, value) =>
     value != null && value !== '' && value !== null
@@ -426,7 +426,7 @@ export const generateRegistrationPDF = (user) => {
       </div>
     </div>
     <div class="watermark-strip">
-      <span>REF: ${refId}</span>
+      <span>UNIQUE ID: ${uniqueId}</span>
       <span>TRANSPLANTATION OF HUMAN ORGANS &amp; TISSUES ACT, 2010 (THOTA)</span>
       <span>GENERATED: ${today}</span>
     </div>
@@ -434,6 +434,10 @@ export const generateRegistrationPDF = (user) => {
 
   <!-- META BAR -->
   <div class="meta-bar">
+    <div class="meta-item" style="background:#0f3460;border-right:1px solid rgba(255,255,255,.15);">
+      <div class="meta-label" style="color:rgba(255,255,255,.65);">Unique ID</div>
+      <div class="meta-value" style="color:#fff;font-size:14px;letter-spacing:.5px;font-family:monospace;">${uniqueId}</div>
+    </div>
     <div class="meta-item">
       <div class="meta-label">Report Date</div>
       <div class="meta-value">${today}</div>
@@ -446,16 +450,13 @@ export const generateRegistrationPDF = (user) => {
       <div class="meta-label">Assigned Hospital</div>
       <div class="meta-value">${user.preferredHospitalName || '—'}</div>
     </div>
-    <div class="meta-item">
-      <div class="meta-label">Documents on File</div>
-      <div class="meta-value">${docs.length}</div>
-    </div>
   </div>
 
   <!-- BODY -->
   <div class="body">
 
     ${section('👤', 'Personal Information', [
+      row('Unique Registration ID', uniqueId),
       row('Full Name', user.name),
       row('Email Address', user.email),
       row('CNIC Number', user.cnic),
@@ -529,7 +530,7 @@ export const generateRegistrationPDF = (user) => {
       This document is auto-generated and is legally valid under THOTA 2010.
     </div>
     <div class="footer-right">
-      Reference No: <strong>${refId}</strong><br/>
+      Unique ID: <strong>${uniqueId}</strong><br/>
       Generated: <strong>${today}</strong>
     </div>
   </div>

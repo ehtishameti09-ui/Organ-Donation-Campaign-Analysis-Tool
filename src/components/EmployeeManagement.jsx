@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getAllUsers } from '../utils/auth';
+import { useState, useEffect, useMemo } from 'react';
+import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 const formatPKPhone = (value) => {
@@ -22,7 +22,8 @@ const ROLES = [
 ];
 
 const EmployeeManagement = ({ currentUser }) => {
-  const [employees, setEmployees] = useState(() => getEmployees());
+  const [employees, setEmployees] = useState([]);
+  const [hospitals, setHospitals] = useState([]);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -33,28 +34,36 @@ const EmployeeManagement = ({ currentUser }) => {
     hospitalId: '', hospitalName: '',
   });
 
-  const refresh = () => setEmployees(getEmployees());
+  useEffect(() => {
+    refresh();
+    getApprovedHospitals().then(all => {
+      if (currentUser?.linkedHospitalId) {
+        setHospitals(all.filter(h => h.id === currentUser.linkedHospitalId));
+      } else {
+        setHospitals(all);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const refresh = async () => {
+    try {
+      const data = await getEmployees();
+      setEmployees(data);
+    } catch {}
+  };
 
   const filtered = useMemo(() => {
     return employees.filter(e => {
-      if (search && !e.name.toLowerCase().includes(search.toLowerCase()) && !e.email.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search && !e.name?.toLowerCase().includes(search.toLowerCase()) && !e.email?.toLowerCase().includes(search.toLowerCase())) return false;
       if (roleFilter !== 'all' && e.role !== roleFilter) return false;
-      if (statusFilter !== 'all' && e.status !== statusFilter) return false;
-      // Hospital admin can only see employees from their hospital
+      if (statusFilter === 'approved' && (e.banned || e.status !== 'approved')) return false;
+      if (statusFilter === 'suspended' && !e.banned) return false;
       if (currentUser?.role === 'admin' && currentUser?.linkedHospitalId) {
-        if (e.hospitalId !== currentUser.linkedHospitalId) return false;
+        if (e.linkedHospitalId != currentUser.linkedHospitalId) return false;
       }
       return true;
     });
   }, [employees, search, roleFilter, statusFilter, currentUser]);
-
-  const hospitals = useMemo(() => {
-    const all = getAllUsers().filter(u => u.role === 'hospital' && u.status === 'approved' && !u.deleted);
-    if (currentUser?.linkedHospitalId) {
-      return all.filter(h => h.id === currentUser.linkedHospitalId);
-    }
-    return all;
-  }, [currentUser]);
 
   const resetForm = () => {
     const ownHospital = currentUser?.linkedHospitalId
@@ -69,7 +78,7 @@ const EmployeeManagement = ({ currentUser }) => {
     setEditingEmployee(null);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name.trim() || !formData.email.trim()) {
       toast('Name and email are required.', 'error'); return;
@@ -83,7 +92,7 @@ const EmployeeManagement = ({ currentUser }) => {
 
     try {
       if (editingEmployee) {
-        updateEmployee(editingEmployee.id, {
+        await updateEmployee(editingEmployee.id, {
           name: formData.name,
           department: formData.department,
           phone: formData.phone,
@@ -94,13 +103,13 @@ const EmployeeManagement = ({ currentUser }) => {
         }, currentUser.id);
         toast('Employee updated successfully.', 'success');
       } else {
-        addEmployee({
+        await addEmployee({
           ...formData,
           password: formData.password || 'Temp@1234',
         }, currentUser.id);
         toast('Employee added successfully.', 'success');
       }
-      refresh();
+      await refresh();
       setShowAddModal(false);
       resetForm();
     } catch (err) {
@@ -108,11 +117,15 @@ const EmployeeManagement = ({ currentUser }) => {
     }
   };
 
-  const handleToggleStatus = (emp) => {
+  const handleToggleStatus = async (emp) => {
     try {
-      toggleEmployeeStatus(emp.id, currentUser.id);
-      toast(`${emp.name} has been ${emp.status === 'suspended' ? 'reactivated' : 'suspended'}.`, 'success');
-      refresh();
+      await toggleEmployeeStatus(emp.id, currentUser.id);
+      const action = emp.banned ? 'activated' : 'suspended';
+      const msg = emp.banned
+        ? `${emp.name}'s account has been activated.`
+        : `${emp.name}'s account has been suspended.`;
+      toast(msg, emp.banned ? 'success' : 'warning');
+      await refresh();
     } catch (err) {
       toast(err.message, 'error');
     }
@@ -120,6 +133,7 @@ const EmployeeManagement = ({ currentUser }) => {
 
   const openEdit = (emp) => {
     setEditingEmployee(emp);
+    const linkedHosp = hospitals.find(h => h.id == emp.linkedHospitalId);
     setFormData({
       name: emp.name,
       email: emp.email,
@@ -128,8 +142,8 @@ const EmployeeManagement = ({ currentUser }) => {
       phone: emp.phone || '',
       specialization: emp.specialization || '',
       password: '',
-      hospitalId: emp.hospitalId || '',
-      hospitalName: emp.hospitalName || '',
+      hospitalId: emp.linkedHospitalId || '',
+      hospitalName: linkedHosp?.hospitalName || linkedHosp?.name || '',
     });
     setShowAddModal(true);
   };
@@ -145,16 +159,17 @@ const EmployeeManagement = ({ currentUser }) => {
     return <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: m.bg, color: m.color }}>{m.label}</span>;
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (status, banned) => {
+    if (banned) return <span className="badge badge-amber">Suspended</span>;
     if (status === 'approved') return <span className="badge badge-green">Active</span>;
-    if (status === 'suspended') return <span className="badge badge-amber">Suspended</span>;
+    if (status === 'banned') return <span className="badge badge-amber">Suspended</span>;
     return <span className="badge badge-gray">{status}</span>;
   };
 
   const stats = useMemo(() => ({
     total: employees.length,
-    active: employees.filter(e => e.status === 'approved').length,
-    suspended: employees.filter(e => e.status === 'suspended').length,
+    active: employees.filter(e => !e.banned && e.status === 'approved').length,
+    suspended: employees.filter(e => e.banned).length,
     doctors: employees.filter(e => e.role === 'doctor').length,
   }), [employees]);
 
@@ -228,17 +243,21 @@ const EmployeeManagement = ({ currentUser }) => {
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.email}</td>
                 <td style={{ padding: '12px 16px' }}>{getRoleBadge(emp.role)}</td>
                 <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.department || '—'}</td>
-                <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>{emp.hospitalName || '—'}</td>
-                <td style={{ padding: '12px 16px' }}>{getStatusBadge(emp.status)}</td>
+                <td style={{ padding: '12px 16px', fontSize: '13px', color: 'var(--text2)' }}>
+                  {emp.linkedHospitalId
+                    ? (hospitals.find(h => h.id == emp.linkedHospitalId)?.hospitalName || `Hospital #${emp.linkedHospitalId}`)
+                    : '—'}
+                </td>
+                <td style={{ padding: '12px 16px' }}>{getStatusBadge(emp.status, emp.banned)}</td>
                 <td style={{ padding: '12px 16px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <button className="btn btn-sm btn-outline" onClick={() => openEdit(emp)}>Edit</button>
                     <button
                       className="btn btn-sm"
-                      style={{ background: emp.status === 'suspended' ? 'var(--accent-light)' : 'var(--warning-light)', color: emp.status === 'suspended' ? 'var(--accent)' : 'var(--warning)', border: 'none' }}
+                      style={{ background: emp.banned ? 'var(--accent-light)' : 'var(--warning-light)', color: emp.banned ? 'var(--accent)' : 'var(--warning)', border: 'none' }}
                       onClick={() => handleToggleStatus(emp)}
                     >
-                      {emp.status === 'suspended' ? 'Activate' : 'Suspend'}
+                      {emp.banned ? 'Activate' : 'Suspend'}
                     </button>
                   </div>
                 </td>
@@ -308,7 +327,7 @@ const EmployeeManagement = ({ currentUser }) => {
                   ) : (
                     <select className="form-input" value={formData.hospitalId}
                       onChange={e => {
-                        const h = hospitals.find(h => h.id === e.target.value);
+                        const h = hospitals.find(h => h.id == e.target.value);
                         setFormData(p => ({ ...p, hospitalId: e.target.value, hospitalName: h ? (h.hospitalName || h.name) : '' }));
                       }}>
                       <option value="">— None —</option>
