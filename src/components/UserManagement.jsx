@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getAllUsers, saveUsers, getCreds, saveCreds, updateUserStatus, deleteUserById, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, approveRegistration, rejectRegistration, requestAdditionalInfo, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity } from '../utils/auth';
+import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus } from '../utils/auth';
+import { createAdminViaAPI, getUsersViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
   const [users, setUsers] = useState([]);
+  const [adminUsers, setAdminUsers] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [showRegistrationModal, setShowRegistrationModal] = useState(false);
@@ -25,8 +27,9 @@ const UserManagement = ({ currentUser }) => {
   const [conflictOfInterestWarning, setConflictOfInterestWarning] = useState(null);
   // Category Selection Modal State
   const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [categoryModalData, setCategoryModalData] = useState({ userId: null, userName: null, reason: '', action: 'delete' }); // action: 'delete' or 'ban'
+  const [categoryModalData, setCategoryModalData] = useState({ userId: null, userName: null, reason: '', action: 'delete' });
   const [selectedCategory, setSelectedCategory] = useState('');
+  const [pendingRegistrations, setPendingRegistrations] = useState([]);
 
   useEffect(() => {
     loadUsers();
@@ -71,29 +74,34 @@ const UserManagement = ({ currentUser }) => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [showBanModal, banModalData]);
 
-  const loadUsers = () => {
-    setUsers(getAllUsers());
-    setApprovedHospitals(getApprovedHospitals());
-    setRejectedHospitals(getRejectedHospitals());
+  const loadUsers = async () => {
+    const [u, h, pending, rejected, adminsRes] = await Promise.all([
+      getAllUsers(),
+      getApprovedHospitals(),
+      getPendingRegistrations(),
+      getRejectedHospitals(),
+      getUsersViaAPI({ role: 'admin' }),
+    ]);
+    setUsers(u);
+    setApprovedHospitals(h);
+    setPendingRegistrations(pending);
+    setRejectedHospitals(rejected);
+    setAdminUsers(adminsRes.data || []);
   };
 
-  const loadAppeals = () => {
-    let allAppeals = getPendingAppeals();
-    if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
-      const hospitalUserIds = new Set(
-        getAllUsers()
-          .filter(u => u.preferredHospitalId === currentUser.linkedHospitalId || u.hospitalId === currentUser.linkedHospitalId)
-          .map(u => u.id)
-      );
-      allAppeals = allAppeals.filter(a => hospitalUserIds.has(a.userId));
-    }
+  const loadAppeals = async () => {
+    const allAppeals = await getPendingAppeals();
     setAppeals(allAppeals);
   };
 
-  const handleApproveUser = (id) => {
-    updateUserStatus(id, 'approved');
-    toast('User approved successfully.', 'success');
-    loadUsers();
+  const handleApproveUser = async (id) => {
+    try {
+      await updateUserStatus(id, 'approved');
+      toast('User approved successfully.', 'success');
+      loadUsers();
+    } catch (err) {
+      toast(err.message || 'Failed to approve user.', 'error');
+    }
   };
 
   const openBanModal = (userId, userName) => {
@@ -101,12 +109,11 @@ const UserManagement = ({ currentUser }) => {
     setShowBanModal(true);
   };
 
-  const handleBanUser = () => {
+  const handleBanUser = async () => {
     const { userId, userName, category, detailedReason, banType, banDuration } = banModalData;
 
-    // Fraud prevention: linked admin can only ban users from their hospital
     if (currentUser.linkedHospitalId) {
-      const target = getAllUsers().find(u => u.id === userId);
+      const target = users.find(u => u.id === userId);
       const belongsToHospital = target?.preferredHospitalId === currentUser.linkedHospitalId ||
         target?.hospitalId === currentUser.linkedHospitalId;
       if (!belongsToHospital) {
@@ -115,18 +122,11 @@ const UserManagement = ({ currentUser }) => {
       }
     }
 
-    if (!category) {
-      toast('Please select a violation category.', 'error');
-      return;
-    }
-
-    if (!detailedReason.trim()) {
-      toast('Please provide a detailed explanation for the ban.', 'error');
-      return;
-    }
+    if (!category) { toast('Please select a violation category.', 'error'); return; }
+    if (!detailedReason.trim()) { toast('Please provide a detailed explanation for the ban.', 'error'); return; }
 
     try {
-      banUser(userId, category, detailedReason, banType, banType === 'temporary' ? banDuration : null, currentUser.id);
+      await banUser(userId, category, detailedReason, banType, banType === 'temporary' ? banDuration : null, currentUser.id);
       toast(`User "${userName}" has been ${banType === 'warning' ? 'warned' : 'banned'} successfully.`, 'success');
       setShowBanModal(false);
       setBanModalData({ userId: null, userName: null, category: '', detailedReason: '', banType: 'temporary', banDuration: 30 });
@@ -143,20 +143,12 @@ const UserManagement = ({ currentUser }) => {
     setShowCategoryModal(true);
   };
 
-  const handleCategorySubmit = () => {
-    if (!selectedCategory) {
-      toast('Please select a violation category.', 'error');
-      return;
-    }
+  const handleCategorySubmit = async () => {
+    if (!selectedCategory) { toast('Please select a violation category.', 'error'); return; }
+    if (!categoryModalData.reason.trim()) { toast('Please enter a detailed reason.', 'error'); return; }
 
-    if (!categoryModalData.reason.trim()) {
-      toast('Please enter a detailed reason.', 'error');
-      return;
-    }
-
-    // Fraud prevention: linked admin can only delete users from their hospital
     if (currentUser.linkedHospitalId) {
-      const target = getAllUsers().find(u => u.id === categoryModalData.userId);
+      const target = users.find(u => u.id === categoryModalData.userId);
       const belongsToHospital = target?.preferredHospitalId === currentUser.linkedHospitalId ||
         target?.hospitalId === currentUser.linkedHospitalId;
       if (!belongsToHospital) {
@@ -167,7 +159,7 @@ const UserManagement = ({ currentUser }) => {
     }
 
     try {
-      softDeleteUser(categoryModalData.userId, selectedCategory, categoryModalData.reason, currentUser.id);
+      await softDeleteUser(categoryModalData.userId, selectedCategory, categoryModalData.reason, currentUser.id);
       toast(`User "${categoryModalData.userName}" has been deleted.`, 'success');
       setShowCategoryModal(false);
       loadUsers();
@@ -178,7 +170,7 @@ const UserManagement = ({ currentUser }) => {
 
   const handleReviewAppeal = (appeal) => {
     // Check for conflict of interest
-    if (appeal.originalAdminId === currentUser.id) {
+    if ((appeal.original_admin_id || appeal.originalAdminId) === currentUser.id) {
       setConflictOfInterestWarning(true);
       return;
     }
@@ -189,7 +181,7 @@ const UserManagement = ({ currentUser }) => {
     setShowAppealReviewModal(true);
   };
 
-  const submitAppealReview = () => {
+  const submitAppealReview = async () => {
     const { decision, notes } = appealReviewData;
 
     if (!decision) {
@@ -203,7 +195,7 @@ const UserManagement = ({ currentUser }) => {
     }
 
     try {
-      reviewAppeal(selectedAppeal.id, decision, notes, currentUser.id);
+      await reviewAppeal(selectedAppeal.id, decision, notes, currentUser.id);
       const decisionLabel = decision === 'uphold' ? 'upheld' : decision === 'reverse' ? 'reversed (user reinstated)' : 'modified';
       toast(`Appeal has been ${decisionLabel}.`, 'success');
       setShowAppealReviewModal(false);
@@ -215,78 +207,35 @@ const UserManagement = ({ currentUser }) => {
     }
   };
 
-  const handleAddAdmin = () => {
+  const handleAddAdmin = async () => {
     const { name, email, password, linkedHospitalId, linkedHospitalName } = newAdmin;
 
-    // Name validation
     const nameCheck = validateName(name);
-    if (!nameCheck.ok) {
-      toast(nameCheck.error, 'error');
-      return;
-    }
+    if (!nameCheck.ok) { toast(nameCheck.error, 'error'); return; }
 
-    // Email validation
     const emailCheck = validateEmail(email);
-    if (!emailCheck.ok) {
-      toast(emailCheck.error, 'error');
-      return;
-    }
+    if (!emailCheck.ok) { toast(emailCheck.error, 'error'); return; }
 
-    // Password strength validation
-    if (!password || password.length < 8) {
-      toast('Password must be at least 8 characters.', 'error');
-      return;
-    }
-    if (!/[A-Z]/.test(password)) {
-      toast('Password must contain at least one uppercase letter.', 'error');
-      return;
-    }
-    if (!/[a-z]/.test(password)) {
-      toast('Password must contain at least one lowercase letter.', 'error');
-      return;
-    }
-    if (!/[0-9]/.test(password)) {
-      toast('Password must contain at least one number.', 'error');
-      return;
-    }
+    if (!password || password.length < 8) { toast('Password must be at least 8 characters.', 'error'); return; }
+    if (!/[A-Z]/.test(password)) { toast('Password must contain at least one uppercase letter.', 'error'); return; }
+    if (!/[a-z]/.test(password)) { toast('Password must contain at least one lowercase letter.', 'error'); return; }
+    if (!/[0-9]/.test(password)) { toast('Password must contain at least one number.', 'error'); return; }
 
-    const allUsers = getAllUsers();
-    if (allUsers.some(u => u.email.toLowerCase() === email.toLowerCase() && !u.deleted)) {
-      toast('Email already in use.', 'error');
-      return;
+    try {
+      await createAdminViaAPI({
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        password,
+        role: 'admin',
+        linked_hospital_id: linkedHospitalId || null,
+      });
+      toast('Administrator added successfully.', 'success');
+      setShowAddModal(false);
+      setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
+      loadUsers();
+    } catch (err) {
+      toast(err.message || 'Failed to add admin.', 'error');
     }
-
-    const newAdminId = 'admin-' + Date.now();
-    allUsers.push({
-      id: newAdminId,
-      email: email.toLowerCase().trim(),
-      name: name.trim(),
-      role: 'admin',
-      status: 'approved',
-      linkedHospitalId: linkedHospitalId || null,
-      linkedHospitalName: linkedHospitalName || null,
-      registrationDate: new Date().toISOString()
-    });
-
-    saveUsers(allUsers);
-
-    const creds = getCreds();
-    creds[email.toLowerCase().trim()] = password;
-    saveCreds(creds);
-
-    // Log activity for transparency (super_admin & hospital scope)
-    if (linkedHospitalId) {
-      addActivity('admin_added', '👤', 'Hospital Admin Assigned',
-        `${name.trim()} was assigned as admin to ${linkedHospitalName}`, linkedHospitalId);
-    } else {
-      addActivity('admin_added', '👤', 'New Admin Created',
-        `${name.trim()} added as a general administrator`, currentUser.id);
-    }
-
-    toast('Administrator added successfully.', 'success');
-    setShowAddModal(false);
-    setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
-    loadUsers();
   };
 
   const handleRegistrationAction = (registration, action) => {
@@ -296,26 +245,25 @@ const UserManagement = ({ currentUser }) => {
     setShowRegistrationModal(true);
   };
 
-  const submitRegistrationAction = () => {
+  const submitRegistrationAction = async () => {
     if (!selectedRegistration) return;
 
-    if (modalAction === 'approve') {
-      approveRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
-      toast('Hospital registration approved!', 'success');
-    } else if (modalAction === 'reject') {
-      if (!modalMessage) {
-        toast('Please provide a reason for rejection.', 'error');
-        return;
+    try {
+      if (modalAction === 'approve') {
+        await approveRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
+        toast('Hospital registration approved!', 'success');
+      } else if (modalAction === 'reject') {
+        if (!modalMessage) { toast('Please provide a reason for rejection.', 'error'); return; }
+        await rejectRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
+        toast('Hospital registration rejected.', 'info');
+      } else if (modalAction === 'info') {
+        if (!modalMessage) { toast('Please provide the information request.', 'error'); return; }
+        await requestAdditionalInfoWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
+        toast('Additional information requested from hospital.', 'info');
       }
-      rejectRegistrationWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
-      toast('Hospital registration rejected.', 'info');
-    } else if (modalAction === 'info') {
-      if (!modalMessage) {
-        toast('Please provide the information request.', 'error');
-        return;
-      }
-      requestAdditionalInfoWithActivity(selectedRegistration.id, modalMessage, currentUser.id);
-      toast('Additional information requested from hospital.', 'info');
+    } catch (e) {
+      toast(e.message || 'Action failed.', 'error');
+      return;
     }
 
     setShowRegistrationModal(false);
@@ -351,7 +299,6 @@ const UserManagement = ({ currentUser }) => {
     return filteredUsers;
   }, [filteredUsers, currentUser]);
 
-  const pendingRegistrations = getPendingRegistrations();
   const approvedUsers = scopedUsers.filter(u => u.status === 'approved');
   const rejectedUsers = scopedUsers.filter(u => u.status === 'rejected');
   const bannedUsers = scopedUsers.filter(u => u.banned === true);
@@ -469,7 +416,7 @@ const UserManagement = ({ currentUser }) => {
               <div className="scroll-list-lg" style={{ padding: '12px' }}>
                 {approvedHospitals.length > 0 ? (
                   approvedHospitals.map(hospital => {
-                    const admins = getHospitalAdmins(hospital.id);
+                    const admins = adminUsers.filter(u => u.linkedHospitalId == hospital.id || u.linked_hospital_id == hospital.id);
                     return (
                       <div key={hospital.id} style={{ background: 'var(--surface2)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: '12px', border: '1px solid var(--border)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
@@ -767,7 +714,7 @@ const UserManagement = ({ currentUser }) => {
               </thead>
               <tbody>
                 {appeals.map(appeal => {
-                  const user = users.find(u => u.id === appeal.userId);
+                  const user = users.find(u => u.id === (appeal.user_id || appeal.userId));
                   return (
                     <tr key={appeal.id}>
                       <td>
@@ -775,12 +722,12 @@ const UserManagement = ({ currentUser }) => {
                         <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user?.email || '—'}</div>
                       </td>
                       <td>
-                        <span className={appeal.originalAction === 'ban' ? 'badge badge-red' : 'badge badge-purple'}>
-                          {appeal.originalAction === 'ban' ? 'Ban' : 'Delete'}
+                        <span className={(appeal.original_action || appeal.originalAction) === 'ban' ? 'badge badge-red' : 'badge badge-purple'}>
+                          {(appeal.original_action || appeal.originalAction) === 'ban' ? 'Ban' : 'Delete'}
                         </span>
                       </td>
                       <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
-                        {new Date(appeal.submittedDate).toLocaleDateString()}
+                        {new Date(appeal.submitted_date || appeal.submittedDate || appeal.created_at).toLocaleDateString()}
                       </td>
                       <td>
                         <span className="badge badge-amber">Pending Review</span>
@@ -1234,18 +1181,18 @@ const UserManagement = ({ currentUser }) => {
                   borderLeft: '3px solid #a855f7'
                 }}>
                   <div style={{ color: '#a855f7', fontWeight: '600', marginBottom: '4px' }}>Submitted</div>
-                  <div style={{ color: 'var(--text2)' }}>{new Date(selectedAppeal.submittedDate).toLocaleDateString()}</div>
+                  <div style={{ color: 'var(--text2)' }}>{new Date(selectedAppeal.submitted_date || selectedAppeal.submittedDate || selectedAppeal.created_at).toLocaleDateString()}</div>
                 </div>
                 <div style={{
-                  background: new Date(selectedAppeal.adminResponseDeadline) < new Date() ? '#fee2e2' : '#fef3c7',
+                  background: new Date(selectedAppeal.admin_response_deadline || selectedAppeal.adminResponseDeadline) < new Date() ? '#fee2e2' : '#fef3c7',
                   padding: '10px',
                   borderRadius: 'var(--radius)',
-                  borderLeft: `3px solid ${new Date(selectedAppeal.adminResponseDeadline) < new Date() ? '#dc2626' : '#f59e0b'}`
+                  borderLeft: `3px solid ${new Date(selectedAppeal.admin_response_deadline || selectedAppeal.adminResponseDeadline) < new Date() ? '#dc2626' : '#f59e0b'}`
                 }}>
-                  <div style={{ fontWeight: '600', marginBottom: '4px', color: new Date(selectedAppeal.adminResponseDeadline) < new Date() ? '#dc2626' : '#d97706' }}>
-                    {new Date(selectedAppeal.adminResponseDeadline) < new Date() ? '⚠️ OVERDUE' : '📅 Due'}
+                  <div style={{ fontWeight: '600', marginBottom: '4px', color: new Date(selectedAppeal.admin_response_deadline || selectedAppeal.adminResponseDeadline) < new Date() ? '#dc2626' : '#d97706' }}>
+                    {new Date(selectedAppeal.admin_response_deadline || selectedAppeal.adminResponseDeadline) < new Date() ? '⚠️ OVERDUE' : '📅 Due'}
                   </div>
-                  <div style={{ color: 'var(--text2)' }}>{new Date(selectedAppeal.adminResponseDeadline).toLocaleDateString()}</div>
+                  <div style={{ color: 'var(--text2)' }}>{new Date(selectedAppeal.admin_response_deadline || selectedAppeal.adminResponseDeadline).toLocaleDateString()}</div>
                 </div>
               </div>
 
@@ -1260,21 +1207,21 @@ const UserManagement = ({ currentUser }) => {
                 <div style={{ marginBottom: '12px' }}>
                   <div style={{ color: 'var(--text3)', fontSize: '11px', fontWeight: '600' }}>Original Action</div>
                   <div style={{ fontWeight: '600', marginTop: '4px' }}>
-                    {selectedAppeal.originalAction === 'ban' ? '🚫 User Banned' : '🗑️ User Deleted'}
+                    {(selectedAppeal.original_action || selectedAppeal.originalAction) === 'ban' ? '🚫 User Banned' : '🗑️ User Deleted'}
                   </div>
                 </div>
                 <div style={{ marginBottom: '12px' }}>
                   <div style={{ color: 'var(--text3)', fontSize: '11px', fontWeight: '600' }}>Violation Category</div>
                   <div style={{ marginTop: '4px' }}>
                     <span className="badge badge-red" style={{ fontSize: '11px' }}>
-                      {BAN_CATEGORIES[selectedAppeal.originalCategory]?.label || selectedAppeal.originalCategory}
+                      {BAN_CATEGORIES[selectedAppeal.original_category || selectedAppeal.originalCategory]?.label || (selectedAppeal.original_category || selectedAppeal.originalCategory)}
                     </span>
                   </div>
                 </div>
                 <div>
                   <div style={{ color: 'var(--text3)', fontSize: '11px', fontWeight: '600' }}>Admin's Explanation</div>
                   <div style={{ fontSize: '12px', color: 'var(--text2)', whiteSpace: 'pre-wrap', marginTop: '6px' }}>
-                    {selectedAppeal.originalReason}
+                    {selectedAppeal.original_reason || selectedAppeal.originalReason}
                   </div>
                 </div>
               </div>

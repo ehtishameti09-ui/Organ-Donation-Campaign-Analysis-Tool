@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   completeDonorRecipientRegistration,
   resubmitCaseInfo,
@@ -437,10 +437,14 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const isDonor = user.role === 'donor';
 
+  // Use local date parts — toISOString() converts to UTC which shifts the date in UTC+5
   const maxDOB = (() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() - 18);
-    return d.toISOString().split('T')[0];
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   })();
 
   // Consent data
@@ -477,7 +481,11 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
   const [preferredHospitalId, setPreferredHospitalId] = useState(user.preferredHospitalId || '');
 
   const docConfig = isDonor ? DONOR_DOCS : RECIPIENT_DOCS;
-  const approvedHospitals = useMemo(() => getApprovedHospitals(), []);
+  const [approvedHospitals, setApprovedHospitals] = useState([]);
+
+  useEffect(() => {
+    getApprovedHospitals().then(h => setApprovedHospitals(h)).catch(() => {});
+  }, []);
 
   // Total steps: 1=Consent, 2=Clinical, 3=Documents, 4=Hospital & Submit
   const totalSteps = 4;
@@ -596,41 +604,37 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
     setCurrentStep(2);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validateHospital()) return;
     setSubmitting(true);
 
-    setTimeout(() => {
-      try {
-        const selectedHospital = approvedHospitals.find(h => h.id === preferredHospitalId);
-        const docs = Object.values(documents);
+    try {
+      const selectedHospital = approvedHospitals.find(h => h.id == preferredHospitalId);
+      const docs = Object.values(documents);
 
-        if (isResubmit) {
-          // Resubmission: keep existing data, just update fields and add new docs
-          resubmitCaseInfo(user.id, {
-            ...clinical,
-            age: clinical.age ? parseInt(clinical.age) : null,
-          }, docs);
-          toast('Information resubmitted to the hospital.', 'success');
-        } else {
-          // New full registration
-          completeDonorRecipientRegistration(user.id, {
-            ...clinical,
-            age: clinical.age ? parseInt(clinical.age) : null,
-            fullName: consentData?.signature || user.name,
-            signature: consentData?.signature,
-            documents: docs,
-            preferredHospitalId,
-            preferredHospitalName: selectedHospital?.hospitalName || selectedHospital?.name,
-          });
-          toast('Registration submitted! It is now under review by the selected hospital.', 'success');
-        }
-        onComplete && onComplete();
-      } catch (err) {
-        toast(err.message || 'Submission failed. Please try again.', 'error');
-        setSubmitting(false);
+      if (isResubmit) {
+        await resubmitCaseInfo(user.id, {
+          ...clinical,
+          age: clinical.age ? parseInt(clinical.age) : null,
+        }, docs);
+        toast('Information resubmitted to the hospital.', 'success');
+      } else {
+        await completeDonorRecipientRegistration(user.id, {
+          ...clinical,
+          age: clinical.age ? parseInt(clinical.age) : null,
+          fullName: consentData?.signature || user.name,
+          signature: consentData?.signature,
+          documents: docs,
+          preferredHospitalId,
+          preferredHospitalName: selectedHospital?.hospitalName || selectedHospital?.name,
+        });
+        toast('Registration submitted! It is now under review by the selected hospital.', 'success');
       }
-    }, 700);
+      onComplete && onComplete();
+    } catch (err) {
+      toast(err.message || 'Submission failed. Please try again.', 'error');
+      setSubmitting(false);
+    }
   };
 
   // ===== RENDER =====
@@ -916,7 +920,7 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {approvedHospitals.map(h => {
-                const selected = preferredHospitalId === h.id;
+                const selected = preferredHospitalId == h.id;
                 return (
                   <button key={h.id} type="button" onClick={() => setPreferredHospitalId(h.id)}
                     style={{
@@ -953,7 +957,7 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
             ✓ Consent form signed<br />
             ✓ Clinical details completed<br />
             ✓ {Object.keys(documents).length} new document(s) uploaded<br />
-            ✓ Selected hospital: {approvedHospitals.find(h => h.id === preferredHospitalId)?.hospitalName || 'None'}
+            ✓ Selected hospital: {approvedHospitals.find(h => h.id == preferredHospitalId)?.hospitalName || 'None'}
           </div>
         </div>
       )}
@@ -973,7 +977,7 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
                 onClick={() => generateRegistrationPDF({
                   ...user,
                   ...clinical,
-                  preferredHospitalName: approvedHospitals.find(h => h.id === preferredHospitalId)?.hospitalName || user.preferredHospitalName,
+                  preferredHospitalName: approvedHospitals.find(h => h.id == preferredHospitalId)?.hospitalName || user.preferredHospitalName,
                 })}
                 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
               >

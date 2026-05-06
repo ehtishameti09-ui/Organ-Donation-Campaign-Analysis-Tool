@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { login, getAllUsers, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, requestPasswordReset, validateResetToken, resetPassword, submitAppeal, validateEmail } from '../utils/auth';
+import { login, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, submitAppeal, validateEmail } from '../utils/auth';
+import { sendPasswordResetLinkViaAPI, resetPasswordViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
@@ -76,129 +77,91 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     }
   };
 
-  const handleSubmitAppeal = () => {
+  const handleSubmitAppeal = async () => {
     if (!appealExplanation.trim()) {
       toast('🚨 Please enter your appeal explanation.', 'error');
       return;
     }
 
     setAppealLoading(true);
-    setTimeout(() => {
-      try {
-        submitAppeal(bannedUserInfo.id, appealExplanation);
-        toast('Appeal submitted successfully! An admin will review your appeal within 7 days.', 'success');
-        setShowAppealModal(false);
-        setAppealExplanation('');
-        setShowBannedModal(false);
-        setBannedUserInfo(null);
-      } catch (err) {
-        toast(err.message, 'error');
-      } finally {
-        setAppealLoading(false);
-      }
-    }, 600);
+    try {
+      await submitAppeal(bannedUserInfo.id, appealExplanation);
+      toast('Appeal submitted successfully! An admin will review your appeal within 7 days.', 'success');
+      setShowAppealModal(false);
+      setAppealExplanation('');
+      setShowBannedModal(false);
+      setBannedUserInfo(null);
+    } catch (err) {
+      toast(err.message || 'Appeal submission failed.', 'error');
+    } finally {
+      setAppealLoading(false);
+    }
   };
 
-  const handleForgotPassword = () => {
+  const handleForgotPassword = async () => {
     const emailCheck = validateEmail(forgotEmail);
-    if (!emailCheck.ok) {
-      toast(emailCheck.error, 'error');
-      return;
-    }
+    if (!emailCheck.ok) { toast(emailCheck.error, 'error'); return; }
 
     setForgotLoading(true);
-    setTimeout(() => {
-      try {
-        const result = requestPasswordReset(forgotEmail);
-        setResetToken(result.token);
-        setForgotStep('verify');
-        toast('📧 Reset code sent! Check the code below and follow the reset instructions.', 'success', 5000);
-      } catch (err) {
-        toast(err.message, 'error');
-      } finally {
-        setForgotLoading(false);
-      }
-    }, 600);
+    try {
+      await sendPasswordResetLinkViaAPI(forgotEmail);
+      setForgotStep('verify');
+      toast('Reset link sent to your email! Enter the token from the email below.', 'success', 5000);
+    } catch (err) {
+      toast(err.message || 'Failed to send reset link.', 'error');
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   const handleVerifyResetToken = () => {
     if (!resetTokenInput.trim()) {
-      toast('🚨 Please enter the reset code.', 'error');
+      toast('Please enter the reset token from your email.', 'error');
       return;
     }
-
-    setForgotLoading(true);
-    setTimeout(() => {
-      try {
-        validateResetToken(forgotEmail, resetTokenInput);
-        setResetToken(resetTokenInput);
-        setForgotStep('reset');
-        toast('Reset code verified! You can now set a new password.', 'success');
-      } catch (err) {
-        toast(err.message, 'error');
-      } finally {
-        setForgotLoading(false);
-      }
-    }, 600);
+    setResetToken(resetTokenInput);
+    setForgotStep('reset');
+    toast('Token accepted. Set your new password.', 'success');
   };
 
-  const handleResetPassword = () => {
-    if (!newPassword.trim()) {
-      toast('🚨 Please enter a new password.', 'error');
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      toast('🚨 Passwords do not match.', 'error');
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      toast('🚨 Password must be at least 8 characters long.', 'error');
-      return;
-    }
+  const handleResetPassword = async () => {
+    if (!newPassword.trim()) { toast('Please enter a new password.', 'error'); return; }
+    if (newPassword !== confirmPassword) { toast('Passwords do not match.', 'error'); return; }
+    if (newPassword.length < 8) { toast('Password must be at least 8 characters long.', 'error'); return; }
 
     setForgotLoading(true);
-    setTimeout(() => {
-      try {
-        resetPassword(forgotEmail, resetToken, newPassword);
-        toast('Password reset successfully! You can now log in with your new password.', 'success');
-        // Reset forgot password modal
-        setShowForgotPassword(false);
-        setForgotEmail('');
-        setResetToken(null);
-        setNewPassword('');
-        setConfirmPassword('');
-        setForgotStep('request');
-        setResetTokenInput('');
-      } catch (err) {
-        toast(err.message, 'error');
-      } finally {
-        setForgotLoading(false);
-      }
-    }, 600);
-  };
-
-  const handleRecoverAccount = () => {
     try {
-      const recovered = restoreDeletedAccount(deletedUserInfo.id);
-      if (recovered) {
-        toast('Account restored successfully!', 'success');
-        setShowDeletedRecoveryModal(false);
-        setDeletedUserInfo(null);
-        // Retry login
-        const user = login(email, password);
-        if (user) {
-          toast(`Welcome back, ${user.name}!`, 'success');
-          setTimeout(() => onLoginSuccess(user), 500);
-        }
-      }
+      await resetPasswordViaAPI(forgotEmail, resetToken, newPassword);
+      toast('Password reset successfully! You can now log in.', 'success');
+      setShowForgotPassword(false);
+      setForgotEmail('');
+      setResetToken(null);
+      setNewPassword('');
+      setConfirmPassword('');
+      setForgotStep('request');
+      setResetTokenInput('');
     } catch (err) {
-      toast(err.message, 'error');
+      toast(err.message || 'Password reset failed.', 'error');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleRecoverAccount = async () => {
+    try {
+      await restoreDeletedAccount(deletedUserInfo.id);
+      toast('Account restored successfully!', 'success');
+      setShowDeletedRecoveryModal(false);
+      setDeletedUserInfo(null);
+      const user = await login(email, password);
+      toast(`Welcome back, ${user.name}!`, 'success');
+      setTimeout(() => onLoginSuccess(user), 500);
+    } catch (err) {
+      toast(err.message || 'Account recovery failed.', 'error');
+    }
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     // Validate email format before hitting backend
@@ -214,44 +177,25 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
 
     setLoading(true);
 
-    setTimeout(() => {
-      // Check if user exists and their status
-      const allUsers = getAllUsers();
-      const userRecord = allUsers.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
-
-      // Check for banned users
-      if (userRecord && userRecord.banned) {
-        setBannedUserInfo(userRecord);
-        setShowBannedModal(true);
-        setLoading(false);
-        return;
-      }
-
-      // Check for deleted users - allow recovery within 30 days
-      if (userRecord && userRecord.deleted) {
-        if (canRecoverDeletedAccount(userRecord.id)) {
-          // Show recovery modal
-          setDeletedUserInfo(userRecord);
-          setShowDeletedRecoveryModal(true);
-          setLoading(false);
-          return;
-        } else {
-          // Recovery period expired
-          toast('Your account has been permanently deleted. Recovery period has expired.', 'error');
-          setLoading(false);
-          return;
-        }
-      }
-
-      const user = login(email, password);
-      if (user) {
-        toast(`Welcome back, ${user.name}!`, 'success');
-        setTimeout(() => onLoginSuccess(user), 500);
+    try {
+      const user = await login(email, password);
+      toast(`Welcome back, ${user.name}!`, 'success');
+      setTimeout(() => onLoginSuccess(user), 500);
+    } catch (error) {
+      const msg = error.message || 'Login failed. Please check your credentials.';
+      if (msg.includes('banned')) {
+        toast('Your account has been banned. Use the appeal option below.', 'error');
+      } else if (msg.includes('verified') || msg.includes('verification')) {
+        toast('Please verify your email before logging in.', 'error');
+      } else if (msg.includes('credentials') || msg.includes('password') || msg.includes('401')) {
+        toast('Incorrect email or password. Please try again.', 'error');
+      } else if (msg.includes('network') || msg.includes('fetch') || msg.includes('CORS') || msg.includes('Failed to fetch')) {
+        toast('Cannot connect to server. Make sure the backend is running.', 'error');
       } else {
-        toast('Invalid credentials or account pending approval.', 'error');
-        setLoading(false);
+        toast(msg, 'error');
       }
-    }, 600);
+      setLoading(false);
+    }
   };
 
   const fillLogin = (demoEmail, demoPassword) => {
@@ -451,7 +395,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
               <button type="button" className="btn btn-xs btn-ghost" onClick={() => fillLogin('dr.ali@odcat.com', 'Admin@123')}>
                 Admin
               </button>
-              <button type="button" className="btn btn-xs btn-ghost" onClick={() => fillLogin('cmh@odcat.com', 'Admin@123')}>
+              <button type="button" className="btn btn-xs btn-ghost" onClick={() => fillLogin('cmh@odcat.com', 'Hospital@123')}>
                 Hospital
               </button>
               <button type="button" className="btn btn-xs btn-ghost" onClick={() => fillLogin('ahmed.khan@odcat.com', 'Donor@123')}>

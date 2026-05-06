@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   getRecipients, getRecipientsByHospital, updateRecipientCase, calculateSurvivalEstimate,
-  getWaitingTimeAnalytics, createNotification, getAllUsers, saveUsers
+  getWaitingTimeAnalytics
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
@@ -75,17 +75,20 @@ const RecipientManagement = ({ currentUser }) => {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const loadRecipients = () => {
-    let r;
-    if (currentUser.role === 'hospital') {
-      r = getRecipientsByHospital(currentUser.id);
-    } else if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
-      r = getRecipientsByHospital(currentUser.linkedHospitalId);
-    } else {
-      r = getRecipients();
-    }
-    setRecipients(r);
-    setWaitingAnalytics(getWaitingTimeAnalytics());
+  const loadRecipients = async () => {
+    try {
+      let r;
+      if (currentUser.role === 'hospital') {
+        r = await getRecipientsByHospital(currentUser.id);
+      } else if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
+        r = await getRecipientsByHospital(currentUser.linkedHospitalId);
+      } else {
+        r = await getRecipients();
+      }
+      setRecipients(r);
+      const analytics = await getWaitingTimeAnalytics();
+      setWaitingAnalytics(analytics);
+    } catch {}
   };
 
   const filteredAndSorted = recipients
@@ -141,22 +144,25 @@ const RecipientManagement = ({ currentUser }) => {
     });
   };
 
-  const handleSaveCase = () => {
+  const handleSaveCase = async () => {
     if (!caseForm.diagnosis || !caseForm.age || !caseForm.organNeeded) {
       toast('Please fill diagnosis, age, and organ needed.', 'error');
       return;
     }
     setSaving(true);
-    setTimeout(() => {
-      updateRecipientCase(selectedRecipient.id, {
+    try {
+      await updateRecipientCase(selectedRecipient.id, {
         ...caseForm,
         daysOnWaitlist: Math.round((new Date() - new Date(selectedRecipient.registrationDate)) / (1000 * 60 * 60 * 24))
       }, currentUser.id);
-      loadRecipients();
+      await loadRecipients();
       setShowModal(false);
       toast('Recipient case updated!', 'success');
+    } catch (e) {
+      toast(e.message || 'Update failed.', 'error');
+    } finally {
       setSaving(false);
-    }, 600);
+    }
   };
 
   const getUrgencyColor = (score) => {

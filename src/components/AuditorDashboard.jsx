@@ -1,45 +1,65 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { getAllUsers, getActionLogs, getAppeals, getRecentActivities, getDonors, getRecipients, getVerificationMetrics } from '../utils/auth';
 
 const AuditorDashboard = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [logFilter, setLogFilter] = useState('all');
   const [logSearch, setLogSearch] = useState('');
+  const [users, setUsers] = useState([]);
+  const [donors, setDonors] = useState([]);
+  const [recipients, setRecipients] = useState([]);
+  const [metrics, setMetrics] = useState({});
+  const [activities, setActivities] = useState([]);
+  const [actionLogs, setActionLogs] = useState([]);
+  const [appeals, setAppeals] = useState([]);
 
-  const users = useMemo(() => getAllUsers(), []);
-  const actionLogs = useMemo(() => getActionLogs(), []);
-  const appeals = useMemo(() => getAppeals(), []);
-  const activities = useMemo(() => getRecentActivities(50), []);
-  const donors = useMemo(() => getDonors(), []);
-  const recipients = useMemo(() => getRecipients(), []);
-  const metrics = useMemo(() => getVerificationMetrics(), []);
+  useEffect(() => {
+    const load = async () => {
+      const [u, d, r, m, a, logs, apls] = await Promise.all([
+        getAllUsers(), getDonors(), getRecipients(), getVerificationMetrics(), getRecentActivities(50),
+        getActionLogs(), getAppeals(),
+      ]);
+      setUsers(u);
+      setDonors(d);
+      setRecipients(r);
+      setMetrics(m);
+      setActivities(a);
+      setActionLogs(logs);
+      setAppeals(apls);
+    };
+    load();
+  }, []);
 
   const filteredLogs = useMemo(() => {
     let logs = actionLogs;
-    if (logFilter !== 'all') logs = logs.filter(l => l.actionType === logFilter);
+    if (logFilter !== 'all') logs = logs.filter(l => (l.action_type || l.actionType) === logFilter);
     if (logSearch) {
       const s = logSearch.toLowerCase();
-      logs = logs.filter(l => l.reason.toLowerCase().includes(s) || l.actionType.toLowerCase().includes(s) || l.userId.toLowerCase().includes(s));
+      logs = logs.filter(l =>
+        (l.reason || '').toLowerCase().includes(s) ||
+        (l.action_type || l.actionType || '').toLowerCase().includes(s) ||
+        String(l.user_id || l.userId || '').toLowerCase().includes(s)
+      );
     }
-    return logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return logs.sort((a, b) => new Date(b.created_at || b.timestamp) - new Date(a.created_at || a.timestamp));
   }, [actionLogs, logFilter, logSearch]);
 
   const logTypes = useMemo(() => {
-    const types = new Set(actionLogs.map(l => l.actionType));
+    const types = new Set(actionLogs.map(l => l.action_type || l.actionType).filter(Boolean));
     return Array.from(types);
   }, [actionLogs]);
 
   const stats = useMemo(() => ({
-    totalUsers: users.filter(u => !u.deleted).length,
+    totalUsers: metrics.totalUsers || users.length,
     banned: users.filter(u => u.banned).length,
-    deleted: users.filter(u => u.deleted).length,
+    deleted: users.filter(u => u.deleted || u.isDeleted).length,
     pendingAppeals: appeals.filter(a => a.status === 'pending').length,
-    totalDonors: donors.length,
-    totalRecipients: recipients.length,
-    approvedDonors: metrics.approved,
-    rejectedDonors: metrics.rejected,
-    hospitals: users.filter(u => u.role === 'hospital' && !u.deleted).length,
-    pendingHospitals: users.filter(u => u.role === 'hospital' && u.status === 'pending').length,
+    totalDonors: metrics.totalDonors || donors.length,
+    totalRecipients: metrics.totalRecipients || recipients.length,
+    approvedDonors: metrics.approvedDonors || metrics.approved || 0,
+    rejectedDonors: metrics.rejected || 0,
+    hospitals: metrics.totalHospitals || 0,
+    pendingHospitals: metrics.pendingHospitals || 0,
   }), [users, appeals, donors, recipients, metrics]);
 
   const getUserName = (userId) => {
@@ -58,6 +78,7 @@ const AuditorDashboard = ({ currentUser }) => {
   };
 
   const getActionColor = (type) => {
+    if (!type) return 'var(--text2)';
     if (type.includes('ban') || type.includes('delete')) return 'var(--danger)';
     if (type.includes('approve') || type.includes('restore')) return 'var(--accent)';
     if (type.includes('appeal')) return 'var(--warning)';
@@ -180,17 +201,17 @@ const AuditorDashboard = ({ currentUser }) => {
               )}
               {filteredLogs.slice(0, 50).map((log, i) => (
                 <tr key={log.id || i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{new Date(log.timestamp).toLocaleString()}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{new Date(log.created_at || log.timestamp).toLocaleString()}</td>
                   <td style={{ padding: '10px 16px' }}>
-                    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: getActionColor(log.actionType) + '18', color: getActionColor(log.actionType) }}>
-                      {log.actionType.replace(/_/g, ' ')}
+                    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: getActionColor(log.action_type || log.actionType) + '18', color: getActionColor(log.action_type || log.actionType) }}>
+                      {(log.action_type || log.actionType || '').replace(/_/g, ' ')}
                     </span>
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text1)', fontWeight: '500' }}>{getUserName(log.userId)}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text1)', fontWeight: '500' }}>{getUserName(log.user_id || log.userId)}</td>
                   <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', maxWidth: '300px' }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.reason}</div>
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{log.adminId ? getUserName(log.adminId) : '—'}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{(log.admin_id || log.adminId) ? getUserName(log.admin_id || log.adminId) : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -246,17 +267,17 @@ const AuditorDashboard = ({ currentUser }) => {
             <div key={appeal.id} style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <div>
-                  <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)' }}>Appeal from {getUserName(appeal.userId)}</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Submitted: {new Date(appeal.submittedDate).toLocaleString()} | Original: {appeal.originalAction}</div>
+                  <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)' }}>Appeal from {getUserName(appeal.user_id || appeal.userId)}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Submitted: {new Date(appeal.submitted_date || appeal.submittedDate || appeal.created_at).toLocaleString()} | Original: {appeal.original_action || appeal.originalAction}</div>
                 </div>
                 <span className={`badge ${appeal.status === 'pending' ? 'badge-amber' : appeal.status === 'approved' ? 'badge-green' : 'badge-red'}`}>{appeal.status}</span>
               </div>
               <div style={{ padding: '10px', background: 'var(--surface2)', borderRadius: 'var(--radius)', fontSize: '13px', color: 'var(--text2)', marginBottom: '10px' }}>
                 <strong>Explanation:</strong> {appeal.explanation}
               </div>
-              {appeal.originalReason && (
+              {(appeal.original_reason || appeal.originalReason) && (
                 <div style={{ padding: '10px', background: 'var(--danger-light)', borderRadius: 'var(--radius)', fontSize: '12px', color: 'var(--danger)', marginBottom: '10px' }}>
-                  <strong>Original Reason:</strong> {appeal.originalReason}
+                  <strong>Original Reason:</strong> {appeal.original_reason || appeal.originalReason}
                 </div>
               )}
 
@@ -286,9 +307,9 @@ const AuditorDashboard = ({ currentUser }) => {
                 </div>
               )}
 
-              {appeal.reviewNotes && (
+              {(appeal.review_notes || appeal.reviewNotes) && (
                 <div style={{ padding: '10px', background: 'var(--accent-light)', borderRadius: 'var(--radius)', fontSize: '12px', color: 'var(--accent)', marginTop: '10px' }}>
-                  <strong>Review Notes:</strong> {appeal.reviewNotes}
+                  <strong>Review Notes:</strong> {appeal.review_notes || appeal.reviewNotes}
                 </div>
               )}
             </div>

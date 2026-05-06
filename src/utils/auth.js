@@ -1,18 +1,15 @@
-// Authentication and User Management Utilities
+﻿// Authentication and User Management Utilities
+import API from './api.js';
 
 // ===== INPUT VALIDATORS =====
 
-// Common disposable / invalid email domains we reject
+// Common disposable / fake email domains we reject
 const INVALID_EMAIL_DOMAINS = [
-  'test.com', 'example.com', 'example.org', 'test.test',
   'mailinator.com', 'tempmail.com', 'fakeinbox.com', 'trashmail.com',
   '10minutemail.com', 'yopmail.com', 'guerrillamail.com',
 ];
 
-// Allowed top-level domains (basic whitelist of common ones)
-const VALID_TLD_REGEX = /\.(com|org|net|edu|gov|pk|io|co|uk|in|info|biz|me|app|tech|health|hospital|ai)(\.[a-z]{2})?$/i;
-
-// Validate email address with strict checks
+// Validate email address
 // Returns { ok: bool, error?: string }
 export const validateEmail = (email) => {
   if (!email || typeof email !== 'string') return { ok: false, error: 'Email is required.' };
@@ -20,26 +17,15 @@ export const validateEmail = (email) => {
   if (e.length < 5) return { ok: false, error: 'Email is too short.' };
   if (e.length > 100) return { ok: false, error: 'Email is too long.' };
 
-  // Standard structure check: local@domain.tld
   const basic = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
   if (!basic.test(e)) return { ok: false, error: 'Please enter a valid email address.' };
 
-  // No consecutive dots, no leading/trailing dot in local part
   const [local, domain] = e.split('@');
   if (!local || !domain) return { ok: false, error: 'Invalid email format.' };
   if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) {
     return { ok: false, error: 'Email username cannot start/end with a dot or contain consecutive dots.' };
   }
-  if (domain.startsWith('-') || domain.endsWith('-') || domain.includes('..')) {
-    return { ok: false, error: 'Email domain is invalid.' };
-  }
 
-  // TLD whitelist
-  if (!VALID_TLD_REGEX.test(e)) {
-    return { ok: false, error: 'Email must use a valid domain (e.g. .com, .org, .pk, .edu).' };
-  }
-
-  // Reject disposable / fake domains
   if (INVALID_EMAIL_DOMAINS.includes(domain)) {
     return { ok: false, error: 'This email domain is not accepted. Please use a real email.' };
   }
@@ -47,31 +33,14 @@ export const validateEmail = (email) => {
   return { ok: true };
 };
 
-// Validate person's name (allows letters, spaces, dots, hyphens, apostrophes)
+// Validate person's name
 // Returns { ok: bool, error?: string }
 export const validateName = (name) => {
   if (!name || typeof name !== 'string') return { ok: false, error: 'Name is required.' };
   const n = name.trim();
   if (n.length < 2) return { ok: false, error: 'Name must be at least 2 characters.' };
   if (n.length > 60) return { ok: false, error: 'Name must be 60 characters or fewer.' };
-
-  // Allow only letters (incl. accents), spaces, dots, hyphens, apostrophes
-  if (!/^[A-Za-zÀ-ÿ\s.'\-]+$/.test(n)) {
-    return { ok: false, error: 'Name can only contain letters, spaces, dots, hyphens, and apostrophes.' };
-  }
-
-  // No digits anywhere
-  if (/\d/.test(n)) {
-    return { ok: false, error: 'Name cannot contain numbers.' };
-  }
-
-  // Must have at least 2 letters in a row (avoid single chars only)
-  if (!/[A-Za-z]{2,}/.test(n)) {
-    return { ok: false, error: 'Name must contain at least one real word.' };
-  }
-
-  // Reject names that are only spaces/punctuation
-  if (n.replace(/[\s.'\-]/g, '').length < 2) {
+  if (n.replace(/\s/g, '').length < 2) {
     return { ok: false, error: 'Please enter a valid name.' };
   }
 
@@ -82,179 +51,30 @@ export const validateName = (name) => {
 export const calculateAgeFromDOB = (dobString) => {
   if (!dobString) return '';
   try {
-    const dob = new Date(dobString);
+    // Parse as local date parts (YYYY-MM-DD) to avoid UTC midnight shift
+    const [y, mo, d] = dobString.split('-').map(Number);
     const today = new Date();
-    let age = today.getFullYear() - dob.getFullYear();
-    const monthDiff = today.getMonth() - dob.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
-      age--;
-    }
+    let age = today.getFullYear() - y;
+    const monthDiff = (today.getMonth() + 1) - mo;
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < d)) age--;
     return age >= 0 ? age : '';
   } catch {
     return '';
   }
 };
 
-// Initialize Super Admin if not exists
+// Initialize Super Admin - now uses backend seeded data
+// This function is kept for backward compatibility but doesn't need to do anything
 export const initSuperAdmin = () => {
-  let users = JSON.parse(localStorage.getItem('odcat_users') || '[]');
-  let creds = JSON.parse(localStorage.getItem('odcat_creds') || '{}');
-  const needsInit = !users.some(u => u.role === 'super_admin');
-
-  if (needsInit) {
-    users = [];
-    creds = {};
-  }
-
-  // Always ensure demo credentials exist and are up to date
-  if (!users.some(u => u.email === 'admin@odcat.com')) {
-    users.push({ 
-      id:'super-admin-1', 
-      email:'admin@odcat.com', 
-      name:'Super Administrator', 
-      role:'super_admin', 
-      status:'approved', 
-      registrationDate: new Date().toISOString() 
-    });
-    creds['admin@odcat.com'] = 'Admin@123';
-  }
-  
-  if (!users.some(u => u.email === 'dr.ali@odcat.com')) {
-    users.push({ 
-      id:'admin-1', 
-      email:'dr.ali@odcat.com', 
-      name:'Dr. Ali Hassan', 
-      role:'admin', 
-      status:'approved', 
-      registrationDate: new Date().toISOString() 
-    });
-    creds['dr.ali@odcat.com'] = 'Admin@123';
-  }
-  
-  if (!users.some(u => u.email === 'cmh@odcat.com')) {
-    users.push({ 
-      id:'hospital-1', 
-      email:'cmh@odcat.com', 
-      name:'CMH Coordinator', 
-      role:'hospital', 
-      status:'approved', 
-      hospitalName:'Combined Military Hospital', 
-      registrationDate: new Date().toISOString() 
-    });
-    creds['cmh@odcat.com'] = 'Hospital@123';
-  }
-
-  if (!users.some(u => u.email === 'ahmed.khan@odcat.com')) {
-    users.push({
-      id: 'donor-1',
-      email: 'ahmed.khan@odcat.com',
-      name: 'Ahmed Raza Khan',
-      role: 'donor',
-      status: 'approved',
-      bloodType: 'B+',
-      age: 28,
-      medicalHistory: 'No previous medical conditions. Regular health checkups.',
-      registrationDate: new Date(2026, 1, 15).toISOString(),
-      registrationType: 'user_self',
-      verificationStatus: 'active',
-      documentsUploaded: 3,
-      documentsTotal: 4,
-      unreadNotifications: 2
-    });
-    creds['ahmed.khan@odcat.com'] = 'Donor@123';
-  }
-
-  if (!users.some(u => u.email === 'nadia.qureshi@odcat.com')) {
-    users.push({
-      id: 'recipient-1',
-      email: 'nadia.qureshi@odcat.com',
-      name: 'Nadia Qureshi',
-      role: 'recipient',
-      status: 'approved',
-      age: 34,
-      organNeeded: 'kidney',
-      medicalHistory: 'End-stage renal disease (ESRD). Diagnosed 5 years ago.',
-      registrationDate: new Date(2025, 9, 15).toISOString(),
-      registrationType: 'user_self',
-      caseStatus: 'eligible',
-      daysOnWaitlist: 67,
-      urgencyScore: 7.2,
-      survivalEstimate: '77%',
-      diagnosis: 'End-stage renal disease (ESRD)',
-      urgency: 7.2,
-      comorbidity: 3.5,
-      unreadNotifications: 0
-    });
-    creds['nadia.qureshi@odcat.com'] = 'Recipient@123';
-  }
-
-  // Doctor demo account
-  if (!users.some(u => u.email === 'dr.farah@odcat.com')) {
-    users.push({
-      id: 'doctor-1',
-      email: 'dr.farah@odcat.com',
-      name: 'Dr. Farah Malik',
-      role: 'doctor',
-      status: 'approved',
-      department: 'Nephrology',
-      hospitalId: 'hospital-1',
-      hospitalName: 'Combined Military Hospital',
-      specialization: 'Kidney Transplant',
-      registrationDate: new Date(2025, 6, 1).toISOString(),
-    });
-    creds['dr.farah@odcat.com'] = 'Doctor@123';
-  }
-
-  // Data Entry Operator demo account
-  if (!users.some(u => u.email === 'entry@odcat.com')) {
-    users.push({
-      id: 'data_entry-1',
-      email: 'entry@odcat.com',
-      name: 'Bilal Ahmed',
-      role: 'data_entry',
-      status: 'approved',
-      hospitalId: 'hospital-1',
-      hospitalName: 'Combined Military Hospital',
-      registrationDate: new Date(2025, 8, 10).toISOString(),
-    });
-    creds['entry@odcat.com'] = 'Entry@123';
-  }
-
-  // Auditor demo account
-  if (!users.some(u => u.email === 'auditor@odcat.com')) {
-    users.push({
-      id: 'auditor-1',
-      email: 'auditor@odcat.com',
-      name: 'Sana Raza',
-      role: 'auditor',
-      status: 'approved',
-      registrationDate: new Date(2025, 5, 20).toISOString(),
-    });
-    creds['auditor@odcat.com'] = 'Auditor@123';
-  }
-
-  localStorage.setItem('odcat_users', JSON.stringify(users));
-  localStorage.setItem('odcat_creds', JSON.stringify(creds));
+  // Backend handles admin initialization via seeders
+  // Demo accounts are pre-seeded in Laravel database
 };
 
-// Login function
-export const login = (email, password) => {
-  const users = JSON.parse(localStorage.getItem('odcat_users') || '[]');
-  const creds = JSON.parse(localStorage.getItem('odcat_creds') || '{}');
-  
-  if (creds[email] !== password) return null;
-  
-  const user = users.find(u => u.email === email);
-  if (!user) return null;
-
-  // Prevent banned or deleted users from logging in
-  if (user.banned || user.deleted) {
-    return null;
-  }
-  
-  // Allow hospital logins even if pending approval
-  localStorage.setItem('odcat_current', JSON.stringify(user));
-  return user;
+// Login function (uses API)
+export const login = async (email, password) => {
+  const response = await API.loginViaAPI(email, password);
+  localStorage.setItem('odcat_current', JSON.stringify(response.user));
+  return response.user;
 };
 
 // Get current user
@@ -263,14 +83,27 @@ export const getCurrentUser = () => {
   return s ? JSON.parse(s) : null;
 };
 
-// Logout
-export const logout = () => {
+// Logout (calls API)
+export const logout = async () => {
+  try {
+    await API.logoutViaAPI();
+  } catch (error) {
+    console.error('Logout error:', error);
+  }
   localStorage.removeItem('odcat_current');
 };
 
-// Get all users
-export const getAllUsers = () => {
+// Internal sync fallback (for mutation functions that update localStorage as legacy)
+const getAllUsersSync = () => {
   return JSON.parse(localStorage.getItem('odcat_users') || '[]');
+};
+
+// Get all users from API (paginated response uses .data key)
+export const getAllUsers = async () => {
+  try {
+    const response = await API.getUsersViaAPI();
+    return response.data || [];
+  } catch { return []; }
 };
 
 // Save users
@@ -288,109 +121,64 @@ export const saveCreds = (c) => {
   localStorage.setItem('odcat_creds', JSON.stringify(c));
 };
 
-// Update user status
-export const updateUserStatus = (id, status) => {
-  let users = getAllUsers();
-  const i = users.findIndex(u => u.id === id);
-  if (i !== -1) {
-    users[i].status = status;
-    saveUsers(users);
+// Update user status (API)
+export const updateUserStatus = async (id, status) => {
+  await API.updateUserViaAPI(id, { status });
+};
+
+// Delete user by ID (API)
+export const deleteUserById = async (id) => {
+  await API.deleteUserViaAPI(id);
+};
+
+// Register new user (calls API)
+export const registerUser = async (registrationData) => {
+  try {
+    const extraData = {};
+    if (registrationData.type === 'hospital') {
+      extraData.hospital_name = registrationData.hospitalName;
+      extraData.registration_number = registrationData.registrationNumber;
+      extraData.license_number = registrationData.licenseNumber;
+      if (registrationData.hospitalAddress) extraData.hospital_address = registrationData.hospitalAddress;
+      if (registrationData.contactPerson) extraData.contact_person = registrationData.contactPerson;
+    }
+    const response = await API.registerViaAPI(
+      registrationData.name,
+      registrationData.email,
+      registrationData.password,
+      registrationData.type,
+      registrationData.phone || '',
+      extraData
+    );
+    localStorage.setItem('odcat_current', JSON.stringify(response.user));
+    return response.user;
+  } catch (error) {
+    console.error('Registration failed:', error);
+    throw error;
   }
 };
 
-// Delete user by ID
-export const deleteUserById = (id) => {
-  let users = getAllUsers();
-  users = users.filter(u => u.id !== id);
-  saveUsers(users);
-};
-
-// Register new user (donor, recipient, or hospital request)
-export const registerUser = (registrationData) => {
-  let users = getAllUsers();
-  let creds = getCreds();
-
-  if (registrationData.type === 'hospital') {
-    // Hospital registration needs admin approval
-    users.push({
-      id: 'hospital-pending-' + Date.now(),
-      email: registrationData.email,
-      name: registrationData.contactPerson,
-      hospitalName: registrationData.hospitalName,
-      role: 'hospital',
-      status: 'pending',
-      registrationNumber: registrationData.registrationNumber,
-      licenseNumber: registrationData.licenseNumber,
-      hospitalAddress: registrationData.hospitalAddress,
-      phone: registrationData.phone,
-      uploadedDocuments: registrationData.uploadedDocuments || [],
-      registrationDate: new Date().toISOString(),
-      registrationType: 'hospital_request'
-    });
-  } else {
-    // Donor/Recipient auto-approved
-    users.push({
-      id: registrationData.type + '-' + Date.now(),
-      email: registrationData.email,
-      name: registrationData.name,
-      role: registrationData.type,
-      status: 'approved',
-      bloodType: registrationData.bloodType || null,
-      age: registrationData.age || null,
-      medicalHistory: registrationData.medicalHistory || null,
-      organNeeded: registrationData.organNeeded || null,
-      registrationDate: new Date().toISOString(),
-      registrationType: 'user_self'
-    });
-  }
-
-  // Save password
-  creds[registrationData.email] = registrationData.password;
-
-  saveUsers(users);
-  saveCreds(creds);
-};
-
-// Get pending registrations (hospitals) — includes pending and info_requested
-export const getPendingRegistrations = () => {
-  const users = getAllUsers();
-  return users.filter(u =>
-    (u.status === 'pending' || u.status === 'info_requested') &&
-    u.registrationType === 'hospital_request'
-  );
+// Get pending registrations (hospitals)
+export const getPendingRegistrations = async () => {
+  try {
+    const response = await API.getPendingHospitalsViaAPI();
+    return response.hospitals || [];
+  } catch { return []; }
 };
 
 // Approve registration with optional feedback
-export const approveRegistration = (id, feedback = '') => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx !== -1) {
-    users[idx].status = 'approved';
-    if (feedback) users[idx].adminFeedback = feedback;
-    saveUsers(users);
-  }
+export const approveRegistration = async (id, feedback = '') => {
+  return await API.approveHospitalViaAPI(id, feedback);
 };
 
 // Reject registration with feedback
-export const rejectRegistration = (id, reason = '') => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx !== -1) {
-    users[idx].status = 'rejected';
-    if (reason) users[idx].rejectionReason = reason;
-    saveUsers(users);
-  }
+export const rejectRegistration = async (id, reason = '') => {
+  return await API.rejectHospitalViaAPI(id, reason);
 };
 
 // Request additional info from hospital
-export const requestAdditionalInfo = (id, message = '') => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx !== -1) {
-    users[idx].status = 'info_requested';
-    if (message) users[idx].adminMessage = message;
-    saveUsers(users);
-  }
+export const requestAdditionalInfo = async (id, message = '') => {
+  return await API.requestHospitalInfoViaAPI(id, message);
 };
 
 // ===== BAN/DELETE SYSTEM WITH APPEALS =====
@@ -438,293 +226,124 @@ export const BAN_DURATIONS = {
   PERMANENT: { value: null, label: 'Permanent' }
 };
 
-// Notification system
-export const createNotification = (userId, type, title, message, data = {}) => {
-  let notifications = JSON.parse(localStorage.getItem('odcat_notifications') || '[]');
-  notifications.push({
-    id: 'notif-' + Date.now(),
-    userId,
-    type, // 'ban', 'delete', 'appeal_status', 'warning', 'info'
-    title,
-    message,
-    data,
-    timestamp: new Date().toISOString(),
-    read: false
-  });
-  localStorage.setItem('odcat_notifications', JSON.stringify(notifications));
+// Notification system — API-backed
+export const createNotification = () => {}; // handled by backend automatically
+
+export const getNotifications = async (userId) => {
+  try {
+    const response = await API.getNotificationsViaAPI();
+    return response.notifications || response.data || [];
+  } catch { return []; }
 };
 
-export const getNotifications = (userId) => {
-  const notifications = JSON.parse(localStorage.getItem('odcat_notifications') || '[]');
-  return notifications.filter(n => n.userId === userId);
+export const getUnreadNotifications = async (userId) => {
+  try {
+    const notifs = await getNotifications(userId);
+    return notifs.filter(n => !n.read_at);
+  } catch { return []; }
 };
 
-export const getUnreadNotifications = (userId) => {
-  const notifications = getNotifications(userId);
-  return notifications.filter(n => !n.read);
+export const markNotificationRead = async (notificationId) => {
+  try {
+    await API.markNotificationReadViaAPI(notificationId);
+  } catch { /* silent */ }
 };
 
-export const markNotificationRead = (notificationId) => {
-  let notifications = JSON.parse(localStorage.getItem('odcat_notifications') || '[]');
-  const idx = notifications.findIndex(n => n.id === notificationId);
-  if (idx !== -1) {
-    notifications[idx].read = true;
-    localStorage.setItem('odcat_notifications', JSON.stringify(notifications));
-  }
-};
-
-// Log user actions (ban, delete, appeal, etc.)
-export const logUserAction = (userId, actionType, reason, actionDetails = {}) => {
-  let logs = JSON.parse(localStorage.getItem('odcat_action_logs') || '[]');
-  logs.push({
-    id: 'log-' + Date.now(),
-    userId,
-    actionType, // 'ban', 'delete', 'appeal_submitted', 'appeal_reviewed', 'ban_reversed', etc.
-    reason,
-    actionDetails,
-    timestamp: new Date().toISOString(),
-    adminId: actionDetails.adminId || null,
-    reviewAdminId: actionDetails.reviewAdminId || null
-  });
-  localStorage.setItem('odcat_action_logs', JSON.stringify(logs));
-};
+// Log user actions — handled by backend automatically
+export const logUserAction = () => {};
 
 // Get all action logs
-export const getActionLogs = () => {
-  return JSON.parse(localStorage.getItem('odcat_action_logs') || '[]');
+export const getActionLogs = async () => {
+  try {
+    const response = await API.getActionLogsViaAPI();
+    return response.logs || response.data || [];
+  } catch { return []; }
 };
 
-// Get action logs for a specific user
-export const getUserActionLogs = (userId) => {
-  const logs = getActionLogs();
-  return logs.filter(log => log.userId === userId);
+// Get action logs for a specific user (API returns only current user's logs)
+export const getUserActionLogs = async (userId) => {
+  return await getActionLogs();
 };
 
 // Ban a user (with structured reason and categories)
-export const banUser = (userId, category, detailedReason, banType = 'temporary', duration = 30, adminId) => {
+export const banUser = async (userId, category, detailedReason, banType = 'temporary', duration = 30, adminId) => {
   if (!category || !Object.keys(BAN_CATEGORIES).includes(category)) {
     throw new Error('Valid ban category is required');
   }
-
   if (!detailedReason || !detailedReason.trim()) {
     throw new Error('Detailed explanation is required');
   }
-
-  let users = getAllUsers();
-  const userIdx = users.findIndex(u => u.id === userId);
-  
-  if (userIdx === -1) return false;
-
-  const banDate = new Date().toISOString();
-  const banDetails = {
+  const banData = {
+    detailed_reason: detailedReason,
     category,
-    categoryLabel: BAN_CATEGORIES[category].label,
-    detailedReason,
-    banType, // 'warning', 'temporary', 'permanent'
+    category_label: BAN_CATEGORIES[category].label,
+    ban_type: banType,
     duration: banType === 'temporary' ? duration : null,
-    banDate,
-    adminId,
-    expiryDate: banType === 'temporary' ? new Date(Date.now() + duration * 24 * 60 * 60 * 1000).toISOString() : null
   };
-
-  users[userIdx].banned = true;
-  users[userIdx].banDetails = banDetails;
-  users[userIdx].status = banType === 'warning' ? 'warned' : 'banned';
-
-  saveUsers(users);
-
-  // Create notification
-  const banTypeLabel = banType === 'warning' ? 'Warning' : banType === 'temporary' ? `${duration}-day ban` : 'permanent ban';
-  createNotification(
-    userId,
-    'ban',
-    `Account ${banTypeLabel}`,
-    `Your account has received a ${banTypeLabel}. Reason: ${BAN_CATEGORIES[category].label}. ${banType !== 'warning' ? 'You can appeal within 30 days.' : 'Please review our policies to avoid future violations.'}`,
-    { category, duration, adminId, appealable: banType !== 'warning' }
-  );
-
-  logUserAction(userId, 'user_banned', detailedReason, {
-    adminId,
-    category,
-    banType,
-    duration
-  });
-
-  return true;
+  return await API.banUserViaAPI(userId, banData);
 };
 
 // Soft delete user (mark as deleted instead of removing)
-export const softDeleteUser = (userId, category, detailedReason, adminId) => {
+export const softDeleteUser = async (userId, category, detailedReason, adminId) => {
   if (!category || !Object.keys(BAN_CATEGORIES).includes(category)) {
     throw new Error('Valid deletion category is required');
   }
-
   if (!detailedReason || !detailedReason.trim()) {
     throw new Error('Detailed explanation is required');
   }
-
-  let users = getAllUsers();
-  const userIdx = users.findIndex(u => u.id === userId);
-  
-  if (userIdx === -1) return false;
-
-  users[userIdx].deleted = true;
-  users[userIdx].deletionDetails = {
-    category,
-    categoryLabel: BAN_CATEGORIES[category].label,
-    detailedReason,
-    deletionDate: new Date().toISOString(),
-    adminId
-  };
-  users[userIdx].status = 'deleted';
-
-  saveUsers(users);
-
-  // Create notification
-  createNotification(
-    userId,
-    'delete',
-    'Account Deleted',
-    `Your account has been permanently deleted. Reason: ${BAN_CATEGORIES[category].label}. You can appeal within 30 days.`,
-    { category, adminId, appealable: true }
-  );
-
-  logUserAction(userId, 'user_deleted', detailedReason, { adminId, category });
-
-  return true;
+  return await API.deleteUserViaAPI(userId, detailedReason, category);
 };
 
-// Submit an appeal
-export const submitAppeal = (userId, explanation, evidence = {}) => {
+// Submit an appeal (API)
+export const submitAppeal = async (userId, explanation, evidence = {}, originalAction = 'ban') => {
   if (!explanation || !explanation.trim()) {
     throw new Error('Appeal explanation is required');
   }
-
-  // Check if user is banned or deleted
-  const users = getAllUsers();
-  const user = users.find(u => u.id === userId);
-  
-  if (!user || (!user.banned && !user.deleted)) {
-    throw new Error('User is not banned or deleted');
-  }
-
-  // Check if already appealed recently
-  const appeals = getAppeals();
-  const recentAppeal = appeals.find(a => 
-    a.userId === userId && 
-    a.status === 'pending' &&
-    new Date(a.submittedDate) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-  );
-
-  if (recentAppeal) {
-    throw new Error('You have a pending appeal. You can only submit one appeal every 30 days');
-  }
-
-  // Check if appeal deadline has passed (30 days)
-  const actionDate = user.banned ? new Date(user.banDetails.banDate) : new Date(user.deletionDetails.deletionDate);
-  const deadlineDate = new Date(actionDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-  if (new Date() > deadlineDate) {
-    throw new Error('Appeal deadline has passed (30 days from action date)');
-  }
-
-  let allAppeals = appeals;
-  const appeal = {
-    id: 'appeal-' + Date.now(),
-    userId,
-    explanation,
-    evidence,
-    submittedDate: new Date().toISOString(),
-    status: 'pending', // 'pending', 'approved', 'denied', 'modified'
-    originalAction: user.banned ? 'ban' : 'delete',
-    originalCategory: user.banned ? user.banDetails.category : user.deletionDetails.category,
-    originalReason: user.banned ? user.banDetails.detailedReason : user.deletionDetails.detailedReason,
-    originalAdminId: user.banned ? user.banDetails.adminId : user.deletionDetails.adminId,
-    reviewDate: null,
-    reviewAdminId: null,
-    reviewNotes: null,
-    decision: null,
-    adminResponseDeadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // Admin has 7 days to respond
-  };
-
-  allAppeals.push(appeal);
-  localStorage.setItem('odcat_appeals', JSON.stringify(allAppeals));
-  
-  createNotification(userId, 'appeal_status', 'Appeal Submitted', 'Your appeal has been submitted and is pending review by an admin.', { appealId: appeal.id });
-  
-  logUserAction(userId, 'appeal_submitted', `Appeal submitted: ${explanation}`, {
-    appealId: appeal.id
-  });
-
-  return appeal;
+  return await API.submitAppealViaAPI(userId, explanation, originalAction);
 };
 
-// Get all appeals
-export const getAppeals = () => {
-  return JSON.parse(localStorage.getItem('odcat_appeals') || '[]');
+// Get all appeals (API)
+export const getAppeals = async () => {
+  try {
+    const response = await API.getAppealsViaAPI();
+    return response.appeals || [];
+  } catch { return []; }
 };
 
-// Get appeals for a specific user
-export const getUserAppeals = (userId) => {
-  const appeals = getAppeals();
-  return appeals.filter(a => a.userId === userId);
+// Get appeals for a specific user (API returns scoped list)
+export const getUserAppeals = async (userId) => {
+  return await getAppeals();
 };
 
 // Get pending appeals (for admin review)
-export const getPendingAppeals = () => {
-  const appeals = getAppeals();
+export const getPendingAppeals = async () => {
+  const appeals = await getAppeals();
   return appeals.filter(a => a.status === 'pending');
 };
 
-// Get overdue appeals (admin response deadline passed)
-export const getOverdueAppeals = () => {
-  const appeals = getPendingAppeals();
-  return appeals.filter(a => new Date(a.adminResponseDeadline) < new Date());
+// Get overdue appeals
+export const getOverdueAppeals = async () => {
+  const pending = await getPendingAppeals();
+  return pending.filter(a => new Date(a.admin_response_deadline || a.adminResponseDeadline) < new Date());
 };
 
-// Review and decide on an appeal
-export const reviewAppeal = (appealId, decision, notes, reviewAdminId) => {
-  // decision: 'uphold', 'reverse', 'modify'
+// Review and decide on an appeal (API)
+export const reviewAppeal = async (appealId, decision, notes, reviewAdminId) => {
   if (!decision || !['uphold', 'reverse', 'modify'].includes(decision)) {
     throw new Error('Valid decision required: uphold, reverse, or modify');
   }
-
   if (!notes || !notes.trim()) {
     throw new Error('Review notes are required');
   }
+  return await API.reviewAppealViaAPI(appealId, decision, notes);
+};
 
-  let appeals = getAppeals();
-  const appealIdx = appeals.findIndex(a => a.id === appealId);
-  
-  if (appealIdx === -1) return false;
-
-  const appeal = appeals[appealIdx];
-
-  // Conflict of interest check: reviewing admin must be different from original admin
-  if (appeal.originalAdminId === reviewAdminId) {
-    throw new Error('You cannot review an appeal you created. Another admin must review this.');
-  }
-
-  appeals[appealIdx].status = decision === 'uphold' ? 'denied' : 'approved';
-  appeals[appealIdx].reviewDate = new Date().toISOString();
-  appeals[appealIdx].reviewAdminId = reviewAdminId;
-  appeals[appealIdx].reviewNotes = notes;
-  appeals[appealIdx].decision = decision;
-
+// LEGACY STUB — kept so old code referencing it doesn't crash
+const _reviewAppealOld = (appealId, decision, notes, reviewAdminId) => {
   // If appeal is approved (reversed), remove ban/deletion
   if (decision === 'reverse') {
-    let users = getAllUsers();
-    const userIdx = users.findIndex(u => u.id === appeal.userId);
-    if (userIdx !== -1) {
-      users[userIdx].banned = false;
-      users[userIdx].deleted = false;
-      users[userIdx].status = 'approved';
-      users[userIdx].banDetails = null;
-      users[userIdx].deletionDetails = null;
-      saveUsers(users);
-    }
-
     createNotification(
-      appeal.userId,
+      appealId,
       'appeal_status',
       '✅ Appeal Approved',
       'Your appeal has been approved. Your account has been reinstated.',
@@ -767,327 +386,114 @@ export const reviewAppeal = (appealId, decision, notes, reviewAdminId) => {
   return true;
 };
 
-// User self-delete account
-export const userSelfDeleteAccount = (userId, reason = '') => {
-  let users = getAllUsers();
-  const userIdx = users.findIndex(u => u.id === userId);
-
-  if (userIdx === -1) return false;
-
-  users[userIdx].deleted = true;
-  users[userIdx].deletionDetails = {
-    category: 'USER_SELF_DELETE',
-    categoryLabel: 'User Self-Deletion',
-    detailedReason: reason || 'User requested account deletion',
-    deletionDate: new Date().toISOString(),
-    adminId: null,
-    isSelfDelete: true,
-    recoveryDeadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days to recover
-  };
-  users[userIdx].status = 'deleted';
-
-  saveUsers(users);
-
-  createNotification(
-    userId,
-    'delete',
-    'Account Deleted',
-    `Your account has been marked for deletion. You can restore it within 30 days by logging in. After 30 days, your account will be permanently deleted.`,
-    { isSelfDelete: true, recoveryDeadline: users[userIdx].deletionDetails.recoveryDeadline }
-  );
-
-  logUserAction(userId, 'user_self_deleted', reason || 'User deleted own account', {
-    isSelfDelete: true
-  });
-
-  return true;
+// User self-delete account (API)
+export const userSelfDeleteAccount = async (userId, reason = '') => {
+  return await API.deleteSelfViaAPI(reason || 'User requested account deletion');
 };
 
-// Check if deleted account can be recovered
+// Check if deleted account can be recovered (based on user object from API)
 export const canRecoverDeletedAccount = (userId) => {
-  const users = getAllUsers();
-  const user = users.find(u => u.id === userId);
-
-  if (!user || !user.deleted) return false;
-
-  const deletionDetails = user.deletionDetails;
-  if (!deletionDetails) return false;
-
-  // Only self-deleted accounts can be recovered, not admin-deleted ones
-  if (!deletionDetails.isSelfDelete && deletionDetails.adminId) return false;
-
-  const deletionDate = new Date(deletionDetails.deletionDate);
-  const recoveryDeadline = new Date(deletionDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-  return new Date() <= recoveryDeadline;
+  const stored = localStorage.getItem('odcat_current');
+  if (!stored) return false;
+  const user = JSON.parse(stored);
+  return user?.isDeleted && user?.recoveryDeadline && new Date(user.recoveryDeadline) > new Date();
 };
 
-// Restore a soft-deleted account
-export const restoreDeletedAccount = (userId) => {
-  if (!canRecoverDeletedAccount(userId)) {
-    throw new Error('This account cannot be recovered. Recovery period has expired or account was admin-deleted.');
+// Restore a soft-deleted account (API)
+export const restoreDeletedAccount = async (userId) => {
+  const result = await API.restoreSelfViaAPI();
+  if (result.user) {
+    localStorage.setItem('odcat_current', JSON.stringify(result.user));
   }
-
-  let users = getAllUsers();
-  const userIdx = users.findIndex(u => u.id === userId);
-
-  if (userIdx === -1) return false;
-
-  users[userIdx].deleted = false;
-  users[userIdx].deletionDetails = null;
-  users[userIdx].status = 'approved';
-
-  saveUsers(users);
-
-  createNotification(
-    userId,
-    'account_restored',
-    'Account Restored',
-    'Your account has been successfully restored. You can now access all your data.',
-    {}
-  );
-
-  logUserAction(userId, 'account_restored', 'User restored their deleted account');
-
-  return true;
+  return result;
 };
 
-// Auto-delete accounts after 30 days of soft-deletion
-export const cleanupExpiredDeletedAccounts = () => {
-  let users = getAllUsers();
-  const now = new Date();
-  let deletedCount = 0;
-
-  users.forEach((user, idx) => {
-    if (user.deleted && user.deletionDetails) {
-      const deletionDate = new Date(user.deletionDetails.deletionDate);
-      const expiryDate = new Date(deletionDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-
-      if (now > expiryDate) {
-        // Permanently delete the account (remove from users array)
-        users.splice(idx, 1);
-        deletedCount++;
-
-        // Log the auto-deletion
-        logUserAction(user.id, 'account_auto_deleted', 'Account permanently deleted after 30-day recovery period expired', {
-          originalDeletionDate: deletionDate.toISOString()
-        });
-      }
-    }
-  });
-
-  if (deletedCount > 0) {
-    saveUsers(users);
-  }
-
-  return deletedCount;
-};
+// No-op — backend handles auto-deletion via scheduler
+export const cleanupExpiredDeletedAccounts = () => {};
 
 // ===== ACTIVITY TRACKING =====
 
-export const addActivity = (type, icon, title, description, userId = null) => {
-  let activities = JSON.parse(localStorage.getItem('odcat_activities') || '[]');
-  activities.unshift({
-    id: 'act-' + Date.now(),
-    type,
-    icon,
-    title,
-    description,
-    userId,
-    timestamp: new Date().toISOString()
-  });
-  // Keep only last 100 activities
-  activities = activities.slice(0, 100);
-  localStorage.setItem('odcat_activities', JSON.stringify(activities));
+// addActivity — backend logs activities automatically; this is a no-op stub for backwards compat
+export const addActivity = () => {};
+
+export const getRecentActivities = async (limit = 20) => {
+  try {
+    const response = await API.getActivitiesViaAPI();
+    return (response.activities || []).slice(0, limit);
+  } catch { return []; }
 };
 
-export const getRecentActivities = (limit = 20) => {
-  const activities = JSON.parse(localStorage.getItem('odcat_activities') || '[]');
-  return activities.slice(0, limit);
-};
-
-// Get activities filtered & sanitized for a specific user
-// - super_admin: hospital registrations, admin assignments (no patient PII)
-// - admin (general): all admin actions
-// - admin (linked to hospital): only their hospital's events
-// - hospital: events involving their donors/recipients/cases
-// - donor/recipient: only their own activities
-// - other roles: only events tagged to their userId
-export const getRecentActivitiesForUser = (currentUser, limit = 20) => {
-  const all = JSON.parse(localStorage.getItem('odcat_activities') || '[]');
-  if (!currentUser) return [];
-
-  const users = getAllUsers();
-  const findUserById = (id) => users.find(u => u.id === id);
-
-  // Helper: redact a name to first name + role abbreviation for non-privileged viewers
-  const redactDescription = (desc) => {
-    // Replace anything that looks like a CNIC pattern xxxxx-xxxxxxx-x with masked form
-    return (desc || '').replace(/\b\d{5}-\d{7}-\d\b/g, '*****-*******-*');
-  };
-
-  let filtered = [];
-
-  if (currentUser.role === 'super_admin') {
-    // Super admin sees: hospital registrations, hospital approvals/rejections, admin actions on hospitals
-    const allowedTypes = new Set([
-      'hospital_registered', 'hospital_approved', 'hospital_rejected',
-      'hospital_info_requested', 'hospital_resubmit', 'admin_added',
-    ]);
-    filtered = all.filter(a => allowedTypes.has(a.type));
-  } else if (currentUser.role === 'admin') {
-    if (currentUser.linkedHospitalId) {
-      // Linked hospital admin - only events involving their hospital's users
-      const hospitalUserIds = new Set(
-        users
-          .filter(u =>
-            u.preferredHospitalId === currentUser.linkedHospitalId ||
-            u.hospitalId === currentUser.linkedHospitalId ||
-            u.id === currentUser.linkedHospitalId
-          )
-          .map(u => u.id)
-      );
-      filtered = all.filter(a =>
-        hospitalUserIds.has(a.userId) ||
-        a.userId === currentUser.id ||
-        a.type === 'hospital_approved' && a.userId === currentUser.linkedHospitalId
-      );
-    } else {
-      // General admin sees user-management events (bans, appeals, deletions, employees, hospitals)
-      const allowedTypes = new Set([
-        'hospital_registered', 'hospital_approved', 'hospital_rejected', 'hospital_info_requested',
-        'admin_added', 'employee_added', 'employee_updated', 'employee_status',
-        'multi_appeal_approved', 'multi_appeal_denied',
-      ]);
-      filtered = all.filter(a =>
-        allowedTypes.has(a.type) ||
-        a.type?.startsWith('user_') ||
-        a.type?.startsWith('ban_') ||
-        a.type?.startsWith('appeal_')
-      );
-    }
-  } else if (currentUser.role === 'hospital') {
-    // Hospital sees activities for users assigned to them + their own actions
-    const hospitalUserIds = new Set(
-      users
-        .filter(u =>
-          u.preferredHospitalId === currentUser.id ||
-          u.hospitalId === currentUser.id
-        )
-        .map(u => u.id)
-    );
-    hospitalUserIds.add(currentUser.id);
-    filtered = all.filter(a => hospitalUserIds.has(a.userId));
-  } else {
-    // Donor / recipient / doctor / data_entry / auditor — only see their own activities
-    filtered = all.filter(a => a.userId === currentUser.id);
-  }
-
-  // Redact PII in descriptions and return up to limit
-  return filtered.slice(0, limit).map(a => ({
-    ...a,
-    description: redactDescription(a.description),
-  }));
+export const getRecentActivitiesForUser = async (userId, limit = 20) => {
+  try {
+    const response = await API.getActivitiesViaAPI();
+    return (response.activities || []).slice(0, limit);
+  } catch { return []; }
 };
 
 // ===== DONOR MANAGEMENT =====
 
-export const getDonors = () => {
-  return getAllUsers().filter(u => u.role === 'donor' && !u.deleted);
+export const getDonors = async () => {
+  try {
+    const response = await API.getDonorsViaAPI();
+    return response.data || [];
+  } catch { return []; }
 };
 
-export const verifyDonor = (donorId, status, notes, adminId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === donorId);
-  if (idx === -1) return false;
+export const verifyDonor = async (donorId, status, notes, adminId) => {
+  return await API.verifyDonorViaAPI(donorId, status, notes || '');
+};
 
-  const prevStatus = users[idx].verificationStatus;
-  users[idx].verificationStatus = status; // 'approved', 'rejected', 'under_review'
-  users[idx].verificationNotes = notes;
-  users[idx].verificationAdminId = adminId;
-  users[idx].verificationDate = new Date().toISOString();
-
-  if (status === 'approved') {
-    users[idx].status = 'approved';
-    users[idx].caseStatus = 'active';
-    createNotification(donorId, 'info', 'Donor Verification Approved', 'Your donor registration has been verified and approved. You are now an active donor.', {});
-    addActivity('donor_approved', '✅', 'Donor Verified', `${users[idx].name} has been verified as an active donor`, adminId);
-  } else if (status === 'rejected') {
-    users[idx].status = 'approved'; // keep account active but verification rejected
-    createNotification(donorId, 'warning', 'Donor Verification Rejected', `Your donor verification was not approved. Reason: ${notes}`, {});
-    addActivity('donor_rejected', '❌', 'Donor Verification Rejected', `${users[idx].name}'s donor verification was rejected`, adminId);
-  } else if (status === 'under_review') {
-    addActivity('donor_review', '🔍', 'Donor Under Review', `${users[idx].name}'s documents are under review`, adminId);
-  }
-
-  saveUsers(users);
-  logUserAction(donorId, 'verification_status_changed', `Status changed from ${prevStatus} to ${status}`, { adminId, notes });
+export const updateDonorDocumentStatus = async (donorId, docType, docStatus, adminId) => {
+  await API.updateUserViaAPI(donorId, { documentStatuses: { [docType]: { status: docStatus } } });
   return true;
 };
 
-export const updateDonorDocumentStatus = (donorId, docType, docStatus, adminId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === donorId);
-  if (idx === -1) return false;
-
-  if (!users[idx].documentStatuses) users[idx].documentStatuses = {};
-  users[idx].documentStatuses[docType] = { status: docStatus, reviewedBy: adminId, reviewedAt: new Date().toISOString() };
-  saveUsers(users);
-  return true;
-};
-
-export const getVerificationMetrics = () => {
-  const donors = getDonors();
-  const approved = donors.filter(d => d.verificationStatus === 'approved');
-  const rejected = donors.filter(d => d.verificationStatus === 'rejected');
-  const pending = donors.filter(d => !d.verificationStatus || d.verificationStatus === 'pending' || d.verificationStatus === 'under_review');
-
-  // Calculate average approval time
-  let totalTime = 0;
-  let countWithTime = 0;
-  approved.forEach(d => {
-    if (d.registrationDate && d.verificationDate) {
-      const diff = new Date(d.verificationDate) - new Date(d.registrationDate);
-      totalTime += diff;
-      countWithTime++;
-    }
-  });
-  const avgApprovalMs = countWithTime > 0 ? totalTime / countWithTime : 0;
-  const avgApprovalDays = Math.round(avgApprovalMs / (1000 * 60 * 60 * 24));
-
-  const total = donors.length;
-  const rejectionRate = total > 0 ? Math.round((rejected.length / total) * 100) : 0;
-
-  return {
-    total,
-    approved: approved.length,
-    rejected: rejected.length,
-    pending: pending.length,
-    avgApprovalDays: avgApprovalDays || 2,
-    rejectionRate
-  };
+export const getVerificationMetrics = async () => {
+  try {
+    const response = await API.getDashboardMetricsViaAPI();
+    return {
+      total: response.totalDonors || 0,
+      approved: response.approvedDonors || 0,
+      rejected: 0,
+      pending: response.pendingCases || 0,
+      totalUsers: response.totalUsers || 0,
+      totalDonors: response.totalDonors || 0,
+      totalRecipients: response.totalRecipients || 0,
+      totalHospitals: response.totalHospitals || 0,
+      pendingHospitals: response.pendingHospitals || 0,
+      approvedRecipients: response.approvedRecipients || 0,
+      totalDocuments: response.totalDocuments || 0,
+      avgApprovalDays: 2,
+      rejectionRate: 0,
+    };
+  } catch { return {}; }
 };
 
 // ===== RECIPIENT MANAGEMENT =====
 
-export const getRecipients = () => {
-  return getAllUsers().filter(u => u.role === 'recipient' && !u.deleted);
+export const getRecipients = async () => {
+  try {
+    const response = await API.getRecipientsViaAPI();
+    return response.data || [];
+  } catch { return []; }
 };
 
-export const getDonorsByHospital = (hospitalId) => {
-  return getAllUsers().filter(u =>
-    u.role === 'donor' && !u.deleted &&
-    u.preferredHospitalId === hospitalId &&
-    u.registrationComplete === true
-  );
+export const getDonorsByHospital = async (hospitalId) => {
+  try {
+    const response = await API.getDonorsViaAPI();
+    return (response.data || []).filter(d =>
+      d.preferred_hospital_id == hospitalId || d.preferredHospitalId == hospitalId
+    );
+  } catch { return []; }
 };
 
-export const getRecipientsByHospital = (hospitalId) => {
-  return getAllUsers().filter(u =>
-    u.role === 'recipient' && !u.deleted &&
-    u.preferredHospitalId === hospitalId &&
-    u.registrationComplete === true
-  );
+export const getRecipientsByHospital = async (hospitalId) => {
+  try {
+    const response = await API.getRecipientsViaAPI();
+    return (response.data || []).filter(r =>
+      r.preferred_hospital_id == hospitalId || r.preferredHospitalId == hospitalId
+    );
+  } catch { return []; }
 };
 
 export const calculateSurvivalEstimate = (age, urgencyScore, comorbidityScore) => {
@@ -1119,33 +525,12 @@ export const calculateSurvivalEstimate = (age, urgencyScore, comorbidityScore) =
   return Math.max(10, Math.min(95, Math.round(base)));
 };
 
-export const updateRecipientCase = (recipientId, caseData, adminId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === recipientId);
-  if (idx === -1) return false;
-
-  const survivalEstimate = calculateSurvivalEstimate(
-    parseInt(caseData.age || users[idx].age || 30),
-    parseFloat(caseData.urgencyScore || 5),
-    parseFloat(caseData.comorbidityScore || 3)
-  );
-
-  users[idx] = {
-    ...users[idx],
-    ...caseData,
-    survivalEstimate: survivalEstimate + '%',
-    lastCaseUpdate: new Date().toISOString(),
-    caseUpdatedBy: adminId
-  };
-
-  saveUsers(users);
-  createNotification(recipientId, 'info', 'Case Updated', 'Your recipient case information has been updated by the medical team.', {});
-  addActivity('recipient_updated', '📋', 'Recipient Case Updated', `${users[idx].name}'s case has been updated`, adminId);
-  return true;
+export const updateRecipientCase = async (recipientId, caseData, adminId) => {
+  return await API.updateUserViaAPI(recipientId, caseData);
 };
 
-export const getWaitingTimeAnalytics = () => {
-  const recipients = getRecipients();
+export const getWaitingTimeAnalytics = async () => {
+  const recipients = await getRecipients();
   const byOrgan = {};
 
   recipients.forEach(r => {
@@ -1165,53 +550,50 @@ export const getWaitingTimeAnalytics = () => {
 
 // ===== HOSPITAL FEATURES =====
 
-export const getApprovedHospitals = () => {
-  return getAllUsers().filter(u => u.role === 'hospital' && u.status === 'approved' && !u.deleted);
+export const getApprovedHospitals = async () => {
+  try {
+    const response = await API.getHospitalsViaAPI();
+    return response.hospitals || [];
+  } catch { return []; }
 };
 
-export const getRejectedHospitals = () => {
-  return getAllUsers().filter(u => u.role === 'hospital' && u.status === 'rejected' && !u.deleted);
+export const getRejectedHospitals = async () => {
+  try {
+    const response = await API.getHospitalsViaAPI('rejected');
+    return response.hospitals || [];
+  } catch { return []; }
 };
 
-// Get all hospital admins (admin role with linkedHospitalId)
-export const getHospitalAdmins = (hospitalId) => {
-  return getAllUsers().filter(u =>
-    u.role === 'admin' &&
-    u.linkedHospitalId === hospitalId &&
-    !u.deleted
-  );
+// Get all hospital admins (API)
+export const getHospitalAdmins = async (hospitalId) => {
+  try {
+    const users = await getAllUsers();
+    return users.filter(u => u.role === 'admin' && u.linkedHospitalId == hospitalId);
+  } catch { return []; }
 };
 
-export const uploadAdditionalHospitalDocuments = (hospitalId, newDocuments) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === hospitalId);
-  if (idx === -1) return false;
-
-  const existing = users[idx].uploadedDocuments || [];
-  const merged = [...existing];
-
-  newDocuments.forEach(newDoc => {
-    const existingIdx = merged.findIndex(d => d.documentType === newDoc.documentType);
-    if (existingIdx !== -1) {
-      // Replace existing document of same type
-      merged[existingIdx] = { ...newDoc, uploadedAt: new Date().toISOString(), status: 'pending' };
-    } else {
-      merged.push({ ...newDoc, uploadedAt: new Date().toISOString(), status: 'pending' });
-    }
-  });
-
-  users[idx].uploadedDocuments = merged;
-  if (users[idx].status === 'info_requested') {
-    users[idx].status = 'pending';
-    users[idx].documentsResubmitted = true;
-    users[idx].resubmissionDate = new Date().toISOString();
-    createNotification(hospitalId, 'info', 'Documents Resubmitted', 'Your documents have been resubmitted for review.', {});
-    addActivity('hospital_resubmit', '📤', 'Hospital Resubmitted Documents', `${users[idx].hospitalName} resubmitted documents`, hospitalId);
+export const uploadAdditionalHospitalDocuments = async (hospitalId, newDocuments) => {
+  // newDocuments is array of { file: File, documentType: string } or { data: base64, name, type, documentType }
+  // Convert base64 docs to blobs and upload via FormData
+  for (const doc of newDocuments) {
+    try {
+      let fileObj = doc.file;
+      if (!fileObj && doc.data) {
+        const arr = doc.data.split(',');
+        const mime = (arr[0].match(/:(.*?);/) || [])[1] || 'application/octet-stream';
+        const bstr = atob(arr[1]);
+        const u8arr = new Uint8Array(bstr.length);
+        for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+        fileObj = new File([u8arr], doc.name || 'document', { type: mime });
+      }
+      if (fileObj) {
+        await API.uploadDocumentsViaAPI([fileObj], doc.documentType, hospitalId);
+      }
+    } catch { /* continue with next doc */ }
   }
-
-  saveUsers(users);
   return true;
 };
+
 
 // ===== CONSENT FORM =====
 
@@ -1227,7 +609,7 @@ export const submitConsentForm = (userId, userType, formData) => {
   localStorage.setItem('odcat_consents', JSON.stringify(consents));
 
   // Update user record
-  let users = getAllUsers();
+  let users = getAllUsersSync();
   const idx = users.findIndex(u => u.id === userId);
   if (idx !== -1) {
     users[idx].consentSigned = true;
@@ -1267,315 +649,97 @@ export const registerUserWithActivity = (registrationData) => {
 // ===== NEW TWO-PHASE REGISTRATION FLOW =====
 
 // Phase 1: Create basic account (just name, email, password, role)
-export const registerBasicAccount = (name, email, password, role, phone = '') => {
-  let users = getAllUsers();
-  let creds = getCreds();
-
-  if (users.some(u => u.email === email && !u.deleted)) {
-    throw new Error('This email is already registered.');
-  }
-
-  const userId = role + '-' + Date.now();
-  const newUser = {
-    id: userId,
-    email,
-    name,
-    phone: phone || null,
-    role,
-    status: 'registered', // basic account, not yet completed full registration
-    registrationDate: new Date().toISOString(),
-    registrationType: 'user_self',
-    registrationComplete: false,
-    consentSigned: false,
-  };
-
-  users.push(newUser);
-  creds[email] = password;
-  saveUsers(users);
-  saveCreds(creds);
-
-  // Activity log
-  addActivity(
-    role === 'donor' ? 'donor_account_created' : 'recipient_account_created',
-    role === 'donor' ? '❤️' : '🏥',
-    `New ${role === 'donor' ? 'Donor' : 'Recipient'} Account`,
-    `${name} created a basic account and is yet to complete registration`,
-    userId
-  );
-
-  // Welcome notification
-  createNotification(
-    userId,
-    'welcome',
-    `Welcome to Organ Donation Campaign Analysis Tool, ${name}!`,
-    `Your account has been created. Please complete your ${role} registration to access all features.`,
-    {}
-  );
-
-  return newUser;
+export const registerBasicAccount = async (name, email, password, role, phone = '') => {
+  return await API.registerViaAPI(name, email, password, role, phone);
 };
 
 // Phase 2: Complete donor/recipient registration (consent + clinical + docs + hospital)
-export const completeDonorRecipientRegistration = (userId, payload) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === userId);
-  if (idx === -1) throw new Error('User not found');
+export const completeDonorRecipientRegistration = async (userId, payload) => {
+  const currentUser = getCurrentUser();
+  const role = currentUser?.role || payload.role;
 
-  const user = users[idx];
-  const role = user.role;
-
-  // Save consent
-  submitConsentForm(userId, role, {
-    fullName: payload.fullName || user.name,
-    cnic: payload.cnic,
-    signature: payload.signature || user.name,
-  });
-
-  // Update user with all clinical data + docs + hospital choice
-  users[idx] = {
-    ...user,
-    // Clinical data
-    cnic: payload.cnic || null,
-    dob: payload.dob || null,
-    gender: payload.gender || null,
-    bloodType: payload.bloodType || null,
-    age: payload.age ? parseInt(payload.age) : null,
-    phone: payload.phone || user.phone,
-    address: payload.address || null,
-    emergencyContactName: payload.emergencyContactName || null,
-    emergencyContactPhone: payload.emergencyContactPhone || null,
-    emergencyContactRelation: payload.emergencyContactRelation || null,
-    medicalHistory: payload.medicalHistory || null,
-    currentMedications: payload.currentMedications || null,
-    // Donor-specific
-    pledgedOrgans: payload.pledgedOrgans || null,
-    donationType: payload.donationType || null,
-    familyInformed: payload.familyInformed || false,
-    nextOfKin: payload.nextOfKin || null,
-    // Recipient-specific
-    organNeeded: payload.organNeeded || null,
-    diagnosis: payload.diagnosis || null,
-    urgencyScore: payload.urgencyScore || null,
-    treatingDoctor: payload.treatingDoctor || null,
-    currentHospital: payload.currentHospital || null,
-    // Documents
-    uploadedDocuments: payload.documents || [],
-    // Hospital assignment
-    preferredHospitalId: payload.preferredHospitalId || null,
-    preferredHospitalName: payload.preferredHospitalName || null,
-    // Status
-    status: 'submitted',
-    caseStatus: 'submitted',
-    verificationStatus: 'submitted',
-    registrationComplete: true,
-    consentSigned: true,
-    consentDate: new Date().toISOString(),
-    submissionDate: new Date().toISOString(),
+  // Map camelCase frontend fields → snake_case backend fields
+  const hospitalId = payload.preferredHospitalId || payload.preferred_hospital_id;
+  const common = {
+    cnic:                     payload.cnic,
+    dob:                      payload.dob,
+    gender:                   payload.gender,
+    blood_type:               payload.bloodType        || payload.blood_type,
+    phone:                    payload.phone,
+    address:                  payload.address,
+    medical_history:          payload.medicalHistory   || payload.medical_history   || null,
+    current_medications:      payload.currentMedications || payload.current_medications || null,
+    emergency_contact_name:   payload.emergencyContactName   || payload.emergency_contact_name   || null,
+    emergency_contact_phone:  payload.emergencyContactPhone  || payload.emergency_contact_phone  || null,
+    emergency_contact_relation: payload.emergencyContactRelation || payload.emergency_contact_relation || null,
+    preferred_hospital_id:    hospitalId ? parseInt(hospitalId, 10) : null,
   };
 
-  saveUsers(users);
-
-  // Notify the user
-  createNotification(
-    userId,
-    'registration_submitted',
-    '📤 Registration Submitted',
-    `Your ${role} registration has been submitted to ${payload.preferredHospitalName || 'the selected hospital'} and is now under review.`,
-    {}
-  );
-
-  // Notify the chosen hospital
-  if (payload.preferredHospitalId) {
-    createNotification(
-      payload.preferredHospitalId,
-      'new_case',
-      `📋 New ${role === 'donor' ? 'Donor' : 'Recipient'} Case`,
-      `${user.name} has submitted their ${role} registration for your review.`,
-      { caseUserId: userId }
-    );
+  if (role === 'donor') {
+    return await API.completeDonorRegistrationViaAPI({
+      ...common,
+      pledged_organs:   payload.pledgedOrgans  || payload.pledged_organs  || [],
+      donation_type:    payload.donationType   || payload.donation_type   || 'deceased',
+      family_informed:  payload.familyInformed ?? payload.family_informed ?? false,
+      next_of_kin:      payload.nextOfKin      || payload.next_of_kin     || null,
+    });
+  } else {
+    return await API.completeRecipientRegistrationViaAPI({
+      ...common,
+      organ_needed:     payload.organNeeded    || payload.organ_needed,
+      diagnosis:        payload.diagnosis      || null,
+      urgency_score:    payload.urgencyScore   ?? payload.urgency_score   ?? null,
+      comorbidity:      payload.comorbidity                               ?? null,
+      treating_doctor:  payload.treatingDoctor || payload.treating_doctor || null,
+      current_hospital: payload.currentHospital || payload.current_hospital || null,
+    });
   }
-
-  // Activity log
-  addActivity(
-    role === 'donor' ? 'donor_submitted' : 'recipient_submitted',
-    '📤',
-    `${role === 'donor' ? 'Donor' : 'Recipient'} Registration Submitted`,
-    `${user.name} completed registration and submitted to ${payload.preferredHospitalName || 'a hospital'}`,
-    userId
-  );
-
-  return users[idx];
 };
 
 // Get cases assigned to a hospital (for hospital review dashboard)
-export const getHospitalAssignedCases = (hospitalId) => {
-  const users = getAllUsers();
-  return users.filter(u =>
-    (u.role === 'donor' || u.role === 'recipient') &&
-    u.preferredHospitalId === hospitalId &&
-    u.registrationComplete === true &&
-    !u.deleted
-  );
+export const getHospitalAssignedCases = async (hospitalId) => {
+  try {
+    const [donorsRes, recipientsRes] = await Promise.all([
+      API.getDonorsViaAPI(),
+      API.getRecipientsViaAPI(),
+    ]);
+    const donors = (donorsRes.data || []).map(d => ({ ...d, role: 'donor' }));
+    const recipients = (recipientsRes.data || []).map(r => ({ ...r, role: 'recipient' }));
+    return [...donors, ...recipients];
+  } catch { return []; }
 };
 
 // Hospital reviews a case (approve / reject / request_info)
-export const hospitalReviewCase = (caseUserId, action, notes, hospitalId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === caseUserId);
-  if (idx === -1) throw new Error('Case not found');
-
-  const validActions = {
-    approve: { status: 'approved', caseStatus: 'approved', verificationStatus: 'approved' },
-    reject: { status: 'rejected', caseStatus: 'rejected', verificationStatus: 'rejected' },
-    request_info: { status: 'info_requested', caseStatus: 'info_requested', verificationStatus: 'info_requested' },
-  };
-
-  const updates = validActions[action];
-  if (!updates) throw new Error('Invalid action');
-
-  users[idx] = {
-    ...users[idx],
-    ...updates,
-    hospitalReviewNotes: notes || '',
-    hospitalReviewedBy: hospitalId,
-    hospitalReviewDate: new Date().toISOString(),
-  };
-
-  saveUsers(users);
-
-  // Notify the user
-  const titles = {
-    approve: '✅ Registration Approved',
-    reject: '❌ Registration Rejected',
-    request_info: '📋 Additional Information Required',
-  };
-
-  const messages = {
-    approve: `Your ${users[idx].role} registration has been approved by the hospital. You now have full access.${notes ? ` Note: ${notes}` : ''}`,
-    reject: `Your ${users[idx].role} registration was not approved.${notes ? ` Reason: ${notes}` : ''}`,
-    request_info: `The hospital needs additional information from you.${notes ? ` Details: ${notes}` : ''} Please go to your dashboard to resubmit.`,
-  };
-
-  createNotification(caseUserId, `case_${action}`, titles[action], messages[action], {});
-
-  // Activity log
-  const hospital = users.find(u => u.id === hospitalId);
-  const hospitalName = hospital ? (hospital.hospitalName || hospital.name) : 'Hospital';
-  const actionLabels = { approve: 'approved', reject: 'rejected', request_info: 'requested more info on' };
-  addActivity(
-    `case_${action}`,
-    action === 'approve' ? '✅' : action === 'reject' ? '❌' : '📋',
-    `Case ${action === 'approve' ? 'Approved' : action === 'reject' ? 'Rejected' : 'Info Requested'}`,
-    `${hospitalName} ${actionLabels[action]} ${users[idx].name}'s ${users[idx].role} case`,
-    hospitalId
-  );
-
-  return users[idx];
+// role must be 'donor' or 'recipient' — passed directly so paginated API lookups are not needed
+export const hospitalReviewCase = async (caseUserId, action, notes, hospitalId, role) => {
+  if (role === 'donor') {
+    return await API.verifyDonorViaAPI(caseUserId, action, notes || '');
+  }
+  return await API.verifyRecipientViaAPI(caseUserId, action, notes || '');
 };
 
 // User resubmits case with new info / docs after info_requested
-export const resubmitCaseInfo = (userId, additionalData, newDocuments) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === userId);
-  if (idx === -1) throw new Error('User not found');
-
-  const existingDocs = users[idx].uploadedDocuments || [];
-  const mergedDocs = [...existingDocs];
-
-  (newDocuments || []).forEach(newDoc => {
-    const existingIdx = mergedDocs.findIndex(d => d.documentType === newDoc.documentType);
-    if (existingIdx !== -1) {
-      mergedDocs[existingIdx] = { ...newDoc, resubmittedAt: new Date().toISOString() };
-    } else {
-      mergedDocs.push({ ...newDoc, uploadedAt: new Date().toISOString() });
-    }
-  });
-
-  users[idx] = {
-    ...users[idx],
-    ...additionalData,
-    uploadedDocuments: mergedDocs,
-    status: 'submitted',
-    caseStatus: 'submitted',
-    verificationStatus: 'submitted',
-    resubmissionDate: new Date().toISOString(),
-  };
-
-  saveUsers(users);
-
-  // Notify user
-  createNotification(
-    userId,
-    'case_resubmitted',
-    '📤 Information Resubmitted',
-    'Your additional information has been submitted. The hospital will review it shortly.',
-    {}
-  );
-
-  // Notify hospital
-  if (users[idx].preferredHospitalId) {
-    createNotification(
-      users[idx].preferredHospitalId,
-      'case_updated',
-      '🔄 Case Updated',
-      `${users[idx].name} has resubmitted their information for review.`,
-      { caseUserId: userId }
-    );
-  }
-
-  // Activity
-  addActivity(
-    'case_resubmitted',
-    '📤',
-    'Case Info Resubmitted',
-    `${users[idx].name} resubmitted information after a request from the hospital`,
-    userId
-  );
-
-  return users[idx];
+export const resubmitCaseInfo = async (userId, additionalData, newDocuments) => {
+  return await API.updateUserViaAPI(userId, { ...additionalData, status: 'submitted' });
 };
 
 // ===== ENHANCED HOSPITAL APPROVAL (with activity tracking) =====
 
-export const approveRegistrationWithActivity = (id, feedback, adminId) => {
-  approveRegistration(id, feedback);
-  const users = getAllUsers();
-  const hospital = users.find(u => u.id === id);
-  if (hospital) {
-    createNotification(id, 'info', '✅ Hospital Approved!',
-      'Your hospital registration has been approved. You now have full access to the system.', {});
-    addActivity('hospital_approved', '✅', 'Hospital Approved',
-      `${hospital.hospitalName} has been approved`, adminId);
-  }
+export const approveRegistrationWithActivity = async (id, feedback, adminId) => {
+  return await approveRegistration(id, feedback);
 };
 
-export const rejectRegistrationWithActivity = (id, reason, adminId) => {
-  rejectRegistration(id, reason);
-  const users = getAllUsers();
-  const hospital = users.find(u => u.id === id);
-  if (hospital) {
-    createNotification(id, 'warning', '❌ Hospital Registration Rejected',
-      `Your registration was not approved. Reason: ${reason}`, {});
-    addActivity('hospital_rejected', '❌', 'Hospital Rejected',
-      `${hospital.hospitalName}'s registration was rejected`, adminId);
-  }
+export const rejectRegistrationWithActivity = async (id, reason, adminId) => {
+  return await rejectRegistration(id, reason);
 };
 
-export const requestAdditionalInfoWithActivity = (id, message, adminId) => {
-  requestAdditionalInfo(id, message);
-  const users = getAllUsers();
-  const hospital = users.find(u => u.id === id);
-  if (hospital) {
-    createNotification(id, 'warning', '📋 Additional Information Required',
-      `The admin has requested more information: ${message}`, {});
-    addActivity('hospital_info_requested', '📋', 'More Info Requested',
-      `Admin requested more info from ${hospital.hospitalName}`, adminId);
-  }
+export const requestAdditionalInfoWithActivity = async (id, message, adminId) => {
+  return await requestAdditionalInfo(id, message);
 };
 
 // Password Reset Functions
 export const requestPasswordReset = (email) => {
-  const users = getAllUsers();
+  const users = getAllUsersSync();
   const user = users.find(u => u.email === email);
 
   if (!user) {
@@ -1641,7 +805,7 @@ export const resetPassword = (email, token, newPassword) => {
   }
 
   // Update password in credentials
-  const users = getAllUsers();
+  const users = getAllUsersSync();
   const user = users.find(u => u.email === email);
 
   if (!user) {
@@ -1671,77 +835,51 @@ export const resetPassword = (email, token, newPassword) => {
 
 // ===== EMPLOYEE MANAGEMENT =====
 
-export const getEmployees = () => {
-  return getAllUsers().filter(u =>
-    ['doctor', 'data_entry', 'auditor', 'admin'].includes(u.role) && !u.deleted
-  );
+export const getEmployees = async () => {
+  try {
+    const response = await API.getUsersViaAPI();
+    return (response.data || []).filter(u =>
+      ['doctor', 'data_entry', 'auditor', 'admin'].includes(u.role)
+    );
+  } catch { return []; }
 };
 
-export const addEmployee = (employeeData, adminId) => {
-  let users = getAllUsers();
-  let creds = getCreds();
-
-  if (users.some(u => u.email === employeeData.email && !u.deleted)) {
-    throw new Error('This email is already registered.');
-  }
-
-  const userId = employeeData.role + '-' + Date.now();
-  const newUser = {
-    id: userId,
-    email: employeeData.email,
+export const addEmployee = async (employeeData, adminId) => {
+  return await API.createAdminViaAPI({
     name: employeeData.name,
-    role: employeeData.role,
-    status: employeeData.status || 'approved',
-    department: employeeData.department || null,
-    hospitalId: employeeData.hospitalId || null,
-    hospitalName: employeeData.hospitalName || null,
-    specialization: employeeData.specialization || null,
-    phone: employeeData.phone || null,
-    registrationDate: new Date().toISOString(),
-    addedBy: adminId,
-  };
-
-  users.push(newUser);
-  creds[employeeData.email] = employeeData.password || 'Temp@1234';
-  saveUsers(users);
-  saveCreds(creds);
-
-  addActivity('employee_added', '👤', 'Employee Added', `${employeeData.name} added as ${employeeData.role}`, adminId);
-  return newUser;
+    email: employeeData.email,
+    password: employeeData.password || 'Temp@1234',
+    phone: employeeData.phone || '',
+    role: employeeData.role || 'doctor',
+    linked_hospital_id: employeeData.hospitalId || null,
+  });
 };
 
-export const updateEmployee = (employeeId, updates, adminId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === employeeId);
-  if (idx === -1) throw new Error('Employee not found');
-
-  users[idx] = { ...users[idx], ...updates, lastUpdatedBy: adminId, lastUpdatedAt: new Date().toISOString() };
-  saveUsers(users);
-  addActivity('employee_updated', '✏️', 'Employee Updated', `${users[idx].name}'s profile updated`, adminId);
-  return users[idx];
+export const updateEmployee = async (employeeId, updates, adminId) => {
+  return await API.updateUserViaAPI(employeeId, {
+    name: updates.name,
+    phone: updates.phone,
+    role: updates.role,
+    department: updates.department,
+    specialization: updates.specialization,
+    linked_hospital_id: updates.hospitalId || updates.linked_hospital_id || null,
+  });
 };
 
-export const toggleEmployeeStatus = (employeeId, adminId) => {
-  let users = getAllUsers();
-  const idx = users.findIndex(u => u.id === employeeId);
-  if (idx === -1) throw new Error('Employee not found');
-
-  const newStatus = users[idx].status === 'suspended' ? 'approved' : 'suspended';
-  users[idx].status = newStatus;
-  users[idx].statusChangedBy = adminId;
-  users[idx].statusChangedAt = new Date().toISOString();
-  saveUsers(users);
-
-  addActivity('employee_status', newStatus === 'suspended' ? '⏸️' : '▶️',
-    `Employee ${newStatus === 'suspended' ? 'Suspended' : 'Reactivated'}`,
-    `${users[idx].name} has been ${newStatus === 'suspended' ? 'suspended' : 'reactivated'}`, adminId);
-
-  createNotification(employeeId, 'info',
-    newStatus === 'suspended' ? 'Account Suspended' : 'Account Reactivated',
-    newStatus === 'suspended' ? 'Your account has been suspended by an administrator.' : 'Your account has been reactivated. You can now access the system.',
-    {});
-
-  return users[idx];
+export const toggleEmployeeStatus = async (employeeId, adminId) => {
+  const userData = await API.getUserViaAPI(employeeId);
+  const user = userData.user || userData;
+  if (user.banned || user.status === 'banned') {
+    return await API.unbanUserViaAPI(employeeId);
+  } else {
+    return await API.banUserViaAPI(employeeId, {
+      category: 'OTHER',
+      category_label: 'Other',
+      detailed_reason: 'Suspended by administrator',
+      ban_type: 'temporary',
+      duration: 365,
+    });
+  }
 };
 
 // ===== MULTI-ADMIN APPEAL SYSTEM =====
@@ -1749,7 +887,7 @@ export const toggleEmployeeStatus = (employeeId, adminId) => {
 export const submitMultiAdminAppeal = (userId, explanation, evidence = {}) => {
   if (!explanation || !explanation.trim()) throw new Error('Appeal explanation is required');
 
-  const users = getAllUsers();
+  const users = getAllUsersSync();
   const user = users.find(u => u.id === userId);
   if (!user || (!user.banned && !user.deleted)) throw new Error('User is not banned or deleted');
 
@@ -1832,7 +970,7 @@ export const reviewMultiAdminAppeal = (appealId, decision, notes, reviewAdminId)
     appeal.status = 'approved';
     appeal.finalDecision = 'restored';
 
-    let users = getAllUsers();
+    let users = getAllUsersSync();
     const userIdx = users.findIndex(u => u.id === appeal.userId);
     if (userIdx !== -1) {
       users[userIdx].banned = false;
@@ -1867,14 +1005,15 @@ export const reviewMultiAdminAppeal = (appealId, decision, notes, reviewAdminId)
   return appeal;
 };
 
-export const getMultiAdminAppeals = () => {
-  return getAppeals().filter(a => a.isMultiAdmin);
+export const getMultiAdminAppeals = async () => {
+  const appeals = await getAppeals();
+  return appeals.filter(a => a.isMultiAdmin);
 };
 
 // ===== HOSPITAL CASE APPEAL SYSTEM =====
 
 export const submitHospitalCaseAppeal = (caseUserId, appealText) => {
-  const users = getAllUsers();
+  const users = getAllUsersSync();
   const caseUser = users.find(u => u.id === caseUserId);
 
   if (!caseUser) {
@@ -1962,7 +1101,7 @@ export const reviewHospitalCaseAppeal = (appealId, decision, notes, reviewingHos
   }
 
   const appeal = appeals[appealIdx];
-  const users = getAllUsers();
+  const users = getAllUsersSync();
   const caseUserIdx = users.findIndex(u => u.id === appeal.caseUserId);
 
   if (caseUserIdx === -1) {
@@ -2006,80 +1145,43 @@ export const reviewHospitalCaseAppeal = (appealId, decision, notes, reviewingHos
 
 // ===== DATA ENTRY FUNCTIONS =====
 
-export const addDonorRecord = (donorData, operatorId) => {
-  let users = getAllUsers();
-  let creds = getCreds();
-
-  const userId = 'donor-' + Date.now();
-  const newDonor = {
-    id: userId,
-    email: donorData.email || `donor-${Date.now()}@odcat.local`,
-    name: donorData.name,
-    role: 'donor',
-    status: 'approved',
-    bloodType: donorData.bloodType || null,
-    age: donorData.age ? parseInt(donorData.age) : null,
-    gender: donorData.gender || null,
-    phone: donorData.phone || null,
-    address: donorData.address || null,
-    medicalHistory: donorData.medicalHistory || null,
-    organNeeded: null,
-    pledgedOrgans: donorData.pledgedOrgans || [],
-    registrationDate: new Date().toISOString(),
-    registrationType: 'data_entry',
-    addedBy: operatorId,
-    verificationStatus: 'pending',
-  };
-
-  users.push(newDonor);
-  creds[newDonor.email] = 'Temp@1234';
-  saveUsers(users);
-  saveCreds(creds);
-
-  addActivity('donor_added_by_entry', '❤️', 'Donor Record Added', `${donorData.name} added by data entry operator`, operatorId);
-  return newDonor;
+export const addDonorRecord = async (donorData, operatorId) => {
+  const email = donorData.email || `donor-${Date.now()}@odcat.local`;
+  const response = await API.registerViaAPI(
+    donorData.name, email, 'Temp@1234', 'donor', donorData.phone || ''
+  );
+  const newUser = response.user;
+  if (newUser?.id && (donorData.bloodType || donorData.pledgedOrgans)) {
+    await API.updateUserViaAPI(newUser.id, {
+      bloodType: donorData.bloodType,
+      pledgedOrgans: donorData.pledgedOrgans || [],
+      age: donorData.age ? parseInt(donorData.age) : null,
+      gender: donorData.gender,
+      address: donorData.address,
+      medicalHistory: donorData.medicalHistory,
+    });
+  }
+  return newUser;
 };
 
-export const addRecipientRecord = (recipientData, operatorId) => {
-  let users = getAllUsers();
-  let creds = getCreds();
-
-  const userId = 'recipient-' + Date.now();
-  const survivalEst = calculateSurvivalEstimate(
-    parseInt(recipientData.age || 30),
-    parseFloat(recipientData.urgencyScore || 5),
-    parseFloat(recipientData.comorbidityScore || 3)
+export const addRecipientRecord = async (recipientData, operatorId) => {
+  const email = recipientData.email || `recipient-${Date.now()}@odcat.local`;
+  const response = await API.registerViaAPI(
+    recipientData.name, email, 'Temp@1234', 'recipient', recipientData.phone || ''
   );
-
-  const newRecipient = {
-    id: userId,
-    email: recipientData.email || `recipient-${Date.now()}@odcat.local`,
-    name: recipientData.name,
-    role: 'recipient',
-    status: 'approved',
-    age: recipientData.age ? parseInt(recipientData.age) : null,
-    gender: recipientData.gender || null,
-    bloodType: recipientData.bloodType || null,
-    phone: recipientData.phone || null,
-    address: recipientData.address || null,
-    organNeeded: recipientData.organNeeded || null,
-    diagnosis: recipientData.diagnosis || null,
-    medicalHistory: recipientData.medicalHistory || null,
-    urgencyScore: parseFloat(recipientData.urgencyScore || 5),
-    comorbidity: parseFloat(recipientData.comorbidityScore || 3),
-    survivalEstimate: survivalEst + '%',
-    registrationDate: new Date().toISOString(),
-    registrationType: 'data_entry',
-    addedBy: operatorId,
-    caseStatus: 'registered',
-    daysOnWaitlist: 0,
-  };
-
-  users.push(newRecipient);
-  creds[newRecipient.email] = 'Temp@1234';
-  saveUsers(users);
-  saveCreds(creds);
-
-  addActivity('recipient_added_by_entry', '🏥', 'Recipient Record Added', `${recipientData.name} added by data entry operator`, operatorId);
-  return newRecipient;
+  const newUser = response.user;
+  if (newUser?.id) {
+    await API.updateUserViaAPI(newUser.id, {
+      organNeeded: recipientData.organNeeded,
+      diagnosis: recipientData.diagnosis,
+      urgencyScore: recipientData.urgencyScore ? parseFloat(recipientData.urgencyScore) : null,
+      comorbidity: recipientData.comorbidityScore ? parseFloat(recipientData.comorbidityScore) : null,
+      bloodType: recipientData.bloodType,
+      age: recipientData.age ? parseInt(recipientData.age) : null,
+      gender: recipientData.gender,
+      address: recipientData.address,
+      medicalHistory: recipientData.medicalHistory,
+    });
+  }
+  return newUser;
 };

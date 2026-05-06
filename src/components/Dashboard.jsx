@@ -4,7 +4,7 @@ import {
   getRecentActivities, getRecentActivitiesForUser, getApprovedHospitals,
   getAllUsers, getDonors, getRecipients, getVerificationMetrics,
   getHospitalAssignedCases, hospitalReviewCase,
-  submitMultiAdminAppeal, getUserAppeals, submitHospitalCaseAppeal, getUserCaseAppeals
+  getUserAppeals, submitAppeal
 } from '../utils/auth';
 import { toast } from '../utils/toast';
 import { generateRegistrationPDF } from '../utils/pdfReport';
@@ -153,8 +153,9 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
   const [reviewNotes, setReviewNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const loadCases = () => {
-    setCases(getHospitalAssignedCases(hospitalId));
+  const loadCases = async () => {
+    const data = await getHospitalAssignedCases(hospitalId);
+    setCases(data);
   };
 
   useEffect(() => {
@@ -169,27 +170,25 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
     return true;
   });
 
-  const handleReviewSubmit = () => {
+  const handleReviewSubmit = async () => {
     if (!selectedCase || !reviewAction) return;
     if ((reviewAction === 'reject' || reviewAction === 'request_info') && !reviewNotes.trim()) {
       toast('Please provide notes/reason for this action.', 'error');
       return;
     }
     setSubmitting(true);
-    setTimeout(() => {
-      try {
-        hospitalReviewCase(selectedCase.id, reviewAction, reviewNotes, hospitalId);
-        const labels = { approve: 'approved', reject: 'rejected', request_info: 'flagged for additional info' };
-        toast(`Case ${labels[reviewAction]} successfully.`, 'success');
-        setSelectedCase(null);
-        setReviewAction(null);
-        setReviewNotes('');
-        loadCases();
-      } catch (err) {
-        toast(err.message || 'Action failed.', 'error');
-      }
-      setSubmitting(false);
-    }, 500);
+    try {
+      await hospitalReviewCase(selectedCase.id, reviewAction, reviewNotes, hospitalId, selectedCase.role);
+      const labels = { approve: 'approved', reject: 'rejected', request_info: 'flagged for additional info' };
+      toast(`Case ${labels[reviewAction]} successfully.`, 'success');
+      setSelectedCase(null);
+      setReviewAction(null);
+      setReviewNotes('');
+      loadCases();
+    } catch (err) {
+      toast(err.message || 'Action failed.', 'error');
+    }
+    setSubmitting(false);
   };
 
   const statusBadge = (status) => {
@@ -506,39 +505,34 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
   const [showAppealForm, setShowAppealForm] = useState(false);
   const [appealText, setAppealText] = useState('');
   const [submittingAppeal, setSubmittingAppeal] = useState(false);
+  const [existingAppeals, setExistingAppeals] = useState([]);
 
-  // Detect if this is a hospital rejection vs admin ban
-  const isHospitalRejection = !!user.preferredHospitalId && !!user.hospitalReviewedBy;
+  useEffect(() => {
+    getUserAppeals(user.id).then(a => setExistingAppeals(a)).catch(() => {});
+  }, [user.id]);
 
-  const existingBanAppeals = getUserAppeals(user.id);
-  const pendingBanAppeal = existingBanAppeals.find(a => a.status === 'pending');
-
-  const existingCaseAppeals = getUserCaseAppeals(user.id);
-  const pendingCaseAppeal = existingCaseAppeals.find(a => a.status === 'pending');
+  const pendingBanAppeal = existingAppeals.find(a => a.status === 'pending');
+  const pendingCaseAppeal = existingAppeals.find(a => a.status === 'pending');
 
   const reviewDate = user.hospitalReviewDate ? new Date(user.hospitalReviewDate) : new Date();
   const deadline = new Date(reviewDate.getTime() + 7 * 24 * 60 * 60 * 1000);
   const daysRemaining = Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
 
-  const handleAppealSubmit = () => {
+  const handleAppealSubmit = async () => {
     if (!appealText.trim()) { toast('Please provide an explanation for your appeal.', 'error'); return; }
     setSubmittingAppeal(true);
-    setTimeout(() => {
-      try {
-        if (isHospitalRejection) {
-          submitHospitalCaseAppeal(user.id, appealText);
-          toast('Appeal submitted to the hospital for review.', 'success');
-        } else {
-          submitMultiAdminAppeal(user.id, appealText);
-          toast('Appeal submitted successfully. 3 admins will review your case.', 'success');
-        }
-        setShowAppealForm(false);
-        setAppealText('');
-      } catch (err) {
-        toast(err.message, 'error');
-      }
+    try {
+      await submitAppeal(user.id, appealText);
+      toast('Appeal submitted successfully. Administrators will review your case.', 'success');
+      setShowAppealForm(false);
+      setAppealText('');
+      const updated = await getUserAppeals(user.id);
+      setExistingAppeals(updated);
+    } catch (err) {
+      toast(err.message || 'Appeal submission failed.', 'error');
+    } finally {
       setSubmittingAppeal(false);
-    }, 500);
+    }
   };
 
   return (
@@ -673,12 +667,29 @@ const Dashboard = ({ user, onNavigate }) => {
   const [activities, setActivities] = useState([]);
   const [approvedHospitals, setApprovedHospitals] = useState([]);
   const [metrics, setMetrics] = useState({});
+  const [allUsers, setAllUsers] = useState([]);
+  const [donors, setDonors] = useState([]);
+  const [recipients, setRecipients] = useState([]);
 
   useEffect(() => {
-    // Load real data
-    setActivities(getRecentActivitiesForUser(user, 8));
-    setApprovedHospitals(getApprovedHospitals());
-    setMetrics(getVerificationMetrics());
+    // Load real data from API
+    const loadData = async () => {
+      const activities = await getRecentActivitiesForUser(user.id, 8);
+      const hospitals = await getApprovedHospitals();
+      const metrics = await getVerificationMetrics();
+      const users = await getAllUsers();
+      const donorsList = await getDonors();
+      const recipientsList = await getRecipients();
+
+      setActivities(activities);
+      setApprovedHospitals(hospitals);
+      setMetrics(metrics);
+      setAllUsers(users);
+      setDonors(donorsList);
+      setRecipients(recipientsList);
+    };
+
+    loadData();
 
     if (user.role === 'admin' || user.role === 'super_admin' || (user.role === 'hospital' && user.status === 'approved')) {
       initCharts();
@@ -687,7 +698,7 @@ const Dashboard = ({ user, onNavigate }) => {
       if (trendsChartInstance.current) trendsChartInstance.current.destroy();
       if (organsChartInstance.current) organsChartInstance.current.destroy();
     };
-  }, [user.role, user.status]);
+  }, [user.role, user.status, user.id]);
 
   const timeAgo = (iso) => {
     const diff = Date.now() - new Date(iso).getTime();
@@ -894,9 +905,6 @@ const Dashboard = ({ user, onNavigate }) => {
 
   // ---- ADMIN / SUPER_ADMIN Dashboard ----
   if (user.role === 'admin' || user.role === 'super_admin') {
-    const allUsers = getAllUsers();
-    const donors = getDonors();
-    const recipients = getRecipients();
     const pendingHospitals = allUsers.filter(u => u.role === 'hospital' && u.status === 'pending').length;
 
     return (

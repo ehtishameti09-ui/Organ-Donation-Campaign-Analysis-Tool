@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   getDonors, getDonorsByHospital, verifyDonor, updateDonorDocumentStatus,
-  getVerificationMetrics, getAllUsers, saveUsers,
-  createNotification, logUserAction, addActivity
+  getVerificationMetrics, createNotification, logUserAction, addActivity
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
@@ -84,7 +83,7 @@ const DonorManagement = ({ currentUser }) => {
 
   useEffect(() => {
     loadDonors();
-    setMetrics(getVerificationMetrics());
+    getVerificationMetrics().then(m => setMetrics(m)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -93,15 +92,20 @@ const DonorManagement = ({ currentUser }) => {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  const loadDonors = () => {
-    if (currentUser.role === 'hospital') {
-      setDonors(getDonorsByHospital(currentUser.id));
-    } else if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
-      setDonors(getDonorsByHospital(currentUser.linkedHospitalId));
-    } else {
-      setDonors(getDonors());
-    }
-    setMetrics(getVerificationMetrics());
+  const loadDonors = async () => {
+    try {
+      let data;
+      if (currentUser.role === 'hospital') {
+        data = await getDonorsByHospital(currentUser.id);
+      } else if (currentUser.role === 'admin' && currentUser.linkedHospitalId) {
+        data = await getDonorsByHospital(currentUser.linkedHospitalId);
+      } else {
+        data = await getDonors();
+      }
+      setDonors(data);
+      const m = await getVerificationMetrics();
+      setMetrics(m);
+    } catch {}
   };
 
   const filteredDonors = donors.filter(d => {
@@ -132,26 +136,30 @@ const DonorManagement = ({ currentUser }) => {
     setShowModal(true);
   };
 
-  const handleVerify = (status) => {
+  const handleVerify = async (status) => {
     if (!verifyNotes.trim() && status === 'rejected') {
       toast('Please provide rejection reason.', 'error');
       return;
     }
     setVerifying(true);
-    setTimeout(() => {
-      verifyDonor(selectedDonor.id, status, verifyNotes, currentUser.id);
-      loadDonors();
+    try {
+      await verifyDonor(selectedDonor.id, status, verifyNotes, currentUser.id);
+      await loadDonors();
       setShowModal(false);
       toast(status === 'approved' ? 'Donor approved!' : status === 'rejected' ? 'Donor rejected.' : 'Status updated.', status === 'approved' ? 'success' : status === 'rejected' ? 'error' : 'info');
+    } catch (e) {
+      toast(e.message || 'Action failed.', 'error');
+    } finally {
       setVerifying(false);
-    }, 600);
+    }
   };
 
-  const handleDocStatus = (docType, docStatus) => {
-    updateDonorDocumentStatus(selectedDonor.id, docType, docStatus, currentUser.id);
-    const updated = getDonors().find(d => d.id === selectedDonor.id);
-    setSelectedDonor(updated);
-    loadDonors();
+  const handleDocStatus = async (docType, docStatus) => {
+    await updateDonorDocumentStatus(selectedDonor.id, docType, docStatus, currentUser.id);
+    const allDonors = await getDonors();
+    const updated = allDonors.find(d => d.id === selectedDonor.id);
+    if (updated) setSelectedDonor(updated);
+    await loadDonors();
     toast(`Document marked as ${docStatus}.`, 'info');
   };
 

@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
-import { getDonors, getRecipients, addDonorRecord, addRecipientRecord, getAllUsers, updateRecipientCase, saveUsers, addActivity, calculateSurvivalEstimate, calculateAgeFromDOB } from '../utils/auth';
+import { getDonors, getRecipients, addDonorRecord, addRecipientRecord, addActivity, calculateSurvivalEstimate, calculateAgeFromDOB } from '../utils/auth';
+import { updateUserViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const ORGANS = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow', 'Skin', 'Intestine'];
@@ -7,10 +8,12 @@ const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 const DataEntryDashboard = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState('donors');
-  const [showForm, setShowForm] = useState(null); // 'donor' | 'recipient' | null
+  const [showForm, setShowForm] = useState(null);
   const [editingRecord, setEditingRecord] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [search, setSearch] = useState('');
+  const [donors, setDonors] = useState([]);
+  const [recipients, setRecipients] = useState([]);
 
   const [formData, setFormData] = useState({
     name: '', email: '', phone: '', dob: '', age: '', gender: '', bloodType: '',
@@ -18,8 +21,14 @@ const DataEntryDashboard = ({ currentUser }) => {
     diagnosis: '', urgencyScore: '', comorbidityScore: '',
   });
 
-  const donors = useMemo(() => getDonors(), [refreshKey]);
-  const recipients = useMemo(() => getRecipients(), [refreshKey]);
+  useEffect(() => {
+    const load = async () => {
+      const [d, r] = await Promise.all([getDonors(), getRecipients()]);
+      setDonors(d);
+      setRecipients(r);
+    };
+    load();
+  }, [refreshKey]);
 
   const displayList = activeTab === 'donors' ? donors : recipients;
   const filteredList = useMemo(() => {
@@ -59,17 +68,12 @@ const DataEntryDashboard = ({ currentUser }) => {
     setShowForm(record.role);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name.trim()) { toast('Name is required.', 'error'); return; }
 
     try {
       if (editingRecord) {
-        // Update existing record
-        let users = getAllUsers();
-        const idx = users.findIndex(u => u.id === editingRecord.id);
-        if (idx === -1) { toast('Record not found.', 'error'); return; }
-
         const updates = {
           name: formData.name,
           phone: formData.phone,
@@ -79,7 +83,6 @@ const DataEntryDashboard = ({ currentUser }) => {
           address: formData.address,
           medicalHistory: formData.medicalHistory,
         };
-
         if (editingRecord.role === 'donor') {
           updates.pledgedOrgans = formData.pledgedOrgans;
         } else {
@@ -93,16 +96,13 @@ const DataEntryDashboard = ({ currentUser }) => {
             ) + '%';
           }
         }
-
-        users[idx] = { ...users[idx], ...updates, lastUpdatedBy: currentUser.id, lastUpdatedAt: new Date().toISOString() };
-        saveUsers(users);
-        addActivity('record_updated', '✏️', 'Record Updated', `${formData.name}'s record updated by ${currentUser.name}`, currentUser.id);
+        await updateUserViaAPI(editingRecord.id, updates);
         toast('Record updated successfully.', 'success');
       } else if (showForm === 'donor') {
-        addDonorRecord(formData, currentUser.id);
+        await addDonorRecord(formData, currentUser.id);
         toast('Donor record added successfully.', 'success');
       } else {
-        addRecipientRecord(formData, currentUser.id);
+        await addRecipientRecord(formData, currentUser.id);
         toast('Recipient record added successfully.', 'success');
       }
       setShowForm(null);

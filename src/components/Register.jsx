@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { registerUser, registerBasicAccount, getAllUsers, addActivity, validateEmail, validateName } from '../utils/auth';
+import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 // ============================================================
@@ -179,10 +179,8 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const formatHospitalId = (value) =>
     value.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '').slice(0, 30);
 
-  const formatPersonName = (value) => {
-    // Strip digits and most special chars; keep letters, spaces, dots, hyphens, apostrophes
-    return value.replace(/[^A-Za-zÀ-ÿ\s.'\-]/g, '').replace(/\s{2,}/g, ' ').slice(0, 60);
-  };
+  const formatPersonName = (value) =>
+    value.replace(/\s{2,}/g, ' ').slice(0, 60);
 
   const handleInput = (e) => {
     const { name, value } = e.target;
@@ -244,10 +242,6 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
         toast('Please enter a valid phone number.', 'error'); return false;
       }
     }
-    const users = getAllUsers();
-    if (users.some(u => u.email.toLowerCase() === formData.email.trim().toLowerCase() && !u.deleted)) {
-      toast('This email is already registered.', 'error'); return false;
-    }
     return true;
   };
 
@@ -259,56 +253,37 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     const regNo = formData.registrationNumber.trim().toUpperCase();
     const licNo = formData.licenseNumber.trim().toUpperCase();
 
-    // Format: must look like CODE-YEAR-NUMBER (letters-digits-digits) with optional sub-segments
-    // Examples valid: PHSA-2024-001, MOH-PK-2023-1234, PMDC/2024/0567
-    const idShape = /^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/;
-
-    // Registration Number checks
+    // Registration Number checks (matches backend: min 7, max 30, must have letters and digits)
     if (regNo.length < 7) {
-      toast('Registration Number must be at least 7 characters (e.g. PHSA-2024-001).', 'error'); return false;
+      toast('Registration Number must be at least 7 characters.', 'error'); return false;
     }
     if (regNo.length > 30) {
       toast('Registration Number is too long (max 30 characters).', 'error'); return false;
     }
-    if (!/[A-Z]/.test(regNo)) {
+    if (!/[A-Za-z]/.test(regNo)) {
       toast('Registration Number must contain at least one letter.', 'error'); return false;
     }
     if (!/[0-9]/.test(regNo)) {
       toast('Registration Number must contain at least one digit.', 'error'); return false;
     }
-    if (!idShape.test(regNo)) {
-      toast('Registration Number must follow format CODE-YEAR-NUMBER (e.g. PHSA-2024-001).', 'error'); return false;
-    }
 
-    // License Number checks
+    // License Number checks (matches backend: min 7, max 30, must have letters and digits)
     if (licNo.length < 7) {
-      toast('License Number must be at least 7 characters (e.g. LIC-PMDC-001).', 'error'); return false;
+      toast('License Number must be at least 7 characters.', 'error'); return false;
     }
     if (licNo.length > 30) {
       toast('License Number is too long (max 30 characters).', 'error'); return false;
     }
-    if (!/[A-Z]/.test(licNo)) {
+    if (!/[A-Za-z]/.test(licNo)) {
       toast('License Number must contain at least one letter.', 'error'); return false;
     }
     if (!/[0-9]/.test(licNo)) {
       toast('License Number must contain at least one digit.', 'error'); return false;
     }
-    if (!idShape.test(licNo)) {
-      toast('License Number must follow format CODE-AUTHORITY-NUMBER (e.g. LIC-PMDC-001).', 'error'); return false;
-    }
 
     // Reg and license must not be identical
     if (regNo === licNo) {
       toast('Registration Number and License Number cannot be identical.', 'error'); return false;
-    }
-
-    // Uniqueness — no two hospitals share the same registration or license number
-    const existing = getAllUsers().filter(u => u.role === 'hospital' && !u.deleted);
-    if (existing.some(u => u.registrationNumber && u.registrationNumber.toUpperCase() === regNo)) {
-      toast('This Registration Number is already in use by another hospital.', 'error'); return false;
-    }
-    if (existing.some(u => u.licenseNumber && u.licenseNumber.toUpperCase() === licNo)) {
-      toast('This License Number is already in use by another hospital.', 'error'); return false;
     }
 
     return true;
@@ -343,24 +318,22 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   // ============================================================
 
   // Donor / recipient: just create a basic account, no clinical data
-  const handleDonorRecipientSubmit = (e) => {
+  const handleDonorRecipientSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!validateCredentials()) return;
     setSubmitting(true);
-    setTimeout(() => {
-      try {
-        registerBasicAccount(formData.name, formData.email, formData.password, accountType, formData.phone);
-        onRegistrationSuccess({
-          type: accountType,
-          email: formData.email,
-          password: formData.password,
-          name: formData.name,
-        });
-      } catch (err) {
-        toast(err.message || 'Registration failed. Please try again.', 'error');
-        setSubmitting(false);
-      }
-    }, 500);
+    try {
+      await registerBasicAccount(formData.name, formData.email, formData.password, accountType, formData.phone);
+      onRegistrationSuccess({
+        type: accountType,
+        email: formData.email,
+        password: formData.password,
+        name: formData.name,
+      });
+    } catch (err) {
+      toast(err.message || 'Registration failed. Please try again.', 'error');
+      setSubmitting(false);
+    }
   };
 
   // Hospital: full multi-step registration with documents
@@ -371,11 +344,11 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     setStep(s => s + 1);
   };
 
-  const handleHospitalSubmit = (e) => {
+  const handleHospitalSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!validateHospitalDocs()) return;
     setSubmitting(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         const regData = {
           type: 'hospital',
@@ -390,7 +363,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
           hospitalAddress: formData.hospitalAddress,
           uploadedDocuments: Object.values(uploadedDocs),
         };
-        registerUser(regData);
+        await registerUser(regData);
         addActivity('hospital_registered', '🏥', 'New Hospital Registration', `${formData.hospitalName} submitted a registration request`);
         onRegistrationSuccess(regData);
       } catch (err) {
