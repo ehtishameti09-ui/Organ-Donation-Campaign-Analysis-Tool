@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Chart, registerables } from 'chart.js';
 import {
   getRecentActivities, getRecentActivitiesForUser, getApprovedHospitals,
-  getAllUsers, getDonors, getRecipients, getVerificationMetrics,
+  getAllUsers, getDonors, getRecipients, getVerificationMetrics, getChartData,
+  getDashboardSummary,
   getHospitalAssignedCases, hospitalReviewCase,
   getUserAppeals, submitAppeal
 } from '../utils/auth';
 import { toast } from '../utils/toast';
 import { generateRegistrationPDF } from '../utils/pdfReport';
+import Pagination, { usePagination } from './Pagination';
 
 Chart.register(...registerables);
 
@@ -170,6 +172,11 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
     return true;
   });
 
+  const casesPg = usePagination(filtered, 15);
+
+  // Switching tabs (filter) snaps back to page 1 so the user doesn't land on an empty page
+  useEffect(() => { casesPg.setPage(1); }, [filter]);
+
   const handleReviewSubmit = async () => {
     if (!selectedCase || !reviewAction) return;
     if ((reviewAction === 'reject' || reviewAction === 'request_info') && !reviewNotes.trim()) {
@@ -250,7 +257,7 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(c => (
+              {casesPg.slice.map(c => (
                 <tr key={c.id}>
                   <td>
                     <div style={{ fontWeight: '600', fontSize: '13px' }}>{c.name}</div>
@@ -278,6 +285,9 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
               ))}
             </tbody>
           </table>
+          <div style={{ padding: '0 12px 12px' }}>
+            <Pagination page={casesPg.page} setPage={casesPg.setPage} totalPages={casesPg.totalPages} total={casesPg.total} pageSize={casesPg.pageSize} label="cases" />
+          </div>
         </div>
       )}
 
@@ -671,29 +681,31 @@ const Dashboard = ({ user, onNavigate }) => {
   const [donors, setDonors] = useState([]);
   const [recipients, setRecipients] = useState([]);
 
-  useEffect(() => {
-    // Load real data from API
-    const loadData = async () => {
-      const activities = await getRecentActivitiesForUser(user.id, 8);
-      const hospitals = await getApprovedHospitals();
-      const metrics = await getVerificationMetrics();
-      const users = await getAllUsers();
-      const donorsList = await getDonors();
-      const recipientsList = await getRecipients();
+  const showCharts = user.role === 'admin' || user.role === 'super_admin' || (user.role === 'hospital' && user.status === 'approved');
 
-      setActivities(activities);
-      setApprovedHospitals(hospitals);
-      setMetrics(metrics);
-      setAllUsers(users);
-      setDonors(donorsList);
-      setRecipients(recipientsList);
+  useEffect(() => {
+    const loadData = async () => {
+      // ONE consolidated call replaces six. Cached server-side for 30s.
+      const [summary, chartDataResult] = await Promise.all([
+        getDashboardSummary(),
+        showCharts ? getChartData() : Promise.resolve(null),
+      ]);
+
+      setActivities(summary.recent_activities || []);
+      setApprovedHospitals(summary.approved_hospitals || []);
+      setMetrics(summary.metrics || {});
+      setAllUsers(summary.recent_users || []);
+      // Donors/recipients now lazy-load if anything in the dashboard truly needs them; for now metrics counts come from the summary
+      setDonors([]);
+      setRecipients([]);
+
+      if (showCharts && chartDataResult) {
+        initCharts(chartDataResult);
+      }
     };
 
     loadData();
 
-    if (user.role === 'admin' || user.role === 'super_admin' || (user.role === 'hospital' && user.status === 'approved')) {
-      initCharts();
-    }
     return () => {
       if (trendsChartInstance.current) trendsChartInstance.current.destroy();
       if (organsChartInstance.current) organsChartInstance.current.destroy();
@@ -710,23 +722,31 @@ const Dashboard = ({ user, onNavigate }) => {
     return `${Math.floor(h / 24)}d ago`;
   };
 
-  const initCharts = () => {
+  const initCharts = (data = {}) => {
+    const months = data.months?.length ? data.months : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+    const donorData = data.donors?.length ? data.donors : [0, 0, 0, 0, 0, 0];
+    const txData = data.transplants?.length ? data.transplants : [0, 0, 0, 0, 0, 0];
+    const organDist = data.organDistribution || {};
+    const organLabels = ['Kidney', 'Liver', 'Heart', 'Lung', 'Others'];
+    const organValues = organLabels.map(k => organDist[k] || 0);
+    const totalOrgans = organValues.reduce((a, b) => a + b, 0);
+
     if (trendsChartRef.current) {
       const ctx = trendsChartRef.current.getContext('2d');
       if (trendsChartInstance.current) trendsChartInstance.current.destroy();
       trendsChartInstance.current = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+          labels: months,
           datasets: [
-            { label: 'Transplants', data: [95, 102, 118, 125, 132, 140], borderColor: '#1a5c9e', backgroundColor: 'rgba(26,92,158,.08)', tension: .35, fill: true, pointRadius: 4, pointBackgroundColor: '#1a5c9e' },
-            { label: 'Donors', data: [145, 152, 168, 178, 185, 195], borderColor: '#0eb07a', backgroundColor: 'rgba(14,176,122,.06)', tension: .35, fill: true, pointRadius: 4, pointBackgroundColor: '#0eb07a' },
+            { label: 'Approved Cases', data: txData, borderColor: '#1a5c9e', backgroundColor: 'rgba(26,92,158,.08)', tension: .35, fill: true, pointRadius: 4, pointBackgroundColor: '#1a5c9e' },
+            { label: 'New Donors', data: donorData, borderColor: '#0eb07a', backgroundColor: 'rgba(14,176,122,.06)', tension: .35, fill: true, pointRadius: 4, pointBackgroundColor: '#0eb07a' },
           ]
         },
         options: {
           responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, font: { size: 11 } } } },
-          scales: { y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,.04)' } }, x: { grid: { display: false } } }
+          scales: { y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: 'rgba(0,0,0,.04)' } }, x: { grid: { display: false } } }
         }
       });
     }
@@ -736,10 +756,29 @@ const Dashboard = ({ user, onNavigate }) => {
       organsChartInstance.current = new Chart(ctx, {
         type: 'doughnut',
         data: {
-          labels: ['Kidney', 'Liver', 'Heart', 'Lung', 'Others'],
-          datasets: [{ data: [385, 245, 156, 98, 67], backgroundColor: ['#1a5c9e', '#0eb07a', '#e8900a', '#7c5cbf', '#d63e3e'], borderWidth: 0 }]
+          labels: organLabels,
+          datasets: [{
+            data: totalOrgans > 0 ? organValues : [1, 1, 1, 1, 1],
+            backgroundColor: ['#1a5c9e', '#0eb07a', '#e8900a', '#7c5cbf', '#d63e3e'],
+            borderWidth: 0
+          }]
         },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, cutout: '65%' }
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  if (totalOrgans === 0) return `${ctx.label}: No data yet`;
+                  const pct = ((ctx.parsed / totalOrgans) * 100).toFixed(1);
+                  return `${ctx.label}: ${ctx.parsed} (${pct}%)`;
+                }
+              }
+            }
+          },
+          cutout: '65%'
+        }
       });
     }
   };
@@ -910,14 +949,14 @@ const Dashboard = ({ user, onNavigate }) => {
     return (
       <div>
         <div className="grid4" style={{ marginBottom: '20px' }}>
-          <StatCard value={allUsers.filter(u => !u.deleted && !u.banned).length} label="Total Users"
-            color="blue" change={`${donors.length} donors, ${recipients.length} recipients`} direction="neutral"
+          <StatCard value={metrics.totalUsers || 0} label="Total Users"
+            color="blue" change={`${metrics.totalDonors || 0} donors, ${metrics.totalRecipients || 0} recipients`} direction="neutral"
             icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>} />
-          <StatCard value={donors.length} label="Registered Donors"
-            color="green" change={`${donors.filter(d => d.verificationStatus === 'approved').length} verified`} direction="up"
+          <StatCard value={metrics.totalDonors || 0} label="Registered Donors"
+            color="green" change={`${metrics.approvedDonors || 0} approved`} direction="up"
             icon={<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>} />
-          <StatCard value={recipients.length} label="Recipients on Waitlist"
-            color="amber" change={`${recipients.filter(r => parseFloat(r.urgencyScore) >= 7).length} critical`} direction="neutral"
+          <StatCard value={metrics.totalRecipients || 0} label="Recipients on Waitlist"
+            color="amber" change={`${metrics.approvedRecipients || 0} approved`} direction="neutral"
             icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></>} />
           <StatCard value={pendingHospitals} label="Pending Hospitals"
             color="red" change="Awaiting review" direction="neutral"
@@ -965,7 +1004,13 @@ const Dashboard = ({ user, onNavigate }) => {
                 </div>
               ) : (
                 activities.map((act, i) => (
-                  <ActivityItem key={i} icon={act.icon || '📋'} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
+                  <ActivityItem
+                    key={i}
+                    icon={act.icon || '📋'}
+                    action={act.title}
+                    user={act.description || ''}
+                    time={timeAgo(act.created_at || act.timestamp)}
+                  />
                 ))
               )}
             </div>

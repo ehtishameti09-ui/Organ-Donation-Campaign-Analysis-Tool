@@ -173,6 +173,17 @@ class AuthController extends Controller
 
         RateLimiter::clear($key);
 
+        // 2FA gate — if enabled, do NOT issue a token; send an email OTP instead and
+        // return a challenge token. The client must call /api/2fa/email/verify next.
+        if ($user->two_factor_enabled) {
+            $user->update([
+                'failed_login_attempts' => 0,
+                'locked_until' => null,
+            ]);
+            ActivityLogger::logAction($user->id, '2fa_challenge_issued', '2FA login challenge issued');
+            return response()->json(\App\Http\Controllers\Auth\TwoFactorController::issueLoginChallenge($user));
+        }
+
         // Rotate session, issue token
         $user->update([
             'last_login_at' => now(),
@@ -291,6 +302,7 @@ class AuthController extends Controller
             'isDeleted' => (bool) $user->is_deleted,
             'deletionDetails' => $user->deletion_details,
             'recoveryDeadline' => optional($user->recovery_deadline)->toIso8601String(),
+            'twoFactorEnabled' => (bool) $user->two_factor_enabled,
             'linkedHospitalId' => $user->linked_hospital_id,
             'preferredHospitalId' => $user->preferred_hospital_id,
             'hospitalId' => $user->hospital_id,
@@ -356,6 +368,23 @@ class AuthController extends Controller
                 'emergencyContactPhone' => $user->clinicalProfile->emergency_contact_phone,
                 'emergencyContactRelation' => $user->clinicalProfile->emergency_contact_relation,
             ]);
+        }
+
+        // Uploaded documents — load only if relation is already eager-loaded (avoids N+1)
+        if ($user->relationLoaded('documents') && $user->documents) {
+            $data['uploadedDocuments'] = $user->documents->map(fn ($d) => [
+                'id'           => $d->id,
+                'name'         => $d->original_name,
+                'documentType' => $d->document_type,
+                'mimeType'     => $d->mime_type,
+                'size'         => $d->size,
+                'status'       => $d->status,
+                'url'          => $d->url,
+                'uploadedAt'   => optional($d->created_at)->toIso8601String(),
+                'reviewedBy'   => $d->reviewed_by,
+                'reviewedAt'   => optional($d->reviewed_at)->toIso8601String(),
+                'reviewNotes'  => $d->review_notes,
+            ])->values()->toArray();
         }
 
         return $data;

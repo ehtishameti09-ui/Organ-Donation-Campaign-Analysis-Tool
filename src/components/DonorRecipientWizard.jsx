@@ -7,9 +7,9 @@ import {
 } from '../utils/auth';
 import { toast } from '../utils/toast';
 import { generateRegistrationPDF } from '../utils/pdfReport';
+import { ORGANS } from '../utils/organs';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-const ORGANS = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow'];
 const GENDERS = ['Male', 'Female', 'Other'];
 
 const formatCNIC = (value) => {

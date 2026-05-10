@@ -34,6 +34,17 @@ class DocumentController extends Controller
             return response()->json(['message' => 'Cannot upload documents for another user.'], 403);
         }
 
+        // Hospitals can only (re)upload their own registration docs while status is
+        // pending (initial submission) or info_requested (super admin asked for more).
+        // Once approved or rejected, the documents are locked.
+        if ($authUser->isHospital() && $targetUserId === $authUser->id) {
+            if (!in_array($authUser->status, ['pending', 'info_requested'], true)) {
+                return response()->json([
+                    'message' => 'Documents are locked. You can only re-upload after the super admin requests additional information.',
+                ], 403);
+            }
+        }
+
         $saved = [];
         foreach ($data['files'] as $file) {
             $path = $file->store('documents/'.$targetUserId, 'local'); // private disk

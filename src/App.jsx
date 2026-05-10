@@ -1,20 +1,32 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { getCurrentUser, logout, initSuperAdmin, login, getUnreadNotifications } from './utils/auth';
 import { getMeViaAPI } from './utils/api';
 import { toast } from './utils/toast';
 import Login from './components/Login';
 import Register from './components/Register';
 import Dashboard from './components/Dashboard';
-import UserManagement from './components/UserManagement';
-import AccountSettings from './components/AccountSettings';
-import DonorManagement from './components/DonorManagement';
-import RecipientManagement from './components/RecipientManagement';
-import DonorRecipientWizard from './components/DonorRecipientWizard';
-import EmployeeManagement from './components/EmployeeManagement';
-import DoctorDashboard from './components/DoctorDashboard';
-import DataEntryDashboard from './components/DataEntryDashboard';
-import AuditorDashboard from './components/AuditorDashboard';
+// Heavy pages — lazy-loaded so they don't bloat the initial bundle
+const UserManagement     = lazy(() => import('./components/UserManagement'));
+const AccountSettings    = lazy(() => import('./components/AccountSettings'));
+const DonorManagement    = lazy(() => import('./components/DonorManagement'));
+const RecipientManagement = lazy(() => import('./components/RecipientManagement'));
+const DonorRecipientWizard = lazy(() => import('./components/DonorRecipientWizard'));
+const EmployeeManagement = lazy(() => import('./components/EmployeeManagement'));
+const DoctorDashboard    = lazy(() => import('./components/DoctorDashboard'));
+const DataEntryDashboard = lazy(() => import('./components/DataEntryDashboard'));
+const AuditorDashboard   = lazy(() => import('./components/AuditorDashboard'));
+const AllocationEngine   = lazy(() => import('./components/AllocationEngine'));
+const MatchingGovernance = lazy(() => import('./components/MatchingGovernance'));
+const FairnessLab        = lazy(() => import('./components/FairnessLab'));
+const AdminRequests      = lazy(() => import('./components/AdminRequests'));
+const HospitalRegistrationForm = lazy(() => import('./components/HospitalRegistrationForm'));
 import './styles/App.css';
+
+const PageLoader = () => (
+  <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text2)', fontSize: '13px' }}>
+    Loading…
+  </div>
+);
 
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -23,6 +35,18 @@ function App() {
   const [showRegister, setShowRegister] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [settingsTab, setSettingsTab] = useState(null);
+  // Pages the user has visited at least once — they stay mounted in the DOM for instant re-display
+  const [visitedPages, setVisitedPages] = useState(() => new Set(['dashboard']));
+
+  // Track every page visit
+  useEffect(() => {
+    setVisitedPages(prev => prev.has(currentPage) ? prev : new Set([...prev, currentPage]));
+  }, [currentPage]);
+
+  // Wipe the visit memory when the user changes (login/logout) so role-restricted pages from previous sessions don't bleed in
+  useEffect(() => {
+    setVisitedPages(new Set(['dashboard']));
+  }, [currentUser?.id]);
 
   // Sync browser back/forward with app page state
   useEffect(() => {
@@ -38,8 +62,106 @@ function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  // Global 401 interceptor — when the backend rejects a stale token, log the user out cleanly
+  // instead of leaving them on a half-loaded page.
+  // Skipped if the user just deliberately logged out OR if it's a login/register/logout endpoint.
+  useEffect(() => {
+    const origFetch = window.fetch;
+    let alreadyHandled = false;
+    window.fetch = async (...args) => {
+      const response = await origFetch(...args);
+      const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+      const isApi = url && url.includes('/api/');
+      const isAuthEndpoint = url && (url.includes('/api/login') || url.includes('/api/register') || url.includes('/api/logout'));
+      // Suppress for ~3s after a deliberate logout — any in-flight calls from kept-mounted pages will 401 and we ignore those
+      const recentlyLoggedOut = window.__odcatLogoutAt && (Date.now() - window.__odcatLogoutAt < 3000);
+      if (response.status === 401 && isApi && !isAuthEndpoint && !recentlyLoggedOut && !alreadyHandled) {
+        alreadyHandled = true;
+        localStorage.removeItem('odcat_token');
+        localStorage.removeItem('odcat_user');
+        localStorage.removeItem('odcat_current');
+        window.dispatchEvent(new CustomEvent('auth:expired'));
+        setTimeout(() => { alreadyHandled = false; }, 1500);
+      }
+      return response;
+    };
+    return () => { window.fetch = origFetch; };
+  }, []);
+
+  useEffect(() => {
+    const handler = () => {
+      if (currentUser) {
+        toast('Your session has expired. Please log in again.', 'warning');
+        setCurrentUser(null);
+        setCurrentPage('dashboard');
+        setSettingsTab(null);
+      }
+    };
+    window.addEventListener('auth:expired', handler);
+    return () => window.removeEventListener('auth:expired', handler);
+  }, [currentUser]);
+
   useEffect(() => {
     initSuperAdmin();
+
+    // Handle Google OAuth callbacks — four URL shapes from the backend:
+    //   ?error=...                                  → friendly error toast
+    //   ?token=...&user_id=...                      → existing user signed in, finalize session
+    //   ?google_pending=...&name=...&email=…        → new user, show role picker
+    //   ?google_2fa=...&masked_email=...            → 2FA challenge, show OTP modal
+    const params = new URLSearchParams(window.location.search);
+    const oauthToken = params.get('token');
+    const oauthError = params.get('error');
+    const googlePending = params.get('google_pending');
+    const google2FA = params.get('google_2fa');
+
+    if (oauthError) {
+      toast(decodeURIComponent(oauthError), 'error');
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      return;
+    }
+
+    if (google2FA) {
+      // Stash for Login.jsx to pick up and open the OTP modal
+      window.__google2FA = {
+        challengeToken: google2FA,
+        maskedEmail: params.get('masked_email') || '',
+      };
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      window.dispatchEvent(new CustomEvent('google:2fa-open'));
+      return;
+    }
+
+    if (googlePending) {
+      // Stash on window so Login.jsx can read it and show the role picker. Clean URL too.
+      window.__googlePending = {
+        token: googlePending,
+        name:  params.get('name') || '',
+        email: params.get('email') || '',
+      };
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      // Force re-render of Login to pick up the pending state
+      window.dispatchEvent(new CustomEvent('google:role-picker-open'));
+      return;
+    }
+
+    if (oauthToken) {
+      localStorage.setItem('odcat_token', oauthToken);
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      getMeViaAPI()
+        .then(user => {
+          localStorage.setItem('odcat_user', JSON.stringify(user));
+          localStorage.setItem('odcat_current', JSON.stringify(user));
+          setCurrentUser(user);
+          toast(`Welcome, ${user.name?.split(' ')[0] || 'User'}!`, 'success');
+        })
+        .catch(() => {
+          localStorage.removeItem('odcat_token');
+          toast('Google sign-in failed. Please try again.', 'error');
+        });
+      return;
+    }
+
     const token = localStorage.getItem('odcat_token');
     const cached = getCurrentUser();
     if (!token || !cached) return; // no session to restore
@@ -81,16 +203,31 @@ function App() {
   };
 
   const handleLoginSuccess = (user) => {
-    // User data is already from API, no need to look up in storage
     setCurrentUser(user);
+    // Brand-new accounts that haven't completed registration yet → take them straight to the role-specific form.
+    // `registrationComplete` is set by the wizard / hospital form on completion.
+    if (user.registrationComplete === false || user.registration_complete === false) {
+      if (user.role === 'donor' || user.role === 'recipient') {
+        setCurrentPage('complete-registration');   // → DonorRecipientWizard
+        return;
+      }
+      if (user.role === 'hospital') {
+        setCurrentPage('complete-hospital-registration');  // → HospitalRegistrationForm
+        return;
+      }
+    }
     setCurrentPage('dashboard');
   };
 
-  const handleLogout = async () => {
-    await logout();
+  const handleLogout = () => {
+    // Mark the moment so the 401 interceptor knows any subsequent 401s are just leftover
+    // calls from kept-mounted pages — NOT a session expiry.
+    window.__odcatLogoutAt = Date.now();
     setCurrentUser(null);
     setCurrentPage('dashboard');
     setSettingsTab(null);
+    setUnreadCount(0);
+    logout();
     toast('Signed out successfully.', 'info');
   };
 
@@ -148,6 +285,7 @@ function App() {
 
     if (currentUser.role === 'super_admin') {
       items.push({ id: 'users', label: 'Hospital Registrations', icon: 'users' });
+      items.push({ id: 'admin-requests', label: 'Admin Requests', icon: 'inbox' });
     }
 
     if (currentUser.role === 'admin') {
@@ -155,11 +293,21 @@ function App() {
       items.push({ id: 'employees', label: 'Employees', icon: 'briefcase' });
       items.push({ id: 'donors', label: 'Donor Management', icon: 'heart' });
       items.push({ id: 'recipients', label: 'Recipients', icon: 'activity' });
+      // Modules 4/5/6: only for hospital-linked admins, never super_admin or general admins (bias prevention)
+      if (currentUser.linkedHospitalId) {
+        items.push({ id: 'allocation', label: 'Allocation Engine', icon: 'cpu' });
+        items.push({ id: 'matching', label: 'Matching & Governance', icon: 'shield' });
+        items.push({ id: 'fairness', label: 'Fairness Lab', icon: 'scale' });
+      }
     }
 
     if (currentUser.role === 'hospital' && currentUser.status === 'approved') {
       items.push({ id: 'donors', label: 'Donor Management', icon: 'heart' });
       items.push({ id: 'recipients', label: 'Recipients', icon: 'activity' });
+      items.push({ id: 'allocation', label: 'Allocation Engine', icon: 'cpu' });
+      items.push({ id: 'matching', label: 'Matching & Governance', icon: 'shield' });
+      items.push({ id: 'fairness', label: 'Fairness Lab', icon: 'scale' });
+      items.push({ id: 'admin-requests', label: 'Admin Requests', icon: 'inbox' });
     }
 
     if (currentUser.role === 'doctor') {
@@ -186,44 +334,52 @@ function App() {
   const isHospitalRestricted = currentUser.role === 'hospital' &&
     (currentUser.status === 'pending' || currentUser.status === 'info_requested');
 
-  const renderPage = () => {
-    // Restricted hospital access
-    if (isHospitalRestricted && currentPage !== 'settings' && currentPage !== 'dashboard') {
-      return <Dashboard user={currentUser} onNavigate={navigateTo} />;
+  // Keep-mounted page system: each visited page mounts ONCE then stays in the DOM (hidden when inactive),
+  // so revisiting is instant — no re-fetch, scroll positions and form state preserved.
+  // First visit incurs the lazy-load + data-fetch; every subsequent visit is ~0ms.
+  const allowedFor = (page) => {
+    if (isHospitalRestricted && page !== 'settings' && page !== 'dashboard') return false;
+    switch (page) {
+      case 'dashboard':         return true;
+      case 'users':             return currentUser.role === 'super_admin' || currentUser.role === 'admin';
+      case 'donors':            return currentUser.role === 'admin' || (currentUser.role === 'hospital' && currentUser.status === 'approved');
+      case 'recipients':        return currentUser.role === 'admin' || (currentUser.role === 'hospital' && currentUser.status === 'approved');
+      case 'employees':         return currentUser.role === 'super_admin' || currentUser.role === 'admin';
+      case 'doctor-review':     return currentUser.role === 'doctor';
+      case 'data-entry':        return currentUser.role === 'data_entry';
+      case 'audit':             return currentUser.role === 'auditor';
+      case 'admin-requests':    return currentUser.role === 'super_admin' || (currentUser.role === 'hospital' && currentUser.status === 'approved');
+      case 'allocation':
+      case 'matching':
+      case 'fairness':          return (currentUser.role === 'hospital' && currentUser.status === 'approved') ||
+                                       (currentUser.role === 'admin' && !!currentUser.linkedHospitalId);
+      case 'settings':          return true;
+      case 'complete-registration': return currentUser.role === 'donor' || currentUser.role === 'recipient';
+      case 'complete-hospital-registration': return currentUser.role === 'hospital';
+      default:                  return true;
     }
+  };
 
-    switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'users':
-        return (currentUser.role === 'super_admin' || currentUser.role === 'admin')
-          ? <UserManagement currentUser={currentUser} onUserUpdated={refreshCurrentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'donors':
-        return (currentUser.role === 'admin' || (currentUser.role === 'hospital' && currentUser.status === 'approved'))
-          ? <DonorManagement currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'recipients':
-        return (currentUser.role === 'admin' || (currentUser.role === 'hospital' && currentUser.status === 'approved'))
-          ? <RecipientManagement currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'employees':
-        return (currentUser.role === 'super_admin' || currentUser.role === 'admin')
-          ? <EmployeeManagement currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'doctor-review':
-        return currentUser.role === 'doctor'
-          ? <DoctorDashboard currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'data-entry':
-        return currentUser.role === 'data_entry'
-          ? <DataEntryDashboard currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'audit':
-        return currentUser.role === 'auditor'
-          ? <AuditorDashboard currentUser={currentUser} />
-          : <Dashboard user={currentUser} onNavigate={navigateTo} />;
-      case 'settings':
+  const renderPage = () => {
+    // Pages built once, kept in the DOM (display: none when inactive)
+    const keepMountedPages = [
+      { id: 'dashboard',       el: <Dashboard user={currentUser} onNavigate={navigateTo} /> },
+      { id: 'users',           el: <UserManagement currentUser={currentUser} onUserUpdated={refreshCurrentUser} /> },
+      { id: 'donors',          el: <DonorManagement currentUser={currentUser} /> },
+      { id: 'recipients',      el: <RecipientManagement currentUser={currentUser} /> },
+      { id: 'employees',       el: <EmployeeManagement currentUser={currentUser} /> },
+      { id: 'doctor-review',   el: <DoctorDashboard currentUser={currentUser} /> },
+      { id: 'data-entry',      el: <DataEntryDashboard currentUser={currentUser} /> },
+      { id: 'audit',           el: <AuditorDashboard currentUser={currentUser} /> },
+      { id: 'admin-requests',  el: <AdminRequests currentUser={currentUser} /> },
+      { id: 'allocation',      el: <AllocationEngine currentUser={currentUser} /> },
+      { id: 'matching',        el: <MatchingGovernance currentUser={currentUser} /> },
+      { id: 'fairness',        el: <FairnessLab currentUser={currentUser} /> },
+    ];
+
+    // Settings + Wizard remount per session (have state tied to context like settingsTab / wizard mode) — render only when active
+    const transientPage = (() => {
+      if (currentPage === 'settings') {
         return (
           <AccountSettings
             user={currentUser}
@@ -234,10 +390,8 @@ function App() {
             }}
           />
         );
-      case 'complete-registration':
-        if (currentUser.role !== 'donor' && currentUser.role !== 'recipient') {
-          return <Dashboard user={currentUser} onNavigate={navigateTo} />;
-        }
+      }
+      if (currentPage === 'complete-registration' && (currentUser.role === 'donor' || currentUser.role === 'recipient')) {
         return (
           <DonorRecipientWizard
             user={currentUser}
@@ -249,9 +403,41 @@ function App() {
             onCancel={() => navigateTo('dashboard')}
           />
         );
-      default:
-        return <Dashboard user={currentUser} onNavigate={navigateTo} />;
-    }
+      }
+      if (currentPage === 'complete-hospital-registration' && currentUser.role === 'hospital') {
+        return (
+          <HospitalRegistrationForm
+            user={currentUser}
+            onComplete={() => {
+              refreshCurrentUser();
+              navigateTo('dashboard');
+            }}
+          />
+        );
+      }
+      return null;
+    })();
+
+    return (
+      <>
+        {keepMountedPages.map(p => {
+          const isActive = currentPage === p.id;
+          // Mount lazily on first visit; once visited, stay in DOM. Skip pages the role can't access.
+          if (!visitedPages.has(p.id) && !isActive) return null;
+          if (!allowedFor(p.id)) return null;
+          return (
+            <div key={p.id} style={{ display: isActive ? 'block' : 'none' }}>
+              {p.el}
+            </div>
+          );
+        })}
+        {transientPage}
+        {/* Fallback: if the active page is something not in our keep-mounted list and not transient, show Dashboard */}
+        {!keepMountedPages.some(p => p.id === currentPage) && !transientPage && (
+          <Dashboard user={currentUser} onNavigate={navigateTo} />
+        )}
+      </>
+    );
   };
 
   const getPageInfo = () => {
@@ -264,8 +450,13 @@ function App() {
       'doctor-review': { title: 'Case Reviews', sub: 'Review incoming donor and recipient requests' },
       'data-entry': { title: 'Data Entry', sub: 'Add and edit donor & recipient records' },
       audit: { title: 'Audit Dashboard', sub: 'Read-only system overview and audit logs' },
+      allocation: { title: 'Allocation Engine', sub: 'Explainable, version-controlled organ allocation with simulation' },
+      matching:   { title: 'Matching & Governance', sub: 'Compatibility rules, hospital distances, override accountability' },
+      fairness:   { title: 'Fairness Lab', sub: 'Auto-running fairness analysis, sensitivity reports, bias detection' },
+      'admin-requests': { title: 'Admin Account Requests', sub: 'Hospital-initiated requests for admin accounts. Super admin reviews & approves.' },
       settings: { title: 'Account Settings', sub: 'Update your profile and preferences' },
       'complete-registration': { title: 'Complete Registration', sub: 'Sign the consent form, submit clinical info, and upload documents' },
+      'complete-hospital-registration': { title: 'Complete Hospital Registration', sub: 'Provide hospital details for super admin review' },
     };
     return pages[currentPage] || pages.dashboard;
   };
@@ -418,7 +609,9 @@ function App() {
           )}
 
           <div className="content-area">
-            {renderPage()}
+            <Suspense fallback={<PageLoader />}>
+              {renderPage()}
+            </Suspense>
           </div>
         </div>
       </div>
@@ -436,6 +629,9 @@ const getNavIcon = (iconName) => {
     clipboard: <><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></>,
     edit: <><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></>,
     shield: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></>,
+    cpu: <><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>,
+    inbox: <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>,
+    scale: <><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8 2 14h6L5 8z"/><path d="M19 8l-3 6h6l-3-6z"/><path d="M5 21h14"/></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
   };
   return icons[iconName] || null;

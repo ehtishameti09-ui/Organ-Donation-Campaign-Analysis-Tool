@@ -59,7 +59,8 @@ class UserController extends Controller
         return response()->json($users);
     }
 
-    /** POST /api/users/admin — create a new admin user (super admin only) */
+    /** POST /api/users/admin — create an unlinked admin (super admin only).
+     *  Hospital-linked admins can ONLY be created via the admin-request approval flow. */
     public function createAdmin(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -70,6 +71,14 @@ class UserController extends Controller
             'linked_hospital_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
+        // Bias prevention: super_admin cannot unilaterally create hospital-linked admins.
+        // Those must come through the admin-request approval flow initiated by the hospital itself.
+        if (!empty($data['linked_hospital_id'])) {
+            return response()->json([
+                'message' => 'Hospital-linked admin accounts can only be created by approving an admin request submitted by that hospital. Use the Admin Requests page.',
+            ], 403);
+        }
+
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
@@ -79,7 +88,7 @@ class UserController extends Controller
             'status' => 'approved',
             'email_verified_at' => now(),
             'registration_complete' => true,
-            'linked_hospital_id' => $data['linked_hospital_id'] ?? null,
+            'linked_hospital_id' => null,
         ]);
         $user->assignRole('admin');
 
@@ -91,6 +100,75 @@ class UserController extends Controller
         return response()->json([
             'message' => 'Admin created.',
             'user' => app(AuthController::class)->userResource($user),
+        ], 201);
+    }
+
+    /** POST /api/users/create-employee — hospital + linked admin can create employees (doctor/data_entry/auditor) directly.
+     *  Every action is logged immutably with actor, target, hospital scope, and timestamp. */
+    public function createEmployee(Request $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        // Permission gate: only hospital users + admins linked to a hospital can create employees
+        $allowedRoles = ['hospital', 'admin'];
+        if (!in_array($actor->role, $allowedRoles, true)) {
+            return response()->json(['message' => 'Only hospital admins can create employees.'], 403);
+        }
+        if ($actor->role === 'admin' && empty($actor->linked_hospital_id)) {
+            return response()->json(['message' => 'Only hospital-linked admins can create employees.'], 403);
+        }
+
+        // Resolve the hospital scope
+        $hospitalId = $actor->role === 'hospital' ? $actor->id : (int) $actor->linked_hospital_id;
+
+        $data = $request->validate([
+            'name'           => ['required', 'string', 'max:60'],
+            'email'          => ['required', 'email', Rule::unique('users', 'email')],
+            'password'       => ['required', new StrongPassword],
+            'phone'          => ['nullable', 'string', 'max:30'],
+            'role'           => ['required', Rule::in(['doctor', 'data_entry', 'auditor'])],
+            'department'     => ['nullable', 'string', 'max:100'],
+            'specialization' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $employee = User::create([
+            'name'                  => $data['name'],
+            'email'                 => $data['email'],
+            'password'              => $data['password'],
+            'phone'                 => $data['phone'] ?? null,
+            'role'                  => $data['role'],
+            'department'            => $data['department'] ?? null,
+            'specialization'        => $data['specialization'] ?? null,
+            'status'                => 'approved',
+            'email_verified_at'     => now(),
+            'registration_complete' => true,
+            'linked_hospital_id'    => $hospitalId,
+        ]);
+        $employee->assignRole($data['role']);
+
+        // Immutable audit-log entry — actor, target, scope, event, when, all in one row
+        ActivityLogger::logActivity(
+            'employee_created',
+            'Employee added',
+            "{$actor->name} added {$employee->name} as {$employee->role}",
+            [
+                'actor_id'          => $actor->id,
+                'user_id'           => $employee->id,        // target
+                'scope_hospital_id' => $hospitalId,
+                'metadata'          => [
+                    'actor_name'   => $actor->name,
+                    'actor_role'   => $actor->role,
+                    'target_name'  => $employee->name,
+                    'target_role'  => $employee->role,
+                    'target_email' => $employee->email,
+                ],
+            ]
+        );
+        ActivityLogger::logAction($employee->id, 'employee_created', "Created by {$actor->name} ({$actor->role})");
+
+        return response()->json([
+            'message' => 'Employee created.',
+            'user' => app(AuthController::class)->userResource($employee),
         ], 201);
     }
 
@@ -116,10 +194,75 @@ class UserController extends Controller
             'app_notifications' => ['sometimes', 'boolean'],
             'status_updates' => ['sometimes', 'boolean'],
             'opportunity_alerts' => ['sometimes', 'boolean'],
+
+            // Hospital profile fields — accepted as flat keys for convenience
+            'hospitalName'        => ['sometimes', 'nullable', 'string', 'max:120'],
+            'registrationNumber'  => ['sometimes', 'nullable', 'string', 'max:50', 'regex:/^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/'],
+            'licenseNumber'       => ['sometimes', 'nullable', 'string', 'max:50', 'regex:/^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/'],
+            'hospitalAddress'     => ['sometimes', 'nullable', 'string', 'max:255'],
+            'contactPerson'       => ['sometimes', 'nullable', 'string', 'max:120'],
+            'city'                => ['sometimes', 'nullable', 'string', 'max:80'],
+
+            // Or as nested object — both work
+            'hospital_profile'    => ['sometimes', 'array'],
+        ], [
+            'registrationNumber.regex' => 'Registration number must follow format like PMDC-AKU-1985-001 (uppercase code + dashes/numbers).',
+            'licenseNumber.regex'      => 'License number must follow format like SHC-AKU-1985-LIC (uppercase code + dashes/numbers).',
         ]);
 
-        $user->update($data);
+        // Pull out hospital-profile fields and apply only user fields to the user model
+        $hospitalProfileFlat = array_filter([
+            'hospital_name'       => $data['hospitalName']       ?? null,
+            'registration_number' => isset($data['registrationNumber']) ? strtoupper($data['registrationNumber']) : null,
+            'license_number'      => isset($data['licenseNumber'])      ? strtoupper($data['licenseNumber'])      : null,
+            'hospital_address'    => $data['hospitalAddress']   ?? null,
+            'contact_person'      => $data['contactPerson']     ?? null,
+            'city'                => $data['city']              ?? null,
+        ], fn($v) => $v !== null);
+
+        $hospitalProfileNested = $data['hospital_profile'] ?? [];
+        $hpData = array_merge($hospitalProfileNested, $hospitalProfileFlat);
+
+        if ($user->role === 'hospital' && !empty($hpData)) {
+            $hp = \App\Models\HospitalProfile::firstOrNew(['user_id' => $user->id]);
+            // If creating a new profile (no DB row yet) and hospital_name is missing, fall back to user's name
+            // so the NOT NULL constraint on hospital_profiles.hospital_name doesn't blow up.
+            if (!$hp->exists && empty($hpData['hospital_name'])) {
+                $hpData['hospital_name'] = $user->name ?: 'Unnamed Hospital';
+            }
+            $hp->fill($hpData);
+            $hp->save();
+            // Bust the cached hospital list so super admin sees the updated info immediately
+            \Illuminate\Support\Facades\Cache::forget('hospitals:overview:v1');
+        }
+
+        // Strip the hospital-profile keys before updating the user model
+        $userData = collect($data)->except([
+            'hospitalName', 'registrationNumber', 'licenseNumber', 'hospitalAddress',
+            'contactPerson', 'city', 'hospital_profile',
+        ])->toArray();
+
+        if (!empty($userData)) {
+            $user->update($userData);
+        }
         ActivityLogger::logAction($user->id, 'user_updated', 'User profile updated', $data, $request->user()->id);
+
+        // Hospital-scoped audit trail (visible in Recent Activity for the relevant hospital)
+        $actor = $request->user();
+        $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
+        if ($scopeHospital) {
+            ActivityLogger::logActivity(
+                'user_updated',
+                'User updated',
+                "{$actor->name} updated {$user->name}",
+                [
+                    'actor_id'          => $actor->id,
+                    'user_id'           => $user->id,
+                    'scope_hospital_id' => $scopeHospital,
+                    'metadata'          => ['changed_fields' => array_keys($data)],
+                ]
+            );
+        }
 
         return response()->json([
             'message' => 'Updated.',
@@ -198,6 +341,16 @@ class UserController extends Controller
         $user->tokens()->delete();
 
         ActivityLogger::logAction($user->id, 'ban', $data['detailed_reason'], $data, $request->user()->id);
+        $actor = $request->user();
+        $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
+        if ($scopeHospital) {
+            ActivityLogger::logActivity(
+                $data['ban_type'] === 'warning' ? 'user_warned' : 'user_banned',
+                ($data['ban_type'] === 'warning' ? 'User warned' : 'User banned'),
+                "{$actor->name} {$data['ban_type']}d {$user->name}: {$data['detailed_reason']}",
+                ['actor_id' => $actor->id, 'user_id' => $user->id, 'scope_hospital_id' => $scopeHospital, 'metadata' => $data]
+            );
+        }
         Notification::create([
             'user_id' => $user->id, 'type' => 'ban',
             'title' => 'Account '.($data['ban_type'] === 'warning' ? 'warned' : 'banned'),
@@ -216,6 +369,16 @@ class UserController extends Controller
     {
         $user->update(['banned' => false, 'status' => 'approved', 'ban_details' => null]);
         ActivityLogger::logAction($user->id, 'ban_reversed', 'Ban reversed by admin', [], $request->user()->id);
+        $actor = $request->user();
+        $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
+        if ($scopeHospital) {
+            ActivityLogger::logActivity(
+                'user_unbanned',
+                'User unbanned',
+                "{$actor->name} reversed ban on {$user->name}",
+                ['actor_id' => $actor->id, 'user_id' => $user->id, 'scope_hospital_id' => $scopeHospital]
+            );
+        }
         Notification::create([
             'user_id' => $user->id, 'type' => 'info',
             'title' => 'Account restored',

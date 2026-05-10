@@ -9,9 +9,41 @@ use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 
 class HospitalController extends Controller
 {
+    /** GET /api/hospitals/overview — ONE call returning all hospital lists (approved/pending/rejected) + admins.
+     *  Replaces 5 parallel calls in UserManagement. Cached 30s; busted on hospital approve/reject. */
+    public function overview(Request $request): JsonResponse
+    {
+        $cacheKey = 'hospitals:overview:v1';
+        $payload = Cache::remember($cacheKey, 30, function () {
+            $auth = app(AuthController::class);
+
+            // Eager-load documents so super admin can review uploaded files inline
+            $approved = User::where('role', 'hospital')->where('status', 'approved')
+                ->with(['hospitalProfile', 'documents'])->orderBy('name')->limit(500)->get();
+            $pending  = User::where('role', 'hospital')
+                ->whereIn('status', ['pending', 'info_requested'])
+                ->with(['hospitalProfile', 'documents'])->orderByDesc('created_at')->limit(200)->get();
+            $rejected = User::where('role', 'hospital')->where('status', 'rejected')
+                ->with(['hospitalProfile', 'documents'])->orderByDesc('created_at')->limit(200)->get();
+            $admins   = User::where('role', 'admin')->where('status', 'approved')
+                ->orderBy('name')->limit(500)
+                ->get(['id', 'name', 'email', 'linked_hospital_id', 'created_at']);
+
+            return [
+                'approved' => $approved->map(fn ($h) => $auth->userResource($h)),
+                'pending'  => $pending->map(fn ($h) => $auth->userResource($h)),
+                'rejected' => $rejected->map(fn ($h) => $auth->userResource($h)),
+                'admins'   => $admins,
+            ];
+        });
+
+        return response()->json($payload);
+    }
+
     /** GET /api/hospitals — list all approved hospitals (used for selection dropdowns) */
     public function index(Request $request): JsonResponse
     {
@@ -57,6 +89,7 @@ class HospitalController extends Controller
         $data = $request->validate(['feedback' => ['nullable', 'string', 'max:1000']]);
 
         $hospital->update(['status' => 'approved']);
+        Cache::forget('hospitals:overview:v1');
         HospitalProfile::where('user_id', $hospital->id)->update([
             'admin_feedback' => $data['feedback'] ?? null,
             'approved_by' => $request->user()->id,
@@ -84,6 +117,7 @@ class HospitalController extends Controller
     {
         $data = $request->validate(['reason' => ['required', 'string', 'min:5']]);
         $hospital->update(['status' => 'rejected']);
+        Cache::forget('hospitals:overview:v1');
         HospitalProfile::where('user_id', $hospital->id)->update([
             'rejection_reason' => $data['reason'],
             'rejected_by' => $request->user()->id,
@@ -108,6 +142,7 @@ class HospitalController extends Controller
     {
         $data = $request->validate(['message' => ['required', 'string', 'min:5']]);
         $hospital->update(['status' => 'info_requested']);
+        Cache::forget('hospitals:overview:v1');
         HospitalProfile::where('user_id', $hospital->id)->update(['admin_message' => $data['message']]);
 
         Notification::create([

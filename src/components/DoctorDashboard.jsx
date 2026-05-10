@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { hospitalReviewCase, getHospitalAssignedCases } from '../utils/auth';
 import { toast } from '../utils/toast';
+import Pagination, { usePagination } from './Pagination';
 
 const DoctorDashboard = ({ currentUser }) => {
   const [tab, setTab] = useState('incoming');
@@ -23,6 +24,7 @@ const DoctorDashboard = ({ currentUser }) => {
   const reviewed = cases.filter(c => ['approved', 'rejected', 'info_requested'].includes(c.status) && c.hospitalReviewedBy);
 
   const displayCases = tab === 'incoming' ? incoming : reviewed;
+  const casesPg = usePagination(displayCases, 12);
 
   const handleReview = async () => {
     if (!reviewAction) { toast('Please select an action.', 'error'); return; }
@@ -58,6 +60,16 @@ const DoctorDashboard = ({ currentUser }) => {
 
   return (
     <div>
+      <div style={{
+        background: 'linear-gradient(135deg, #1a5c9e 0%, #2871be 100%)',
+        color: 'white', padding: '14px 18px', borderRadius: 'var(--radius)', marginBottom: '20px',
+      }}>
+        <div style={{ fontSize: '15px', fontWeight: '700' }}>🩺 Doctor Workspace</div>
+        <div style={{ fontSize: '12px', opacity: 0.92, marginTop: '3px' }}>
+          Your tasks: review incoming donor & recipient medical cases · approve, reject, or request more info · attach review notes for the audit trail
+        </div>
+      </div>
+
       {/* Stats Row */}
       <div className="grid4" style={{ marginBottom: '24px' }}>
         {[
@@ -101,7 +113,7 @@ const DoctorDashboard = ({ currentUser }) => {
       )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        {displayCases.map(c => (
+        {casesPg.slice.map(c => (
           <div key={c.id} style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -202,6 +214,9 @@ const DoctorDashboard = ({ currentUser }) => {
             )}
           </div>
         ))}
+        {displayCases.length > 0 && (
+          <Pagination page={casesPg.page} setPage={casesPg.setPage} totalPages={casesPg.totalPages} total={casesPg.total} pageSize={casesPg.pageSize} label="cases" />
+        )}
       </div>
 
       {/* Review Modal */}

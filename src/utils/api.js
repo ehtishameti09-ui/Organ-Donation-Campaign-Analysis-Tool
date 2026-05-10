@@ -76,8 +76,69 @@ export const loginViaAPI = async (email, password) => {
   }
 
   const data = await response.json();
+  // 2FA challenge — caller must complete it via verifyTwoFactorLoginCode
+  if (data.requires_2fa) return data;
+
   localStorage.setItem('odcat_token', data.token);
   localStorage.setItem('odcat_user', JSON.stringify(data.user));
+  return data;
+};
+
+// ===== TWO-FACTOR (EMAIL OTP) =====
+
+export const verifyTwoFactorLoginCode = async (challengeToken, code) => {
+  const response = await fetch(`${API_BASE}/2fa/email/verify`, {
+    method: 'POST',
+    headers: getHeaders(false),
+    body: JSON.stringify({ challenge_token: challengeToken, code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Verification failed');
+  localStorage.setItem('odcat_token', data.token);
+  localStorage.setItem('odcat_user', JSON.stringify(data.user));
+  return data;
+};
+
+export const resendTwoFactorLoginCode = async (challengeToken) => {
+  const response = await fetch(`${API_BASE}/2fa/email/resend`, {
+    method: 'POST',
+    headers: getHeaders(false),
+    body: JSON.stringify({ challenge_token: challengeToken }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Failed to resend code');
+  return data;
+};
+
+export const requestTwoFactorSetupCode = async () => {
+  const response = await fetch(`${API_BASE}/2fa/email/request-setup`, {
+    method: 'POST',
+    headers: getHeaders(true),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Failed to send setup code');
+  return data;
+};
+
+export const confirmTwoFactorSetup = async (code) => {
+  const response = await fetch(`${API_BASE}/2fa/email/confirm-setup`, {
+    method: 'POST',
+    headers: getHeaders(true),
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Invalid code');
+  return data;
+};
+
+export const disableTwoFactor = async (password) => {
+  const response = await fetch(`${API_BASE}/2fa/email/disable`, {
+    method: 'POST',
+    headers: getHeaders(true),
+    body: JSON.stringify({ password }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Failed to disable 2FA');
   return data;
 };
 
@@ -252,6 +313,44 @@ export const getDashboardMetricsViaAPI = async () => {
 
   if (!response.ok) {
     throw new Error('Failed to fetch dashboard metrics');
+  }
+
+  return await response.json();
+};
+
+export const createEmployeeViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/users/create-employee`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to create employee');
+  }
+  return await r.json();
+};
+
+export const getHospitalsOverviewViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/hospitals/overview`, { method: 'GET', headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch hospitals overview');
+  return await r.json();
+};
+
+export const getDashboardSummaryViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/dashboard/summary`, {
+    method: 'GET', headers: getHeaders(true),
+  });
+  if (!r.ok) throw new Error('Failed to fetch dashboard summary');
+  return await r.json();
+};
+
+export const getDashboardChartDataViaAPI = async () => {
+  const response = await fetch(`${API_BASE}/dashboard/chart-data`, {
+    method: 'GET',
+    headers: getHeaders(true),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch dashboard chart data');
   }
 
   return await response.json();
@@ -641,6 +740,204 @@ export const completeRecipientRegistrationViaAPI = async (data) => {
   return await response.json();
 };
 
+// ===== ALLOCATION ENGINE (Module 4) =====
+
+export const getAllocationPoliciesViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/policies`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch policies');
+  return await r.json();
+};
+
+export const createAllocationPolicyViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/allocation/policies`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to create policy');
+  }
+  return await r.json();
+};
+
+export const activateAllocationPolicyViaAPI = async (id) => {
+  const r = await fetch(`${API_BASE}/allocation/policies/${id}/activate`, {
+    method: 'PATCH', headers: getHeaders(true),
+  });
+  if (!r.ok) throw new Error('Failed to activate policy');
+  return await r.json();
+};
+
+export const getEligibleDonorsViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/eligible-donors`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch donors');
+  return await r.json();
+};
+
+export const getPendingAllocationsViaAPI = async (page = 1, limit = 10) => {
+  const r = await fetch(`${API_BASE}/allocation/pending-allocations?page=${page}&limit=${limit}`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch pending allocations');
+  return await r.json();
+};
+
+export const runAllocationViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/allocation/run`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to run allocation');
+  }
+  return await r.json();
+};
+
+export const simulateAllocationViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/allocation/simulate`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to run simulation');
+  }
+  return await r.json();
+};
+
+export const getAllocationRunsViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/runs`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch runs');
+  return await r.json();
+};
+
+export const getAllocationRunViaAPI = async (id) => {
+  const r = await fetch(`${API_BASE}/allocation/runs/${id}`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch run');
+  return await r.json();
+};
+
+// ===== Admin Requests (hospital → super_admin) =====
+
+export const submitAdminRequestViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/admin-requests`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to submit admin request');
+  }
+  return await r.json();
+};
+
+export const getAdminRequestsViaAPI = async (status = null) => {
+  const q = status ? `?status=${encodeURIComponent(status)}` : '';
+  const r = await fetch(`${API_BASE}/admin-requests${q}`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch admin requests');
+  return await r.json();
+};
+
+export const approveAdminRequestViaAPI = async (id, password, reviewNotes = null) => {
+  const r = await fetch(`${API_BASE}/admin-requests/${id}/approve`, {
+    method: 'POST', headers: getHeaders(true),
+    body: JSON.stringify({ password, review_notes: reviewNotes }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to approve request');
+  }
+  return await r.json();
+};
+
+export const rejectAdminRequestViaAPI = async (id, reviewNotes) => {
+  const r = await fetch(`${API_BASE}/admin-requests/${id}/reject`, {
+    method: 'POST', headers: getHeaders(true),
+    body: JSON.stringify({ review_notes: reviewNotes }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to reject request');
+  }
+  return await r.json();
+};
+
+export const cancelAdminRequestViaAPI = async (id) => {
+  const r = await fetch(`${API_BASE}/admin-requests/${id}`, {
+    method: 'DELETE', headers: getHeaders(true),
+  });
+  if (!r.ok) throw new Error('Failed to cancel request');
+  return await r.json();
+};
+
+// ===== Module 5 — Matching & Override Governance =====
+
+export const getCompatibilityMatrixViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/compatibility-matrix`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch compatibility matrix');
+  return await r.json();
+};
+
+export const getHospitalDistancesViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/hospital-distances`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch hospital distances');
+  return await r.json();
+};
+
+export const createAllocationDecisionViaAPI = async (payload) => {
+  const r = await fetch(`${API_BASE}/allocation/decisions`, {
+    method: 'POST', headers: getHeaders(true), body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    const msg = e.errors?.override_reason?.[0] || e.message || 'Failed to record decision';
+    throw new Error(msg);
+  }
+  return await r.json();
+};
+
+export const getAllocationDecisionsViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/decisions`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch decisions');
+  return await r.json();
+};
+
+export const getOverrideStatsViaAPI = async () => {
+  const r = await fetch(`${API_BASE}/allocation/override-stats`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch override stats');
+  return await r.json();
+};
+
+// ===== Module 6 — Fairness Lab =====
+
+export const getFairnessOverviewViaAPI = async (k = 5, threshold = 15) => {
+  const r = await fetch(`${API_BASE}/allocation/fairness-overview?k=${k}&threshold=${threshold}`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to fetch fairness overview');
+  return await r.json();
+};
+
+export const getFairnessReportViaAPI = async (runId, k = 5, threshold = 15) => {
+  const r = await fetch(`${API_BASE}/allocation/runs/${runId}/fairness?k=${k}&threshold=${threshold}`, { headers: getHeaders(true) });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || 'Failed to compute fairness');
+  }
+  return await r.json();
+};
+
+export const getSensitivityReportViaAPI = async (runId, k = 5) => {
+  const r = await fetch(`${API_BASE}/allocation/runs/${runId}/sensitivity?k=${k}`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to compute sensitivity');
+  return await r.json();
+};
+
+export const downloadAllocationCsv = async (runId) => {
+  const r = await fetch(`${API_BASE}/allocation/runs/${runId}/export.csv`, { headers: getHeaders(true) });
+  if (!r.ok) throw new Error('Failed to download CSV');
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `allocation_run_${runId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 export default {
   registerViaAPI,
   loginViaAPI,
@@ -655,6 +952,7 @@ export default {
   updateUserViaAPI,
   changePasswordViaAPI,
   getDashboardMetricsViaAPI,
+  getDashboardChartDataViaAPI,
   getNotificationsViaAPI,
   markNotificationReadViaAPI,
   markAllNotificationsReadViaAPI,
@@ -682,4 +980,9 @@ export default {
   completeDonorRegistrationViaAPI,
   getRecipientsViaAPI,
   completeRecipientRegistrationViaAPI,
+  verifyTwoFactorLoginCode,
+  resendTwoFactorLoginCode,
+  requestTwoFactorSetupCode,
+  confirmTwoFactorSetup,
+  disableTwoFactor,
 };

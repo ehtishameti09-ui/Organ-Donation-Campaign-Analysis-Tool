@@ -4,8 +4,9 @@ import {
   getNotifications, markNotificationRead, getUserActionLogs, getUserAppeals,
   submitAppeal, uploadAdditionalHospitalDocuments, addActivity
 } from '../utils/auth';
-import { updateUserViaAPI, changePasswordViaAPI } from '../utils/api';
+import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, confirmTwoFactorSetup, disableTwoFactor } from '../utils/api';
 import { toast } from '../utils/toast';
+import { ORGANS as ORGANS_LIST } from '../utils/organs';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -28,7 +29,6 @@ const DOCUMENT_CONFIG = {
 };
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-const ORGANS_LIST = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow'];
 
 const AccountSettings = ({ user, onUpdate, initialTab }) => {
   // Determine tabs based on role
@@ -118,6 +118,14 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
   const [uploadedDocs, setUploadedDocs] = useState({});
   const [reuploadSubmitting, setReuploadSubmitting] = useState(false);
 
+  // Two-factor authentication state
+  const [twoFAEnabled, setTwoFAEnabled] = useState(!!user.twoFactorEnabled);
+  const [twoFAStep, setTwoFAStep] = useState('idle'); // 'idle' | 'verify' | 'disable'
+  const [twoFACode, setTwoFACode] = useState('');
+  const [twoFADisablePwd, setTwoFADisablePwd] = useState('');
+  const [showTwoFADisablePwd, setShowTwoFADisablePwd] = useState(false);
+  const [twoFABusy, setTwoFABusy] = useState(false);
+
   // Delete account
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
@@ -157,6 +165,50 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
     if (profileData.age && parseInt(profileData.age) < 18) {
       toast('Age must be at least 18.', 'error'); return;
     }
+
+    // Hospital-only validations
+    if (user.role === 'hospital') {
+      const idPattern = /^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/;
+      const reg = (profileData.registrationNumber || '').trim().toUpperCase();
+      const lic = (profileData.licenseNumber || '').trim().toUpperCase();
+      const hospitalName = (profileData.hospitalName || '').trim();
+      const hospitalAddress = (profileData.hospitalAddress || '').trim();
+
+      if (!hospitalName) {
+        toast('Hospital Name is required.', 'error');
+        return;
+      }
+      if (!reg) {
+        toast('Registration Number is required.', 'error');
+        return;
+      }
+      if (!lic) {
+        toast('License Number is required.', 'error');
+        return;
+      }
+      if (!hospitalAddress) {
+        toast('Hospital Address is required.', 'error');
+        return;
+      }
+      if (!idPattern.test(reg)) {
+        toast('Registration Number must follow format like PMDC-AKU-1985-001 (uppercase code + dashes + numbers, min 3 segments).', 'error');
+        return;
+      }
+      if (!idPattern.test(lic)) {
+        toast('License Number must follow format like SHC-AKU-1985-LIC (uppercase code + dashes + numbers, min 3 segments).', 'error');
+        return;
+      }
+      if (reg === lic) {
+        toast('Registration Number and License Number cannot be the same.', 'error');
+        return;
+      }
+      // Normalise to uppercase for the save payload
+      profileData.registrationNumber = reg;
+      profileData.licenseNumber = lic;
+      profileData.hospitalName = hospitalName;
+      profileData.hospitalAddress = hospitalAddress;
+    }
+
     setSaving(true);
     try {
       const result = await updateUserViaAPI(user.id, profileData);
@@ -189,6 +241,68 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
       toast('Password changed successfully!', 'success');
     } catch (err) {
       toast(err.message || 'Password change failed.', 'error');
+    }
+  };
+
+  const persistTwoFAFlag = (enabled) => {
+    setTwoFAEnabled(enabled);
+    try {
+      const cur = JSON.parse(localStorage.getItem('odcat_current') || 'null');
+      if (cur && cur.id === user.id) {
+        cur.twoFactorEnabled = enabled;
+        localStorage.setItem('odcat_current', JSON.stringify(cur));
+      }
+      const cached = JSON.parse(localStorage.getItem('odcat_user') || 'null');
+      if (cached && cached.id === user.id) {
+        cached.twoFactorEnabled = enabled;
+        localStorage.setItem('odcat_user', JSON.stringify(cached));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const startTwoFASetup = async () => {
+    setTwoFABusy(true);
+    try {
+      await requestTwoFactorSetupCode();
+      setTwoFAStep('verify');
+      setTwoFACode('');
+      toast(`Verification code sent to ${user.email}.`, 'info');
+    } catch (err) {
+      toast(err.message || 'Could not send verification code.', 'error');
+    } finally {
+      setTwoFABusy(false);
+    }
+  };
+
+  const confirmTwoFA = async () => {
+    if (!/^\d{6}$/.test(twoFACode)) { toast('Enter the 6-digit code.', 'error'); return; }
+    setTwoFABusy(true);
+    try {
+      await confirmTwoFactorSetup(twoFACode);
+      persistTwoFAFlag(true);
+      setTwoFAStep('idle');
+      setTwoFACode('');
+      toast('Two-factor authentication enabled.', 'success');
+    } catch (err) {
+      toast(err.message || 'Invalid code.', 'error');
+    } finally {
+      setTwoFABusy(false);
+    }
+  };
+
+  const confirmDisableTwoFA = async () => {
+    if (!twoFADisablePwd) { toast('Enter your password to confirm.', 'error'); return; }
+    setTwoFABusy(true);
+    try {
+      await disableTwoFactor(twoFADisablePwd);
+      persistTwoFAFlag(false);
+      setTwoFAStep('idle');
+      setTwoFADisablePwd('');
+      toast('Two-factor authentication disabled.', 'success');
+    } catch (err) {
+      toast(err.message || 'Could not disable 2FA.', 'error');
+    } finally {
+      setTwoFABusy(false);
     }
   };
 
@@ -477,30 +591,51 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
               </>
             )}
 
-            {user.role === 'hospital' && (
-              <>
-                <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label className="form-label">Hospital Name</label>
-                  <input className="form-input" value={profileData.hospitalName}
-                    onChange={e => setProfileData(p => ({ ...p, hospitalName: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Registration Number</label>
-                  <input className="form-input" value={profileData.registrationNumber}
-                    onChange={e => setProfileData(p => ({ ...p, registrationNumber: e.target.value }))} />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">License Number</label>
-                  <input className="form-input" value={profileData.licenseNumber}
-                    onChange={e => setProfileData(p => ({ ...p, licenseNumber: e.target.value }))} />
-                </div>
-                <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label className="form-label">Hospital Address</label>
-                  <input className="form-input" value={profileData.hospitalAddress}
-                    onChange={e => setProfileData(p => ({ ...p, hospitalAddress: e.target.value }))} />
-                </div>
-              </>
-            )}
+            {user.role === 'hospital' && (() => {
+              const idPattern = /^[A-Z]{2,}[\-\/][A-Z0-9]+(?:[\-\/][A-Z0-9]+)+$/;
+              const formatHospitalId = (v) => v.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '');
+              const regOk = !profileData.registrationNumber || idPattern.test(profileData.registrationNumber);
+              const licOk = !profileData.licenseNumber || idPattern.test(profileData.licenseNumber);
+              return (
+                <>
+                  <div className="form-group" style={{ gridColumn: '1/-1' }}>
+                    <label className="form-label">Hospital Name *</label>
+                    <input className="form-input" value={profileData.hospitalName}
+                      onChange={e => setProfileData(p => ({ ...p, hospitalName: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Registration Number *</label>
+                    <input className="form-input" value={profileData.registrationNumber}
+                      onChange={e => setProfileData(p => ({ ...p, registrationNumber: formatHospitalId(e.target.value) }))}
+                      placeholder="e.g. PMDC-AKU-1985-001"
+                      style={{ borderColor: profileData.registrationNumber && !regOk ? 'var(--danger)' : undefined }} />
+                    <div style={{ fontSize: '11px', marginTop: '3px', color: profileData.registrationNumber && !regOk ? 'var(--danger)' : 'var(--text3)' }}>
+                      {profileData.registrationNumber && !regOk
+                        ? '⚠ Format invalid — use uppercase code + dashes (e.g. PMDC-AKU-1985-001)'
+                        : 'Format: uppercase code, dashes, numbers (PMDC/SHC/PHC/KPHC)'}
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">License Number *</label>
+                    <input className="form-input" value={profileData.licenseNumber}
+                      onChange={e => setProfileData(p => ({ ...p, licenseNumber: formatHospitalId(e.target.value) }))}
+                      placeholder="e.g. SHC-AKU-1985-LIC"
+                      style={{ borderColor: profileData.licenseNumber && !licOk ? 'var(--danger)' : undefined }} />
+                    <div style={{ fontSize: '11px', marginTop: '3px', color: profileData.licenseNumber && !licOk ? 'var(--danger)' : 'var(--text3)' }}>
+                      {profileData.licenseNumber && !licOk
+                        ? '⚠ Format invalid — use uppercase code + dashes (e.g. SHC-AKU-1985-LIC)'
+                        : 'Must differ from Registration Number'}
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ gridColumn: '1/-1' }}>
+                    <label className="form-label">Hospital Address *</label>
+                    <input className="form-input" value={profileData.hospitalAddress}
+                      onChange={e => setProfileData(p => ({ ...p, hospitalAddress: e.target.value }))}
+                      placeholder="Complete physical address" />
+                  </div>
+                </>
+              );
+            })()}
 
             {(user.role === 'donor' || user.role === 'recipient') && (
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
@@ -602,18 +737,97 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: '24px' }}>
             <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '8px' }}>Two-Factor Authentication</div>
             <div style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '14px' }}>
-              Add an extra layer of security to your account. 2FA requires a code from your authenticator app when signing in.
+              Add an extra layer of security to your account. When enabled, a 6-digit code will be emailed to <strong>{user.email}</strong> on every sign-in.
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius)' }}>
-              <span style={{ fontSize: '24px' }}>🔐</span>
+              <span style={{ fontSize: '24px' }}>{twoFAEnabled ? '🛡️' : '🔐'}</span>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: '13px', fontWeight: '600' }}>Authenticator App (TOTP)</div>
-                <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Not configured</div>
+                <div style={{ fontSize: '13px', fontWeight: '600' }}>Email Verification Code</div>
+                <div style={{ fontSize: '12px', color: twoFAEnabled ? 'var(--accent)' : 'var(--text3)' }}>
+                  {twoFAEnabled ? '✓ Enabled' : 'Not enabled'}
+                </div>
               </div>
-              <button className="btn btn-outline btn-sm" onClick={() => toast('2FA setup coming soon.', 'info')}>
-                Set Up 2FA
-              </button>
+              {twoFAEnabled ? (
+                <button className="btn btn-outline btn-sm" onClick={() => { setTwoFAStep('disable'); setTwoFADisablePwd(''); }} disabled={twoFABusy}>
+                  Disable 2FA
+                </button>
+              ) : (
+                <button className="btn btn-primary btn-sm" onClick={startTwoFASetup} disabled={twoFABusy}>
+                  {twoFABusy ? 'Sending…' : 'Set Up 2FA'}
+                </button>
+              )}
             </div>
+
+            {/* Verify setup code */}
+            {twoFAStep === 'verify' && (
+              <div style={{ marginTop: '14px', padding: '16px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' }}>
+                <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px' }}>Enter verification code</div>
+                <div style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>
+                  We sent a 6-digit code to <strong>{user.email}</strong>. Enter it below to enable two-factor authentication.
+                </div>
+                <input
+                  className="form-input"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={twoFACode}
+                  onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="123456"
+                  style={{ fontSize: '18px', letterSpacing: '6px', textAlign: 'center', fontFamily: 'monospace', maxWidth: '220px' }}
+                  autoFocus
+                />
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button className="btn btn-primary btn-sm" onClick={confirmTwoFA} disabled={twoFABusy || twoFACode.length !== 6}>
+                    {twoFABusy ? 'Verifying…' : 'Verify & Enable'}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setTwoFAStep('idle'); setTwoFACode(''); }} disabled={twoFABusy}>
+                    Cancel
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={startTwoFASetup} disabled={twoFABusy}>
+                    Resend code
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Disable confirmation */}
+            {twoFAStep === 'disable' && (
+              <div style={{ marginTop: '14px', padding: '16px', border: '1px solid var(--warning)', borderRadius: 'var(--radius)', background: '#fff7ed' }}>
+                <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '6px', color: 'var(--warning)' }}>⚠️ Disable two-factor authentication?</div>
+                <div style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '12px' }}>
+                  Confirm your password to disable 2FA. You'll only need a password to sign in afterwards.
+                </div>
+                <div className="form-input-wrap" style={{ maxWidth: '320px' }}>
+                  <input
+                    className="form-input"
+                    type={showTwoFADisablePwd ? 'text' : 'password'}
+                    value={twoFADisablePwd}
+                    onChange={(e) => setTwoFADisablePwd(e.target.value)}
+                    placeholder="Current password"
+                    autoComplete="current-password"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="form-input-toggle"
+                    onClick={() => setShowTwoFADisablePwd(p => !p)}
+                    aria-label={showTwoFADisablePwd ? 'Hide password' : 'Show password'}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button className="btn btn-danger btn-sm" onClick={confirmDisableTwoFA} disabled={twoFABusy || !twoFADisablePwd}>
+                    {twoFABusy ? 'Disabling…' : 'Disable 2FA'}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setTwoFAStep('idle'); setTwoFADisablePwd(''); }} disabled={twoFABusy}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -684,7 +898,24 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
             )}
           </div>
 
-          {/* Upload New / Additional Documents */}
+          {/* Upload locked notice — shown when re-uploads are not allowed */}
+          {!['pending', 'info_requested'].includes(user.status) && (
+            <div className="card" style={{ background: 'var(--surface2)', border: '1px dashed var(--border)' }}>
+              <div style={{ padding: '20px', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
+                <span style={{ fontSize: '24px' }}>🔒</span>
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: '700', marginBottom: '4px' }}>Documents Locked</div>
+                  <div style={{ fontSize: '13px', color: 'var(--text2)', lineHeight: '1.6' }}>
+                    Your submitted documents are under review. You can only re-upload documents if the super admin requests additional information.
+                    {user.status === 'rejected' && ' Your registration was rejected — please contact support if you believe this was in error.'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Upload New / Additional Documents — only when status allows it */}
+          {['pending', 'info_requested'].includes(user.status) && (
           <div className="card">
             <div className="card-header">
               <div className="card-title">{user.status === 'info_requested' ? 'Upload Additional Documents' : 'Upload / Update Documents'}</div>
@@ -748,6 +979,7 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
               </div>
             )}
           </div>
+          )}
         </div>
       )}
 
@@ -1052,32 +1284,79 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
             )}
           </div>
 
-          {/* Action Logs */}
+          {/* Account Activity Log — downloadable file (no in-page table) */}
           {actionLogs.length > 0 && (
             <div className="card" style={{ marginBottom: '16px' }}>
-              <div className="card-header">
-                <div className="card-title">Account Activity Log</div>
-                <div className="card-sub">History of actions on your account</div>
+              <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <div className="card-title">Account Activity Log</div>
+                  <div className="card-sub">{actionLogs.length} actions on file · download a copy for your records</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    onClick={() => {
+                      const headers = ['Action', 'Details', 'Date'];
+                      const rows = actionLogs.map(log => [
+                        (log.actionType || '').replace(/_/g, ' '),
+                        (log.reason || '').replace(/"/g, '""'),
+                        log.timestamp ? new Date(log.timestamp).toISOString() : '',
+                      ]);
+                      const csv = [headers, ...rows]
+                        .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+                        .join('\r\n');
+                      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `account_activity_${user.email}_${new Date().toISOString().slice(0, 10)}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    ⬇ Download CSV
+                  </button>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    onClick={() => {
+                      const data = actionLogs.map(log => ({
+                        action: (log.actionType || '').replace(/_/g, ' '),
+                        details: log.reason || '',
+                        timestamp: log.timestamp ? new Date(log.timestamp).toISOString() : '',
+                      }));
+                      const blob = new Blob([JSON.stringify({ user: user.email, exported_at: new Date().toISOString(), entries: data }, null, 2)], { type: 'application/json' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `account_activity_${user.email}_${new Date().toISOString().slice(0, 10)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    ⬇ Download JSON
+                  </button>
+                </div>
               </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr><th>Action</th><th>Details</th><th>Date</th></tr>
-                  </thead>
-                  <tbody>
-                    {actionLogs.slice(0, 10).map((log, i) => (
-                      <tr key={i}>
-                        <td><span className="badge badge-blue" style={{ fontSize: '10px' }}>{log.actionType?.replace(/_/g, ' ')}</span></td>
-                        <td style={{ fontSize: '12px', color: 'var(--text2)', maxWidth: '300px' }}>
-                          <span className="truncate" style={{ display: 'block' }}>{log.reason || '—'}</span>
-                        </td>
-                        <td style={{ fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>
-                          {log.timestamp ? new Date(log.timestamp).toLocaleString() : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{
+                padding: '14px 16px',
+                background: 'var(--surface2)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: 'var(--text2)',
+                lineHeight: '1.6',
+              }}>
+                <div style={{ marginBottom: '6px' }}>
+                  📂 Your account activity log contains <strong>{actionLogs.length} record{actionLogs.length !== 1 ? 's' : ''}</strong>.
+                </div>
+                <div>
+                  Latest action: <strong>{(actionLogs[0]?.actionType || '').replace(/_/g, ' ') || '—'}</strong>
+                  {actionLogs[0]?.timestamp && (
+                    <span style={{ color: 'var(--text3)' }}> · {new Date(actionLogs[0].timestamp).toLocaleString()}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '8px' }}>
+                  Use the buttons above to export the full log. The file is generated locally in your browser — nothing is uploaded.
+                </div>
               </div>
             </div>
           )}

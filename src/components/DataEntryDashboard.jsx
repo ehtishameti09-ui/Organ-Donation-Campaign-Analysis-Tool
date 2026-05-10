@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { getDonors, getRecipients, addDonorRecord, addRecipientRecord, addActivity, calculateSurvivalEstimate, calculateAgeFromDOB } from '../utils/auth';
 import { updateUserViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
+import { ORGANS } from '../utils/organs';
 
-const ORGANS = ['Kidney', 'Liver', 'Heart', 'Lung', 'Pancreas', 'Cornea', 'Bone Marrow', 'Skin', 'Intestine'];
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 const DataEntryDashboard = ({ currentUser }) => {
@@ -124,6 +124,16 @@ const DataEntryDashboard = ({ currentUser }) => {
 
   return (
     <div>
+      <div style={{
+        background: 'linear-gradient(135deg, #e8900a 0%, #f5a937 100%)',
+        color: 'white', padding: '14px 18px', borderRadius: 'var(--radius)', marginBottom: '20px',
+      }}>
+        <div style={{ fontSize: '15px', fontWeight: '700' }}>📝 Data Entry Workspace</div>
+        <div style={{ fontSize: '12px', opacity: 0.92, marginTop: '3px' }}>
+          Your tasks: add new donor records · add new recipient cases · edit demographic & clinical data · keep waitlist current. You cannot approve cases (doctor task) or run allocations (hospital task).
+        </div>
+      </div>
+
       {/* Stats */}
       <div className="grid4" style={{ marginBottom: '24px' }}>
         {[

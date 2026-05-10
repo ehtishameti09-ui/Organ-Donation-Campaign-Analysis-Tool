@@ -5,6 +5,8 @@ import {
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
+import { ORGANS_LOWER as ORGANS } from '../utils/organs';
+import Pagination, { usePagination } from './Pagination';
 
 // Helper to download a single document file (used in row download button)
 const downloadDocument = (doc) => {
@@ -18,7 +20,6 @@ const downloadDocument = (doc) => {
 };
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-const ORGANS = ['kidney', 'liver', 'heart', 'lung', 'pancreas', 'cornea', 'bone marrow'];
 const VERIFICATION_STATES = ['registered', 'submitted', 'under_review', 'approved', 'rejected'];
 
 const statusConfig = {
@@ -129,6 +130,8 @@ const DonorManagement = ({ currentUser }) => {
 
     return matchSearch && matchBlood && matchStatus && matchOrgan && matchFrom && matchTo;
   });
+
+  const { page, setPage, totalPages, total, pageSize, slice: pagedDonors } = usePagination(filteredDonors, 20);
 
   const openDonorModal = (donor) => {
     setSelectedDonor(donor);
@@ -319,7 +322,7 @@ const DonorManagement = ({ currentUser }) => {
                 </tr>
               </thead>
               <tbody>
-                {filteredDonors.map(donor => {
+                {pagedDonors.map(donor => {
                   const vs = donor.verificationStatus || 'pending';
                   const sc = statusConfig[vs] || statusConfig.pending;
                   const docs = donor.uploadedDocuments || [];
@@ -368,6 +371,9 @@ const DonorManagement = ({ currentUser }) => {
                 })}
               </tbody>
             </table>
+            <div style={{ padding: '0 12px 12px' }}>
+              <Pagination page={page} setPage={setPage} totalPages={totalPages} total={total} pageSize={pageSize} label="donors" />
+            </div>
           </div>
         )}
       </div>

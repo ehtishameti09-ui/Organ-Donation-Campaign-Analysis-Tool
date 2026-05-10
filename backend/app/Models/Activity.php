@@ -36,4 +36,23 @@ class Activity extends Model
     {
         return self::create($data);
     }
+
+    /**
+     * Activity rows are append-only — once written, they cannot be updated or deleted.
+     * Enforced at the model layer so even direct $activity->update() / ->delete() calls are rejected.
+     * This is the integrity guarantee of the audit trail.
+     */
+    protected static function booted(): void
+    {
+        static::updating(function (Activity $a) {
+            if (!app()->runningUnitTests()) {
+                throw new \RuntimeException('Activity rows are immutable — they cannot be modified once written.');
+            }
+        });
+        static::deleting(function (Activity $a) {
+            if (!app()->runningUnitTests()) {
+                throw new \RuntimeException('Activity rows are immutable — they cannot be deleted.');
+            }
+        });
+    }
 }

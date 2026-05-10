@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus } from '../utils/auth';
-import { createAdminViaAPI, getUsersViaAPI } from '../utils/api';
+import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI } from '../utils/api';
+import Pagination, { usePagination } from './Pagination';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
@@ -18,6 +19,7 @@ const UserManagement = ({ currentUser }) => {
   const [rejectedHospitals, setRejectedHospitals] = useState([]);
   const [showDocumentPreview, setShowDocumentPreview] = useState(false);
   const [previewDocument, setPreviewDocument] = useState(null);
+  const [previewMode, setPreviewMode] = useState('normal'); // 'normal' | 'fullscreen' | 'minimized'
   const [showBanModal, setShowBanModal] = useState(false);
   const [banModalData, setBanModalData] = useState({ userId: null, userName: null, category: '', detailedReason: '', banType: 'temporary', banDuration: 30 });
   const [appeals, setAppeals] = useState([]);
@@ -75,18 +77,19 @@ const UserManagement = ({ currentUser }) => {
   }, [showBanModal, banModalData]);
 
   const loadUsers = async () => {
-    const [u, h, pending, rejected, adminsRes] = await Promise.all([
-      getAllUsers(),
-      getApprovedHospitals(),
-      getPendingRegistrations(),
-      getRejectedHospitals(),
-      getUsersViaAPI({ role: 'admin' }),
-    ]);
-    setUsers(u);
-    setApprovedHospitals(h);
-    setPendingRegistrations(pending);
-    setRejectedHospitals(rejected);
-    setAdminUsers(adminsRes.data || []);
+    // Super_admin only needs hospital lists + admin list — skip the heavy users-list fetch entirely.
+    // For admin role, also load the users page (paginated 25/page server-side).
+    const isSuperAdmin = currentUser.role === 'super_admin';
+
+    const overviewPromise = getHospitalsOverviewViaAPI();
+    const usersPromise = isSuperAdmin ? Promise.resolve([]) : getAllUsers();
+
+    const [overview, u] = await Promise.all([overviewPromise, usersPromise]);
+    setUsers(u || []);
+    setApprovedHospitals(overview.approved || []);
+    setPendingRegistrations(overview.pending || []);
+    setRejectedHospitals(overview.rejected || []);
+    setAdminUsers(overview.admins || []);
   };
 
   const loadAppeals = async () => {
@@ -207,6 +210,41 @@ const UserManagement = ({ currentUser }) => {
     }
   };
 
+  // Auth-aware document fetcher — handles both legacy base64 (doc.data) and new API URLs (doc.url)
+  const fetchDocAsBlobUrl = async (doc) => {
+    if (doc.data) return doc.data;  // legacy inline base64
+    if (!doc.url) throw new Error('Document has no source');
+    const token = localStorage.getItem('odcat_token');
+    const r = await fetch(doc.url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!r.ok) throw new Error(`Document fetch failed (${r.status})`);
+    const blob = await r.blob();
+    return URL.createObjectURL(blob);
+  };
+
+  const downloadDoc = async (doc) => {
+    try {
+      const url = await fetchDocAsBlobUrl(doc);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = doc.name || 'document';
+      a.click();
+      if (!doc.data) setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
+  const previewDoc = async (doc) => {
+    try {
+      const url = await fetchDocAsBlobUrl(doc);
+      // Pass the resolved blob URL into the modal as `previewUrl` so the iframe/img can render it
+      setPreviewDocument({ ...doc, _resolvedUrl: url });
+      setShowDocumentPreview(true);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  };
+
   const handleAddAdmin = async () => {
     const { name, email, password, linkedHospitalId, linkedHospitalName } = newAdmin;
 
@@ -222,14 +260,14 @@ const UserManagement = ({ currentUser }) => {
     if (!/[0-9]/.test(password)) { toast('Password must contain at least one number.', 'error'); return; }
 
     try {
+      // Hospital-linked admins must come through the admin-request approval flow.
       await createAdminViaAPI({
         name: name.trim(),
         email: email.toLowerCase().trim(),
         password,
         role: 'admin',
-        linked_hospital_id: linkedHospitalId || null,
       });
-      toast('Administrator added successfully.', 'success');
+      toast('System admin added successfully.', 'success');
       setShowAddModal(false);
       setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
       loadUsers();
@@ -303,6 +341,12 @@ const UserManagement = ({ currentUser }) => {
   const rejectedUsers = scopedUsers.filter(u => u.status === 'rejected');
   const bannedUsers = scopedUsers.filter(u => u.banned === true);
   const deletedUsers = scopedUsers.filter(u => u.deleted === true);
+
+  // Pagination for each long list (10–15 per page so headers + pagination fit on screen)
+  const pendingPg  = usePagination(pendingRegistrations, 10);
+  const approvedPg = usePagination(approvedHospitals, 8);   // each row expands to show admins
+  const rejectedPg = usePagination(rejectedHospitals, 10);
+  const appealsPg  = usePagination(appeals, 10);
 
   return (
     <div>
@@ -391,7 +435,7 @@ const UserManagement = ({ currentUser }) => {
                 </thead>
                 <tbody>
                   {pendingRegistrations.length > 0 ? (
-                    pendingRegistrations.map(reg => (
+                    pendingPg.slice.map(reg => (
                       <RegistrationRow
                         key={reg.id}
                         registration={reg}
@@ -410,12 +454,17 @@ const UserManagement = ({ currentUser }) => {
                 </tbody>
               </table>
             )}
+            {hospitalTab === 'pending' && pendingRegistrations.length > 0 && (
+              <div style={{ padding: '0 12px 12px' }}>
+                <Pagination page={pendingPg.page} setPage={pendingPg.setPage} totalPages={pendingPg.totalPages} total={pendingPg.total} pageSize={pendingPg.pageSize} label="registrations" />
+              </div>
+            )}
 
             {/* Approved Hospitals Tab */}
             {hospitalTab === 'approved' && (
               <div className="scroll-list-lg" style={{ padding: '12px' }}>
                 {approvedHospitals.length > 0 ? (
-                  approvedHospitals.map(hospital => {
+                  approvedPg.slice.map(hospital => {
                     const admins = adminUsers.filter(u => u.linkedHospitalId == hospital.id || u.linked_hospital_id == hospital.id);
                     return (
                       <div key={hospital.id} style={{ background: 'var(--surface2)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: '12px', border: '1px solid var(--border)' }}>
@@ -431,15 +480,11 @@ const UserManagement = ({ currentUser }) => {
                             </div>
                             <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '2px' }}>✓ Approved</div>
                           </div>
-                          <button
-                            className="btn btn-sm btn-primary"
-                            onClick={() => {
-                              setNewAdmin({ name: '', email: '', password: '', linkedHospitalId: hospital.id, linkedHospitalName: hospital.hospitalName });
-                              setShowAddModal(true);
-                            }}
-                          >
-                            + Assign Admin
-                          </button>
+                          <div style={{ fontSize: '11px', color: 'var(--text3)', textAlign: 'right', maxWidth: '180px' }}>
+                            Admins are added via the<br/>
+                            <strong>Admin Requests</strong> page<br/>
+                            <span style={{ color: 'var(--text2)' }}>(hospital must request first)</span>
+                          </div>
                         </div>
 
                         {/* Admin list under this hospital */}
@@ -482,6 +527,9 @@ const UserManagement = ({ currentUser }) => {
                     No approved hospitals
                   </div>
                 )}
+                {approvedHospitals.length > 0 && (
+                  <Pagination page={approvedPg.page} setPage={approvedPg.setPage} totalPages={approvedPg.totalPages} total={approvedPg.total} pageSize={approvedPg.pageSize} label="hospitals" />
+                )}
               </div>
             )}
 
@@ -498,7 +546,7 @@ const UserManagement = ({ currentUser }) => {
                 </thead>
                 <tbody>
                   {rejectedHospitals.length > 0 ? (
-                    rejectedHospitals.map(hospital => (
+                    rejectedPg.slice.map(hospital => (
                       <tr key={hospital.id}>
                         <td>{hospital.hospitalName}</td>
                         <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.registrationNumber}</td>
@@ -515,6 +563,11 @@ const UserManagement = ({ currentUser }) => {
                   )}
                 </tbody>
               </table>
+            )}
+            {hospitalTab === 'rejected' && rejectedHospitals.length > 0 && (
+              <div style={{ padding: '0 12px 12px' }}>
+                <Pagination page={rejectedPg.page} setPage={rejectedPg.setPage} totalPages={rejectedPg.totalPages} total={rejectedPg.total} pageSize={rejectedPg.pageSize} label="rejected" />
+              </div>
             )}
           </div>
         </div>
@@ -713,7 +766,7 @@ const UserManagement = ({ currentUser }) => {
                 </tr>
               </thead>
               <tbody>
-                {appeals.map(appeal => {
+                {appealsPg.slice.map(appeal => {
                   const user = users.find(u => u.id === (appeal.user_id || appeal.userId));
                   return (
                     <tr key={appeal.id}>
@@ -745,6 +798,11 @@ const UserManagement = ({ currentUser }) => {
                 })}
               </tbody>
             </table>
+            {appeals.length > 0 && (
+              <div style={{ padding: '0 12px 12px' }}>
+                <Pagination page={appealsPg.page} setPage={appealsPg.setPage} totalPages={appealsPg.totalPages} total={appealsPg.total} pageSize={appealsPg.pageSize} label="appeals" />
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -790,26 +848,14 @@ const UserManagement = ({ currentUser }) => {
                   placeholder="Min. 8 characters"
                 />
               </div>
-              <div className="form-group">
-                <label className="form-label">Assign to Hospital (optional)</label>
-                <select
-                  className="form-input"
-                  value={newAdmin.linkedHospitalId}
-                  onChange={(e) => {
-                    const h = approvedHospitals.find(h => h.id === e.target.value);
-                    setNewAdmin({ ...newAdmin, linkedHospitalId: e.target.value, linkedHospitalName: h ? (h.hospitalName || h.name) : '' });
-                  }}
-                >
-                  <option value="">— None (General Admin) —</option>
-                  {approvedHospitals.map(h => (
-                    <option key={h.id} value={h.id}>{h.hospitalName || h.name}</option>
-                  ))}
-                </select>
-                {newAdmin.linkedHospitalId && (
-                  <div style={{ fontSize: '11px', color: 'var(--primary)', marginTop: '6px' }}>
-                    🏥 This admin will only see data for {newAdmin.linkedHospitalName}
-                  </div>
-                )}
+              <div style={{
+                marginTop: '8px', padding: '10px 12px',
+                background: '#fff8e6', border: '1px solid #f0c14b',
+                borderRadius: '6px', fontSize: '12px', color: '#7a5a00',
+              }}>
+                <strong>This will create a system-wide (unlinked) admin.</strong><br/>
+                To create a hospital-linked admin, the hospital must submit a request via the
+                <strong> Admin Requests </strong> page. Direct hospital assignment was removed for bias prevention.
               </div>
             </div>
             <div className="modal-footer">
@@ -876,30 +922,27 @@ const UserManagement = ({ currentUser }) => {
                         borderBottom: idx < selectedRegistration.uploadedDocuments.length - 1 ? '1px solid var(--border)' : 'none',
                         marginBottom: '8px'
                       }}>
-                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => { setPreviewDocument(doc); setShowDocumentPreview(true); }}>
+                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => previewDoc(doc)}>
                           <div style={{ color: 'var(--text1)', textDecoration: 'underline' }}>{doc.name}</div>
                           <div style={{ fontSize: '10px', color: 'var(--primary)', marginBottom: '2px' }}>
                             {docTypeLabels[doc.documentType] || docTypeLabels.other}
                           </div>
                           <div style={{ fontSize: '10px', color: 'var(--text3)' }}>
-                            {(doc.size / 1024 / 1024).toFixed(2)} MB
+                            {((doc.size || 0) / 1024 / 1024).toFixed(2)} MB
+                            {doc.status && doc.status !== 'pending' && (
+                              <span className={`badge ${doc.status === 'approved' ? 'badge-green' : 'badge-red'}`} style={{ marginLeft: '6px', fontSize: '9px' }}>
+                                {doc.status}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
-                          <button
-                            type="button"
-                            className="btn btn-xs btn-ghost"
-                            onClick={() => { setPreviewDocument(doc); setShowDocumentPreview(true); }}
-                            style={{ whiteSpace: 'nowrap' }}
-                          >
+                          <button type="button" className="btn btn-xs btn-ghost" onClick={() => previewDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
                             👁 View
                           </button>
-                          <a href={doc.data} download={doc.name} className="btn btn-xs btn-outline" style={{ 
-                            textDecoration: 'none',
-                            whiteSpace: 'nowrap'
-                          }}>
+                          <button type="button" className="btn btn-xs btn-outline" onClick={() => downloadDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
                             ⬇ Download
-                          </a>
+                          </button>
                         </div>
                       </div>
                     );
@@ -1299,79 +1342,153 @@ const UserManagement = ({ currentUser }) => {
       )}
 
       {/* Document Preview Modal */}
-      {showDocumentPreview && previewDocument && (
+      {showDocumentPreview && previewDocument && previewMode === 'minimized' && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            right: '20px',
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            padding: '10px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            maxWidth: '320px',
+            zIndex: 9999,
+          }}
+        >
+          <span style={{ fontSize: '18px' }}>📄</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '12px', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {previewDocument.name}
+            </div>
+            <div style={{ fontSize: '10px', color: 'var(--text3)' }}>Document Preview · minimized</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-xs btn-ghost"
+            title="Restore"
+            onClick={() => setPreviewMode('normal')}
+            style={{ padding: '4px 8px' }}
+          >
+            ▢
+          </button>
+          <button
+            type="button"
+            className="btn btn-xs btn-ghost"
+            title="Close"
+            onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
+            style={{ padding: '4px 8px' }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {showDocumentPreview && previewDocument && previewMode !== 'minimized' && (
         <div className="modal-overlay show">
-          <div className="modal" style={{ maxWidth: '800px', maxHeight: '85vh' }}>
+          <div
+            className="modal"
+            style={
+              previewMode === 'fullscreen'
+                ? { maxWidth: '100vw', maxHeight: '100vh', width: '100vw', height: '100vh', borderRadius: 0 }
+                : { maxWidth: '800px', maxHeight: '85vh' }
+            }
+          >
             <div className="modal-header">
               <h3>Document Preview</h3>
-              <button className="modal-close" onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); }}>
-                ×
-              </button>
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                <button
+                  className="modal-close"
+                  title="Minimize"
+                  onClick={() => setPreviewMode('minimized')}
+                  style={{ fontSize: '18px' }}
+                >
+                  −
+                </button>
+                <button
+                  className="modal-close"
+                  title={previewMode === 'fullscreen' ? 'Exit fullscreen' : 'Fullscreen'}
+                  onClick={() => setPreviewMode(previewMode === 'fullscreen' ? 'normal' : 'fullscreen')}
+                  style={{ fontSize: '14px' }}
+                >
+                  {previewMode === 'fullscreen' ? '🗗' : '⛶'}
+                </button>
+                <button
+                  className="modal-close"
+                  title="Close"
+                  onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
-            <div className="modal-body" style={{ padding: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ 
-                background: 'var(--surface2)', 
+            <div className="modal-body" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <div style={{
+                background: 'var(--surface2)',
                 padding: '12px 16px',
                 borderBottom: '1px solid var(--border)',
                 fontSize: '12px'
               }}>
                 <div style={{ fontWeight: '600', marginBottom: '2px' }}>{previewDocument.name}</div>
                 <div style={{ fontSize: '11px', color: 'var(--text3)' }}>
-                  {(previewDocument.size / 1024 / 1024).toFixed(2)} MB • {previewDocument.type}
+                  {((previewDocument.size || 0) / 1024 / 1024).toFixed(2)} MB • {previewDocument.mimeType || previewDocument.type || 'unknown'}
                 </div>
               </div>
-              
-              <div style={{ 
+
+              <div style={{
                 flex: 1,
                 overflow: 'auto',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 background: 'var(--surface3)',
-                minHeight: '400px'
+                minHeight: previewMode === 'fullscreen' ? '0' : '400px'
               }}>
-                {previewDocument.type.startsWith('image/') ? (
-                  <img 
-                    src={previewDocument.data} 
-                    style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                  />
-                ) : previewDocument.type === 'application/pdf' ? (
-                  <iframe
-                    src={previewDocument.data}
-                    style={{ width: '100%', height: '100%', border: 'none' }}
-                    title="PDF Preview"
-                  />
-                ) : (
-                  <div style={{ textAlign: 'center', color: 'var(--text3)' }}>
-                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
-                    <div>Preview not available for this file type</div>
-                    <div style={{ fontSize: '12px', marginTop: '8px' }}>Please download to view</div>
-                  </div>
-                )}
+                {(() => {
+                  const src = previewDocument._resolvedUrl || previewDocument.data;
+                  const mime = previewDocument.mimeType || previewDocument.type || '';
+                  if (mime.startsWith('image/')) {
+                    return <img src={src} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />;
+                  }
+                  if (mime === 'application/pdf') {
+                    return <iframe src={src} style={{ width: '100%', height: '100%', border: 'none' }} title="PDF Preview" />;
+                  }
+                  return (
+                    <div style={{ textAlign: 'center', color: 'var(--text3)' }}>
+                      <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
+                      <div>Preview not available for this file type</div>
+                      <div style={{ fontSize: '12px', marginTop: '8px' }}>Please download to view</div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div style={{ 
-                background: 'var(--surface2)', 
+              <div style={{
+                background: 'var(--surface2)',
                 padding: '12px 16px',
                 borderTop: '1px solid var(--border)',
                 display: 'flex',
                 gap: '8px',
                 justifyContent: 'flex-end'
               }}>
-                <button 
+                <button
                   type="button"
                   className="btn btn-ghost"
-                  onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); }}
+                  onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
                 >
                   Close
                 </button>
-                <a 
-                  href={previewDocument.data} 
-                  download={previewDocument.name}
+                <button
+                  type="button"
                   className="btn btn-primary"
+                  onClick={() => downloadDoc(previewDocument)}
                 >
                   ⬇ Download
-                </a>
+                </button>
               </div>
             </div>
           </div>
