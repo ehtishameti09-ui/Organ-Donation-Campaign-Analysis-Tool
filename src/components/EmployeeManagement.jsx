@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals } from '../utils/auth';
 import { toast } from '../utils/toast';
+import Pagination, { usePagination } from './Pagination';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -64,6 +65,8 @@ const EmployeeManagement = ({ currentUser }) => {
       return true;
     });
   }, [employees, search, roleFilter, statusFilter, currentUser]);
+
+  const empPg = usePagination(filtered, 20);
 
   const resetForm = () => {
     const ownHospital = currentUser?.linkedHospitalId
@@ -227,7 +230,7 @@ const EmployeeManagement = ({ currentUser }) => {
             {filtered.length === 0 && (
               <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No employees found.</td></tr>
             )}
-            {filtered.map(emp => (
+            {empPg.slice.map(emp => (
               <tr key={emp.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -265,6 +268,11 @@ const EmployeeManagement = ({ currentUser }) => {
             ))}
           </tbody>
         </table>
+        {filtered.length > 0 && (
+          <div style={{ padding: '0 16px 12px' }}>
+            <Pagination page={empPg.page} setPage={empPg.setPage} totalPages={empPg.totalPages} total={empPg.total} pageSize={empPg.pageSize} label="employees" />
+          </div>
+        )}
       </div>
 
       {/* Add/Edit Modal */}

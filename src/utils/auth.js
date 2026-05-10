@@ -73,6 +73,14 @@ export const initSuperAdmin = () => {
 // Login function (uses API)
 export const login = async (email, password) => {
   const response = await API.loginViaAPI(email, password);
+  // 2FA challenge — caller (Login component) handles the OTP step
+  if (response.requires_2fa) return { requires2FA: true, challengeToken: response.challenge_token, maskedEmail: response.masked_email };
+  localStorage.setItem('odcat_current', JSON.stringify(response.user));
+  return response.user;
+};
+
+export const verifyLoginTwoFactor = async (challengeToken, code) => {
+  const response = await API.verifyTwoFactorLoginCode(challengeToken, code);
   localStorage.setItem('odcat_current', JSON.stringify(response.user));
   return response.user;
 };
@@ -83,14 +91,27 @@ export const getCurrentUser = () => {
   return s ? JSON.parse(s) : null;
 };
 
-// Logout (calls API)
+// Logout — clear local state instantly, fire API call in background (don't block the UI on it).
 export const logout = async () => {
-  try {
-    await API.logoutViaAPI();
-  } catch (error) {
-    console.error('Logout error:', error);
-  }
+  // 1. Capture the token BEFORE clearing so we can pass it explicitly to the revoke call
+  const token = localStorage.getItem('odcat_token');
+
+  // 2. Clear local storage IMMEDIATELY so the UI flips to login screen with zero delay
+  localStorage.removeItem('odcat_token');
+  localStorage.removeItem('odcat_user');
   localStorage.removeItem('odcat_current');
+
+  // 3. Tell the server to revoke the token in the background — fire-and-forget, explicit token
+  if (token) {
+    fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:8000/api'}/logout`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+    }).catch(() => { /* best-effort */ });
+  }
 };
 
 // Internal sync fallback (for mutation functions that update localStorage as legacy)
@@ -469,6 +490,22 @@ export const getVerificationMetrics = async () => {
   } catch { return {}; }
 };
 
+export const getChartData = async () => {
+  try {
+    return await API.getDashboardChartDataViaAPI();
+  } catch {
+    return { months: [], donors: [], transplants: [], organDistribution: {} };
+  }
+};
+
+export const getDashboardSummary = async () => {
+  try {
+    return await API.getDashboardSummaryViaAPI();
+  } catch {
+    return { metrics: {}, recent_activities: [], recent_users: [], approved_hospitals: [] };
+  }
+};
+
 // ===== RECIPIENT MANAGEMENT =====
 
 export const getRecipients = async () => {
@@ -845,13 +882,14 @@ export const getEmployees = async () => {
 };
 
 export const addEmployee = async (employeeData, adminId) => {
-  return await API.createAdminViaAPI({
+  return await API.createEmployeeViaAPI({
     name: employeeData.name,
     email: employeeData.email,
     password: employeeData.password || 'Temp@1234',
     phone: employeeData.phone || '',
     role: employeeData.role || 'doctor',
-    linked_hospital_id: employeeData.hospitalId || null,
+    department: employeeData.department || null,
+    specialization: employeeData.specialization || null,
   });
 };
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { login, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, submitAppeal, validateEmail } from '../utils/auth';
-import { sendPasswordResetLinkViaAPI, resetPasswordViaAPI } from '../utils/api';
+import { login, verifyLoginTwoFactor, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, submitAppeal, validateEmail } from '../utils/auth';
+import { sendPasswordResetLinkViaAPI, resetPasswordViaAPI, resendTwoFactorLoginCode } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
@@ -8,6 +8,99 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleConfigured, setGoogleConfigured] = useState(false);
+  const [googlePending, setGooglePending] = useState(null); // { token, name, email } when new Google user
+  const [pickedRole, setPickedRole] = useState(null);
+  const [hospitalName, setHospitalName] = useState('');
+  const [completing, setCompleting] = useState(false);
+  // 2FA challenge state
+  const [twoFA, setTwoFA] = useState(null); // { challengeToken, maskedEmail } when challenge is active
+  const [otpCode, setOtpCode] = useState('');
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [resendingOtp, setResendingOtp] = useState(false);
+  const [otpSecondsLeft, setOtpSecondsLeft] = useState(0); // 40-second countdown; 0 = expired
+
+  // Tick the OTP countdown every second while a challenge is active
+  useEffect(() => {
+    if (!twoFA || otpSecondsLeft <= 0) return;
+    const id = setInterval(() => {
+      setOtpSecondsLeft(s => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [twoFA, otpSecondsLeft]);
+
+  // Check if Google OAuth is configured on the backend
+  useEffect(() => {
+    fetch('http://localhost:8000/api/oauth/google/status', { headers: { 'Accept': 'application/json' } })
+      .then(r => r.ok ? r.json() : { configured: false })
+      .then(d => setGoogleConfigured(!!d.configured))
+      .catch(() => setGoogleConfigured(false));
+  }, []);
+
+  // Pick up a pending Google registration (set by App.jsx after OAuth callback)
+  useEffect(() => {
+    const pull = () => {
+      if (window.__googlePending) {
+        setGooglePending(window.__googlePending);
+        setHospitalName(window.__googlePending.name || '');
+      }
+    };
+    pull();
+    window.addEventListener('google:role-picker-open', pull);
+    return () => window.removeEventListener('google:role-picker-open', pull);
+  }, []);
+
+  // Pick up a Google 2FA challenge (set by App.jsx after OAuth callback when user has 2FA enabled)
+  useEffect(() => {
+    const open2FA = () => {
+      if (window.__google2FA) {
+        setTwoFA({
+          challengeToken: window.__google2FA.challengeToken,
+          maskedEmail: window.__google2FA.maskedEmail || 'your email',
+        });
+        setOtpCode('');
+        setOtpSecondsLeft(40);
+        toast(`Verification code sent to ${window.__google2FA.maskedEmail || 'your email'}.`, 'info');
+        window.__google2FA = null;
+      }
+    };
+    open2FA();
+    window.addEventListener('google:2fa-open', open2FA);
+    return () => window.removeEventListener('google:2fa-open', open2FA);
+  }, []);
+
+  const completeGoogleSignup = async () => {
+    if (!googlePending || !pickedRole) return;
+    if (pickedRole === 'hospital' && !hospitalName.trim()) {
+      toast('Hospital name is required.', 'error');
+      return;
+    }
+    setCompleting(true);
+    try {
+      const r = await fetch('http://localhost:8000/api/oauth/google/complete-registration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+          pending_token: googlePending.token,
+          role: pickedRole,
+          hospital_name: pickedRole === 'hospital' ? hospitalName.trim() : null,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || 'Registration failed');
+      // Persist token + user, log in
+      localStorage.setItem('odcat_token', data.token);
+      localStorage.setItem('odcat_user', JSON.stringify(data.user));
+      localStorage.setItem('odcat_current', JSON.stringify(data.user));
+      window.__googlePending = null;
+      toast(`Welcome, ${data.user.name?.split(' ')[0] || 'User'}!`, 'success');
+      onLoginSuccess && onLoginSuccess(data.user);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setCompleting(false);
+    }
+  };
   const [showBannedModal, setShowBannedModal] = useState(false);
   const [bannedUserInfo, setBannedUserInfo] = useState(null);
   const [showDeletedRecoveryModal, setShowDeletedRecoveryModal] = useState(false);
@@ -178,7 +271,17 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     setLoading(true);
 
     try {
-      const user = await login(email, password);
+      const result = await login(email, password);
+      // 2FA challenge — switch to OTP entry view
+      if (result && result.requires2FA) {
+        setTwoFA({ challengeToken: result.challengeToken, maskedEmail: result.maskedEmail });
+        setOtpCode('');
+        setOtpSecondsLeft(40);
+        setLoading(false);
+        toast(`Verification code sent to ${result.maskedEmail}.`, 'info');
+        return;
+      }
+      const user = result;
       toast(`Welcome back, ${user.name}!`, 'success');
       setTimeout(() => onLoginSuccess(user), 500);
     } catch (error) {
@@ -204,8 +307,133 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     toast('Credentials filled — click Sign In to continue.', 'info', 2500);
   };
 
+  const handleVerifyOtp = async (e) => {
+    e.preventDefault();
+    if (otpSecondsLeft === 0) {
+      toast('Code expired. Click "Resend code" to get a new one.', 'error');
+      return;
+    }
+    if (!/^\d{6}$/.test(otpCode)) {
+      toast('Enter the 6-digit code from your email.', 'error');
+      return;
+    }
+    setVerifyingOtp(true);
+    try {
+      const user = await verifyLoginTwoFactor(twoFA.challengeToken, otpCode);
+      toast(`Welcome back, ${user.name}!`, 'success');
+      setTimeout(() => onLoginSuccess(user), 400);
+    } catch (err) {
+      toast(err.message || 'Invalid code.', 'error');
+      setVerifyingOtp(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpSecondsLeft > 0) return; // resend gated until current code expires
+    setResendingOtp(true);
+    try {
+      await resendTwoFactorLoginCode(twoFA.challengeToken);
+      setOtpCode('');
+      setOtpSecondsLeft(40);
+      toast('A new code has been sent.', 'success');
+    } catch (err) {
+      toast(err.message || 'Failed to resend code.', 'error');
+    } finally {
+      setResendingOtp(false);
+    }
+  };
+
+  const cancelOtp = () => {
+    setTwoFA(null);
+    setOtpCode('');
+    setVerifyingOtp(false);
+    setOtpSecondsLeft(0);
+  };
+
   return (
     <div className="auth-wrapper">
+      {/* Google role-picker modal — appears after a brand-new Google user comes back from OAuth */}
+      {googlePending && (
+        <div className="modal-overlay show" style={{ zIndex: 9999 }}>
+          <div className="modal" style={{ maxWidth: '560px', width: '95%' }}>
+            <header className="modal-header">
+              <h3>Welcome, {(googlePending.name || googlePending.email).split(' ')[0]}! 👋</h3>
+            </header>
+            <div className="modal-body">
+              <p style={{ fontSize: '13px', color: 'var(--text2)', marginBottom: '16px' }}>
+                Your Google account <strong>{googlePending.email}</strong> isn't registered yet. Choose how you'd like to use ODCAT:
+              </p>
+              <div style={{ display: 'grid', gap: '10px' }}>
+                {[
+                  { id: 'donor',     icon: '❤️', title: 'Donor',     desc: 'Pledge to donate organs/tissue. Complete a short clinical wizard after signing up.' },
+                  { id: 'recipient', icon: '🏥', title: 'Recipient', desc: 'Register for the transplant waitlist with your medical case details.' },
+                  { id: 'hospital',  icon: '🏨', title: 'Hospital',  desc: 'Register your hospital. Goes through admin review before approval.' },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setPickedRole(opt.id)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '14px',
+                      border: pickedRole === opt.id ? '2px solid var(--primary)' : '1.5px solid var(--border)',
+                      borderRadius: 'var(--radius)',
+                      background: pickedRole === opt.id ? 'var(--primary-light)' : 'var(--surface)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      gap: '12px',
+                      alignItems: 'flex-start',
+                      transition: 'all .15s',
+                    }}
+                  >
+                    <span style={{ fontSize: '22px' }}>{opt.icon}</span>
+                    <div>
+                      <div style={{ fontWeight: '700', fontSize: '14px', color: pickedRole === opt.id ? 'var(--primary)' : 'var(--text)' }}>{opt.title}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text2)', marginTop: '3px' }}>{opt.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {pickedRole === 'hospital' && (
+                <div style={{ marginTop: '14px' }}>
+                  <label className="form-label">Hospital Name *</label>
+                  <input
+                    className="form-input"
+                    value={hospitalName}
+                    onChange={e => setHospitalName(e.target.value)}
+                    placeholder="e.g. Aga Khan University Hospital"
+                  />
+                  <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
+                    You'll need to complete a registration form with documents before your hospital is approved.
+                  </div>
+                </div>
+              )}
+            </div>
+            <footer className="modal-footer" style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setGooglePending(null);
+                  setPickedRole(null);
+                  window.__googlePending = null;
+                  toast('Sign-up cancelled. You can try again anytime.', 'info');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={!pickedRole || completing || (pickedRole === 'hospital' && !hospitalName.trim())}
+                onClick={completeGoogleSignup}
+              >
+                {completing ? 'Creating account…' : `Continue as ${pickedRole ? pickedRole.charAt(0).toUpperCase() + pickedRole.slice(1) : '...'}`}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
+
       {/* Left Panel */}
       <div className="auth-left">
         <div className="auth-brand">
@@ -290,6 +518,100 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
             <div style={{ fontSize: '11px', color: 'var(--text3)' }}>Organ Donation Campaign Analysis Tool</div>
           </div>
 
+          {twoFA ? (
+            <div>
+              <div className="auth-card-header" style={{ textAlign: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '14px' }}>
+                  <div style={{
+                    width: '56px', height: '56px', borderRadius: '50%',
+                    background: 'var(--primary-light)', display: 'flex',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  </div>
+                </div>
+                <h2 style={{ marginBottom: '8px' }}>2-Step Verification</h2>
+                <p style={{ fontSize: '14px', lineHeight: '1.5' }}>
+                  To help keep your account safe, we want to make sure it's really you trying to sign in.
+                </p>
+                <p style={{ fontSize: '13px', color: 'var(--text2)', marginTop: '12px' }}>
+                  We sent a verification code to<br/>
+                  <strong style={{ color: 'var(--text1)' }}>{twoFA.maskedEmail}</strong>
+                </p>
+              </div>
+
+              <form onSubmit={handleVerifyOtp} style={{ marginTop: '20px' }}>
+                <div className="form-group">
+                  <label className="form-label" style={{ textAlign: 'center', display: 'block' }}>Enter the 6-digit code</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="\d{6}"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="– – – – – –"
+                    autoFocus
+                    disabled={otpSecondsLeft === 0}
+                    style={{
+                      fontSize: '24px',
+                      letterSpacing: '12px',
+                      textAlign: 'center',
+                      fontFamily: 'monospace',
+                      padding: '14px',
+                      fontWeight: '600',
+                    }}
+                  />
+                </div>
+
+                <div style={{ fontSize: '12px', marginTop: '4px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  {otpSecondsLeft > 0 ? (
+                    <span style={{ color: otpSecondsLeft <= 10 ? 'var(--danger)' : 'var(--text3)' }}>
+                      ⏱ Code expires in <strong>{otpSecondsLeft}s</strong>
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                      ⚠ Code expired
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleResendOtp}
+                    disabled={resendingOtp || otpSecondsLeft > 0}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: otpSecondsLeft > 0 ? 'var(--text3)' : 'var(--primary)',
+                      cursor: otpSecondsLeft > 0 ? 'not-allowed' : 'pointer',
+                      padding: 0,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {resendingOtp ? 'Sending…' : (otpSecondsLeft > 0 ? `Resend in ${otpSecondsLeft}s` : 'Resend code')}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary btn-full"
+                  disabled={verifyingOtp || otpCode.length !== 6 || otpSecondsLeft === 0}
+                >
+                  {verifyingOtp ? 'Verifying…' : 'Verify & Continue'}
+                </button>
+
+                <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                  <a href="#" className="form-link" onClick={(e) => { e.preventDefault(); cancelOtp(); }}>
+                    Use a different account
+                  </a>
+                </div>
+              </form>
+            </div>
+          ) : (
+          <>
           <div className="auth-card-header">
             <h2>Welcome back</h2>
             <p>Sign in to your Organ Donation Campaign Analysis Tool account to continue</p>
@@ -372,6 +694,47 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
 
           <div className="divider-text"><span>or</span></div>
 
+          <button
+            type="button"
+            disabled={!googleConfigured}
+            title={googleConfigured ? 'Sign in with your Google account' : 'Google sign-in is not configured on this server. Use email/password below, or contact the administrator to set up GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.'}
+            onClick={() => {
+              if (!googleConfigured) {
+                toast('Google sign-in is not yet configured on this server. Use email/password below.', 'warning');
+                return;
+              }
+              window.location.href = 'http://localhost:8000/api/oauth/google/redirect';
+            }}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              background: googleConfigured ? '#fff' : '#f5f5f5',
+              border: '1px solid #dadce0',
+              borderRadius: 'var(--radius)',
+              cursor: googleConfigured ? 'pointer' : 'not-allowed',
+              opacity: googleConfigured ? 1 : 0.55,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px',
+              fontSize: '14px',
+              fontWeight: '500',
+              color: '#3c4043',
+              transition: 'box-shadow .15s, background .15s',
+              marginBottom: '12px',
+            }}
+            onMouseEnter={e => { if (googleConfigured) { e.currentTarget.style.background = '#f8f9fa'; e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,.1)'; } }}
+            onMouseLeave={e => { if (googleConfigured) { e.currentTarget.style.background = '#fff'; e.currentTarget.style.boxShadow = 'none'; } }}
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18">
+              <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+              <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+              <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+              <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+            </svg>
+            {googleConfigured ? 'Continue with Google' : 'Google sign-in (not configured)'}
+          </button>
+
           <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text2)' }}>
             Don't have an account?{' '}
             <a href="#" className="form-link" onClick={(e) => { e.preventDefault(); onCreateAccount && onCreateAccount(); }}>
@@ -410,6 +773,8 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
           <p style={{ textAlign: 'center', fontSize: '11px', color: 'var(--text3)', marginTop: '20px' }}>
             © 2026 Organ Donation Campaign Analysis Tool Healthcare · Saving lives through organ donation
           </p>
+          </>
+          )}
         </div>
       </div>
 

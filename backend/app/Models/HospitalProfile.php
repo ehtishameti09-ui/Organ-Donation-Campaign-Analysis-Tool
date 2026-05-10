@@ -13,6 +13,7 @@ class HospitalProfile extends Model
     protected $fillable = [
         'user_id', 'hospital_name', 'registration_number', 'license_number',
         'hospital_address', 'contact_person',
+        'latitude', 'longitude', 'city_type', 'city',
         'admin_feedback', 'rejection_reason', 'admin_message',
         'approved_by', 'approved_at', 'rejected_by', 'rejected_at',
     ];
@@ -20,6 +21,8 @@ class HospitalProfile extends Model
     protected function casts(): array
     {
         return [
+            'latitude'    => 'float',
+            'longitude'   => 'float',
             'approved_at' => 'datetime',
             'rejected_at' => 'datetime',
         ];

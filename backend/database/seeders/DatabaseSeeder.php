@@ -12,6 +12,9 @@ class DatabaseSeeder extends Seeder
             RolesAndPermissionsSeeder::class,
             DefaultUsersSeeder::class,
             DatasetSeeder::class,
+            AllocationPolicySeeder::class,
+            BloodCompatibilitySeeder::class,
+            KidneyDatasetSeeder::class,
         ]);
     }
 }

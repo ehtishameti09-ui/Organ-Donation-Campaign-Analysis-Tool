@@ -5,8 +5,8 @@ import {
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
-
-const ORGANS = ['kidney', 'liver', 'heart', 'lung', 'pancreas', 'cornea', 'bone marrow'];
+import { ORGANS_LOWER as ORGANS } from '../utils/organs';
+import Pagination, { usePagination } from './Pagination';
 
 // Document Lightbox Modal
 const DocumentLightboxModal = ({ doc, onClose }) => {
@@ -111,6 +111,8 @@ const RecipientManagement = ({ currentUser }) => {
       if (sortBy === 'survival') return (parseFloat(a.survivalEstimate) || 0) - (parseFloat(b.survivalEstimate) || 0);
       return 0;
     });
+
+  const { page, setPage, totalPages, total, pageSize, slice: pagedRecipients } = usePagination(filteredAndSorted, 20);
 
   const openCaseModal = (recipient) => {
     setSelectedRecipient(recipient);
@@ -301,7 +303,7 @@ const RecipientManagement = ({ currentUser }) => {
                 </tr>
               </thead>
               <tbody>
-                {filteredAndSorted.map(r => {
+                {pagedRecipients.map(r => {
                   const urgInfo = getUrgencyColor(r.urgencyScore);
                   const cs = caseStatusConfig[r.caseStatus || 'registered'] || caseStatusConfig.registered;
                   const days = r.daysOnWaitlist || Math.round((new Date() - new Date(r.registrationDate)) / (1000 * 60 * 60 * 24));
@@ -357,6 +359,9 @@ const RecipientManagement = ({ currentUser }) => {
                 })}
               </tbody>
             </table>
+            <div style={{ padding: '0 12px 12px' }}>
+              <Pagination page={page} setPage={setPage} totalPages={totalPages} total={total} pageSize={pageSize} label="recipients" />
+            </div>
           </div>
         )}
       </div>

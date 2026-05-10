@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\GoogleAuthController;
+use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\HospitalController;
 use App\Http\Controllers\DonorController;
@@ -14,6 +15,8 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\AppealController;
 use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\AllocationController;
+use App\Http\Controllers\AdminRequestController;
 
 // Public routes (no authentication required)
 Route::post('/register', [AuthController::class, 'register'])->name('register');
@@ -21,8 +24,14 @@ Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/password-reset/send-link', [PasswordResetController::class, 'sendResetLink'])->name('password.send-link');
 Route::post('/password-reset/reset', [PasswordResetController::class, 'reset'])->name('password.reset');
 Route::post('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
+Route::get('/oauth/google/status',   [GoogleAuthController::class, 'status'])->name('oauth.google.status');
 Route::get('/oauth/google/redirect', [GoogleAuthController::class, 'redirect'])->name('oauth.google.redirect');
 Route::get('/oauth/google/callback', [GoogleAuthController::class, 'callback'])->name('oauth.google.callback');
+Route::post('/oauth/google/complete-registration', [GoogleAuthController::class, 'completeRegistration'])->name('oauth.google.complete');
+
+// Public 2FA endpoints (used during the login challenge)
+Route::post('/2fa/email/verify', [TwoFactorController::class, 'verifyLoginCode'])->name('2fa.email.verify');
+Route::post('/2fa/email/resend', [TwoFactorController::class, 'resendLoginCode'])->name('2fa.email.resend');
 
 // Authenticated routes
 Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->group(function () {
@@ -30,6 +39,11 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
     Route::get('/me', [AuthController::class, 'me'])->name('me');
     Route::post('/email/resend-verification', [AuthController::class, 'resendVerification'])->name('verification.resend');
+
+    // Two-factor authentication (email OTP)
+    Route::post('/2fa/email/request-setup', [TwoFactorController::class, 'requestSetupCode'])->name('2fa.email.request-setup');
+    Route::post('/2fa/email/confirm-setup', [TwoFactorController::class, 'confirmSetup'])->name('2fa.email.confirm-setup');
+    Route::post('/2fa/email/disable', [TwoFactorController::class, 'disable'])->name('2fa.email.disable');
 
     // User profile and account management
     Route::get('/users', [UserController::class, 'index'])->name('users.index');
@@ -45,6 +59,7 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     // Hospitals
     Route::get('/hospitals', [HospitalController::class, 'index'])->name('hospitals.index');
     Route::get('/hospitals/pending', [HospitalController::class, 'pending'])->name('hospitals.pending');
+    Route::get('/hospitals/overview', [HospitalController::class, 'overview'])->name('hospitals.overview');
 
     // Donors
     Route::get('/donors', [DonorController::class, 'index'])->name('donors.index');
@@ -86,6 +101,15 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
 
     // Dashboard metrics — accessible to all authenticated users (controller handles role scoping)
     Route::get('/dashboard/metrics', [DashboardController::class, 'metrics'])->name('dashboard.metrics');
+    Route::get('/dashboard/chart-data', [DashboardController::class, 'chartData'])->name('dashboard.chart-data');
+    Route::get('/dashboard/summary', [DashboardController::class, 'summary'])->name('dashboard.summary');
+
+    // Admin requests — controller enforces role rules (hospital submits; super_admin reviews)
+    Route::get('/admin-requests',                       [AdminRequestController::class, 'index']);
+    Route::post('/admin-requests',                      [AdminRequestController::class, 'store']);
+    Route::post('/admin-requests/{id}/approve',         [AdminRequestController::class, 'approve']);
+    Route::post('/admin-requests/{id}/reject',          [AdminRequestController::class, 'reject']);
+    Route::delete('/admin-requests/{id}',               [AdminRequestController::class, 'cancel']);
 
     // Admin-only routes
     Route::middleware(['role:super_admin|admin'])->group(function () {
@@ -96,6 +120,37 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
         Route::post('/hospitals/{hospital}/approve', [HospitalController::class, 'approve'])->name('hospitals.approve');
         Route::post('/hospitals/{hospital}/reject', [HospitalController::class, 'reject'])->name('hospitals.reject');
         Route::post('/hospitals/{hospital}/request-info', [HospitalController::class, 'requestInfo'])->name('hospitals.request-info');
+
+    });
+
+    // Module 4 — Explainable Allocation Engine
+    // Restricted to hospitals + hospital-linked admins (not super_admin or unlinked admins) to prevent bias.
+    Route::middleware(['role:hospital|admin'])->group(function () {
+        // Employee management — hospital + linked admin can directly create employees for their hospital
+        Route::post('/users/create-employee', [UserController::class, 'createEmployee'])->name('users.create-employee');
+
+        Route::get('/allocation/policies',                  [AllocationController::class, 'listPolicies']);
+        Route::post('/allocation/policies',                 [AllocationController::class, 'createPolicy']);
+        Route::patch('/allocation/policies/{id}/activate',  [AllocationController::class, 'activatePolicy']);
+        Route::get('/allocation/eligible-donors',           [AllocationController::class, 'eligibleDonors']);
+        Route::post('/allocation/run',                      [AllocationController::class, 'run']);
+        Route::get('/allocation/pending-allocations',       [AllocationController::class, 'pendingAllocations']);
+        Route::post('/allocation/simulate',                 [AllocationController::class, 'simulate']);
+        Route::get('/allocation/runs',                      [AllocationController::class, 'listRuns']);
+        Route::get('/allocation/runs/{id}',                 [AllocationController::class, 'showRun']);
+
+        // Module 5 — Matching & Override Governance
+        Route::get('/allocation/compatibility-matrix',      [AllocationController::class, 'compatibilityMatrix']);
+        Route::get('/allocation/hospital-distances',        [AllocationController::class, 'hospitalDistances']);
+        Route::post('/allocation/decisions',                [AllocationController::class, 'createDecision']);
+        Route::get('/allocation/decisions',                 [AllocationController::class, 'listDecisions']);
+        Route::get('/allocation/override-stats',            [AllocationController::class, 'overrideStats']);
+
+        // Module 6 — Fairness Lab
+        Route::get('/allocation/fairness-overview',         [AllocationController::class, 'fairnessOverview']);
+        Route::get('/allocation/runs/{id}/fairness',        [AllocationController::class, 'fairnessReport']);
+        Route::get('/allocation/runs/{id}/sensitivity',     [AllocationController::class, 'sensitivityReport']);
+        Route::get('/allocation/runs/{id}/export.csv',      [AllocationController::class, 'exportCsv']);
     });
 });
 
