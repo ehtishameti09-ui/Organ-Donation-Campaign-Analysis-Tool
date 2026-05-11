@@ -165,6 +165,7 @@ class GoogleAuthController extends Controller
                 'user_id'       => $user->id,
                 'hospital_name' => $data['hospital_name'] ?: $pending['name'],
             ]);
+            Cache::forget('hospitals:overview:v1');
         }
 
         ActivityLogger::logActivity(

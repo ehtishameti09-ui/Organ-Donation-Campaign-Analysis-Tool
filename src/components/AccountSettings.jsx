@@ -30,7 +30,7 @@ const DOCUMENT_CONFIG = {
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
-const AccountSettings = ({ user, onUpdate, initialTab }) => {
+const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   // Determine tabs based on role
   const getTabs = () => {
     const base = [
@@ -76,11 +76,83 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
   });
 
   const [pwdData, setPwdData] = useState({ current: '', newPwd: '', confirmPwd: '' });
-  const [notifPrefs, setNotifPrefs] = useState({
-    emailNotifications: user.emailNotifications !== false,
-    appNotifications: user.appNotifications !== false,
-    statusUpdates: user.statusUpdates !== false,
-    opportunityAlerts: user.opportunityAlerts !== false,
+
+  // Role-specific notification preferences. Each role gets toggles relevant to its workflow.
+  // Stored as a flat key→bool object in users.notification_prefs (JSON column).
+  const PREFS_BY_ROLE = {
+    super_admin: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive admin alerts via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'newHospitalRegistration',    label: 'New Hospital Registrations',   desc: 'Alert me when a hospital signs up and needs review' },
+      { key: 'adminRequests',              label: 'Admin Account Requests',       desc: 'Alert me when someone requests admin access' },
+      { key: 'securityAlerts',             label: 'Security Alerts',              desc: 'Alert me on suspicious sign-in activity' },
+    ],
+    admin: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'newCases',                   label: 'New Case Submissions',         desc: 'Alert me when donors or recipients submit cases at my hospital' },
+      { key: 'pendingAppeals',             label: 'Pending Appeals',              desc: 'Alert me when a banned user submits an appeal' },
+      { key: 'employeeActivity',           label: 'Employee Activity',            desc: 'Alert me when employees are added, updated, or suspended' },
+    ],
+    hospital: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'newCases',                   label: 'New Case Submissions',         desc: 'Alert me when a donor or recipient submits a new case' },
+      { key: 'documentResubmissions',      label: 'Document Resubmissions',       desc: 'Alert me when a user uploads requested documents' },
+      { key: 'allocationMatches',          label: 'Allocation Match Results',     desc: 'Notify me when an organ allocation produces a match' },
+      { key: 'employeeActivity',           label: 'Employee Activity',            desc: 'Alert me on changes to my hospital staff' },
+    ],
+    doctor: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive case alerts via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'assignedCases',              label: 'Case Assignments',             desc: 'Alert me when a case is assigned to me' },
+      { key: 'documentReviews',            label: 'Documents Awaiting Review',    desc: 'Alert me when documents need clinical review' },
+    ],
+    data_entry: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'assignedCases',              label: 'Case Assignments',             desc: 'Alert me when a case is assigned to me' },
+      { key: 'documentReviews',            label: 'Documents Awaiting Review',    desc: 'Alert me when documents need data entry' },
+    ],
+    auditor: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'auditEvents',                label: 'Audit-worthy Events',          desc: 'Alert me on bans, deletes, and high-impact admin actions' },
+    ],
+    donor: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'caseStatusUpdates',          label: 'Case Status Updates',          desc: 'Notify me when my donor case moves to a new status' },
+      { key: 'hospitalFeedback',           label: 'Hospital Feedback',            desc: 'Notify me when the hospital asks for more info or rejects my case' },
+      { key: 'urgentMatchAlerts',          label: 'Urgent Match Alerts',          desc: 'Alert me when a recipient urgently needs a match for my pledged organs' },
+    ],
+    recipient: [
+      { key: 'emailNotifications',         label: 'Email Notifications',          desc: 'Receive updates via email' },
+      { key: 'appNotifications',           label: 'In-App Notifications',         desc: 'Show notification badges in the dashboard' },
+      { key: 'caseStatusUpdates',          label: 'Case Status Updates',          desc: 'Notify me when my recipient case moves to a new status' },
+      { key: 'hospitalFeedback',           label: 'Hospital Feedback',            desc: 'Notify me when the hospital asks for more info or updates urgency' },
+      { key: 'matchAlerts',                label: 'Match & Opportunity Alerts',   desc: 'Alert me when a potential match is found' },
+    ],
+  };
+  const rolePrefs = PREFS_BY_ROLE[user.role] || PREFS_BY_ROLE.donor;
+
+  // Hydrate from saved JSON; fallback to legacy columns for the two universal toggles;
+  // unknown keys default to true (opt-out model).
+  const [notifPrefs, setNotifPrefs] = useState(() => {
+    const saved = user.notificationPrefs || {};
+    const initial = {};
+    rolePrefs.forEach(item => {
+      if (typeof saved[item.key] === 'boolean') {
+        initial[item.key] = saved[item.key];
+      } else if (item.key === 'emailNotifications') {
+        initial[item.key] = user.emailNotifications !== false;
+      } else if (item.key === 'appNotifications') {
+        initial[item.key] = user.appNotifications !== false;
+      } else {
+        initial[item.key] = true;
+      }
+    });
+    return initial;
   });
   // Donor-specific preferences
   const [donorPrefs, setDonorPrefs] = useState({
@@ -309,8 +381,24 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
   const saveNotifPrefs = async () => {
     setSaving(true);
     try {
-      await updateUserViaAPI(user.id, notifPrefs);
-      onUpdate && onUpdate({ ...user, ...notifPrefs });
+      // Persist the universal channel toggles to the legacy columns (so other parts of the
+      // backend that read user.email_notifications still work), and the entire role-specific
+      // map to notification_prefs JSON.
+      const payload = {
+        notification_prefs: notifPrefs,
+      };
+      if (typeof notifPrefs.emailNotifications === 'boolean') {
+        payload.email_notifications = notifPrefs.emailNotifications;
+      }
+      if (typeof notifPrefs.appNotifications === 'boolean') {
+        payload.app_notifications = notifPrefs.appNotifications;
+      }
+      await updateUserViaAPI(user.id, payload);
+      onUpdate && onUpdate({
+        ...user,
+        ...notifPrefs,
+        notificationPrefs: notifPrefs,
+      });
       toast('Notification preferences saved!', 'success');
     } catch (err) {
       toast(err.message || 'Save failed.', 'error');
@@ -1201,26 +1289,43 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
-            {[
-              { key: 'emailNotifications', label: 'Email Notifications', desc: 'Receive updates via email' },
-              { key: 'appNotifications', label: 'In-App Notifications', desc: 'Show notification badges in the dashboard' },
-              { key: 'statusUpdates', label: 'Status Updates', desc: 'Notify me when my case or verification status changes' },
-              { key: 'opportunityAlerts', label: 'Match & Opportunity Alerts', desc: 'Alert me when a potential match is found' },
-            ].map(item => (
+            {rolePrefs.map(item => (
               <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text1)' }}>{item.label}</div>
                   <div style={{ fontSize: '12px', color: 'var(--text3)', marginTop: '2px' }}>{item.desc}</div>
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', position: 'relative' }}>
-                  <input type="checkbox" checked={notifPrefs[item.key]}
-                    onChange={e => setNotifPrefs(p => ({ ...p, [item.key]: e.target.checked }))}
-                    style={{ display: 'none' }} />
-                  <div onClick={() => setNotifPrefs(p => ({ ...p, [item.key]: !p[item.key] }))}
-                    style={{ width: '44px', height: '24px', borderRadius: '12px', background: notifPrefs[item.key] ? 'var(--primary)' : 'var(--border)', position: 'relative', cursor: 'pointer', transition: 'background .2s' }}>
-                    <div style={{ position: 'absolute', top: '3px', left: notifPrefs[item.key] ? '23px' : '3px', width: '18px', height: '18px', borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.2)' }}></div>
-                  </div>
-                </label>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!!notifPrefs[item.key]}
+                  aria-label={item.label}
+                  onClick={() => setNotifPrefs(p => ({ ...p, [item.key]: !p[item.key] }))}
+                  style={{
+                    width: '44px',
+                    height: '24px',
+                    borderRadius: '12px',
+                    background: notifPrefs[item.key] ? 'var(--primary)' : 'var(--border)',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    transition: 'background .2s',
+                    border: 'none',
+                    padding: 0,
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute',
+                    top: '3px',
+                    left: notifPrefs[item.key] ? '23px' : '3px',
+                    width: '18px',
+                    height: '18px',
+                    borderRadius: '50%',
+                    background: '#fff',
+                    transition: 'left .2s',
+                    boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+                  }} />
+                </button>
               </div>
             ))}
           </div>
@@ -1409,10 +1514,10 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {[
-              { icon: '👥', label: 'User Management', desc: 'Manage all user accounts, roles, and permissions', action: 'Go to User Management' },
-              { icon: '🏥', label: 'Hospital Approvals', desc: 'Review and approve pending hospital registrations', action: 'Review Hospitals' },
-              { icon: '📊', label: 'System Analytics', desc: 'View platform-wide statistics and performance metrics', action: 'View Analytics' },
-              { icon: '🔐', label: 'Audit Logs', desc: 'Access complete audit trail of all system actions', action: 'View Logs' },
+              { icon: '👥', label: 'User Management', desc: 'Manage all user accounts, roles, and permissions', action: 'Go to User Management', target: { page: 'users', tab: null } },
+              { icon: '🏥', label: 'Hospital Approvals', desc: 'Review and approve pending hospital registrations', action: 'Review Hospitals', target: { page: 'users', tab: null } },
+              { icon: '📊', label: 'System Analytics', desc: 'View platform-wide statistics and performance metrics', action: 'View Analytics', target: { page: 'dashboard', tab: null } },
+              { icon: '🔐', label: 'Audit Logs', desc: 'Access complete audit trail of all system actions', action: 'View Logs', target: { page: 'settings', tab: 'activity' } },
             ].map((item, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                 <div style={{ width: '40px', height: '40px', background: 'var(--primary-light)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>{item.icon}</div>
@@ -1420,7 +1525,16 @@ const AccountSettings = ({ user, onUpdate, initialTab }) => {
                   <div style={{ fontSize: '14px', fontWeight: '600' }}>{item.label}</div>
                   <div style={{ fontSize: '12px', color: 'var(--text3)' }}>{item.desc}</div>
                 </div>
-                <button className="btn btn-outline btn-sm" onClick={() => toast('Feature accessible via sidebar navigation.', 'info')}>
+                <button
+                  className="btn btn-outline btn-sm"
+                  onClick={() => {
+                    if (item.target.page === 'settings' && item.target.tab) {
+                      setActiveTab(item.target.tab);
+                    } else if (onNavigate) {
+                      onNavigate(item.target.page, item.target.tab);
+                    }
+                  }}
+                >
                   {item.action}
                 </button>
               </div>

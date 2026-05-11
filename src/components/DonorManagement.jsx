@@ -83,8 +83,18 @@ const DonorManagement = ({ currentUser }) => {
   const [lightboxDoc, setLightboxDoc] = useState(null);
 
   useEffect(() => {
-    loadDonors();
-    getVerificationMetrics().then(m => setMetrics(m)).catch(() => {});
+    const refresh = () => {
+      loadDonors();
+      getVerificationMetrics().then(m => setMetrics(m)).catch(() => {});
+    };
+    refresh();
+    const intervalId = setInterval(refresh, 20000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   useEffect(() => {

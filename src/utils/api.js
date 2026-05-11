@@ -71,8 +71,13 @@ export const loginViaAPI = async (email, password) => {
   });
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || 'Login failed');
+    const error = await response.json().catch(() => ({}));
+    // Preserve the full payload (banned/deleted/ban_details/deletion_details/user_id) on
+    // the Error so the caller can decide whether to surface the appropriate modal.
+    const err = new Error(error.message || 'Login failed');
+    Object.assign(err, error);
+    err.status = response.status;
+    throw err;
   }
 
   const data = await response.json();
@@ -324,6 +329,11 @@ export const createEmployeeViaAPI = async (payload) => {
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
+    // Surface the specific field validation message instead of the generic 422 wrapper
+    if (e.errors) {
+      const first = Object.values(e.errors).flat()[0];
+      if (first) throw new Error(first);
+    }
     throw new Error(e.message || 'Failed to create employee');
   }
   return await r.json();
@@ -495,6 +505,18 @@ export const unbanUserViaAPI = async (userId) => {
   return await response.json();
 };
 
+export const restoreUserViaAPI = async (userId) => {
+  const response = await fetch(`${API_BASE}/users/${userId}/restore`, {
+    method: 'POST',
+    headers: getHeaders(true),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || 'Restore failed');
+  }
+  return await response.json();
+};
+
 export const deleteUserViaAPI = async (userId, reason = 'Deleted by admin', category = 'OTHER') => {
   const response = await fetch(`${API_BASE}/users/${userId}`, {
     method: 'DELETE',
@@ -582,13 +604,16 @@ export const getAppealsViaAPI = async () => {
 };
 
 export const submitAppealViaAPI = async (userId, explanation, originalAction = 'ban') => {
-  const response = await fetch(`${API_BASE}/appeals`, {
+  // Banned/deleted users can't log in, so they hit the public endpoint (no Authorization header).
+  const token = localStorage.getItem('odcat_token');
+  const endpoint = token ? `${API_BASE}/appeals` : `${API_BASE}/appeals/public`;
+  const response = await fetch(endpoint, {
     method: 'POST',
-    headers: getHeaders(true),
+    headers: token ? getHeaders(true) : getHeaders(false),
     body: JSON.stringify({ user_id: userId, explanation, original_action: originalAction }),
   });
   if (!response.ok) {
-    const err = await response.json();
+    const err = await response.json().catch(() => ({}));
     const first = err.errors ? Object.values(err.errors).flat()[0] : null;
     throw new Error(first || err.message || 'Appeal submission failed');
   }
@@ -963,6 +988,7 @@ export default {
   requestHospitalInfoViaAPI,
   banUserViaAPI,
   unbanUserViaAPI,
+  restoreUserViaAPI,
   deleteUserViaAPI,
   createAdminViaAPI,
   verifyDonorViaAPI,
@@ -985,4 +1011,33 @@ export default {
   requestTwoFactorSetupCode,
   confirmTwoFactorSetup,
   disableTwoFactor,
+  // Employee, dashboard, hospital overview
+  createEmployeeViaAPI,
+  getHospitalsOverviewViaAPI,
+  getDashboardSummaryViaAPI,
+  // Allocation engine
+  activateAllocationPolicyViaAPI,
+  createAllocationDecisionViaAPI,
+  createAllocationPolicyViaAPI,
+  downloadAllocationCsv,
+  getAllocationDecisionsViaAPI,
+  getAllocationPoliciesViaAPI,
+  getAllocationRunViaAPI,
+  getAllocationRunsViaAPI,
+  getCompatibilityMatrixViaAPI,
+  getEligibleDonorsViaAPI,
+  getFairnessOverviewViaAPI,
+  getFairnessReportViaAPI,
+  getHospitalDistancesViaAPI,
+  getOverrideStatsViaAPI,
+  getPendingAllocationsViaAPI,
+  getSensitivityReportViaAPI,
+  runAllocationViaAPI,
+  simulateAllocationViaAPI,
+  // Admin requests
+  approveAdminRequestViaAPI,
+  cancelAdminRequestViaAPI,
+  getAdminRequestsViaAPI,
+  rejectAdminRequestViaAPI,
+  submitAdminRequestViaAPI,
 };

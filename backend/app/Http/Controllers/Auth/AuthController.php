@@ -81,6 +81,8 @@ class AuthController extends Controller
                 'hospital_address' => $data['hospital_address'] ?? null,
                 'contact_person' => $data['contact_person'] ?? $data['name'],
             ]);
+            // Bust the hospitals overview cache so super admin sees the new pending hospital immediately
+            \Illuminate\Support\Facades\Cache::forget('hospitals:overview:v1');
         } elseif ($data['role'] === 'donor') {
             DonorProfile::create(['user_id' => $user->id]);
             ClinicalProfile::create(['user_id' => $user->id]);
@@ -141,27 +143,75 @@ class AuthController extends Controller
             ]);
         }
 
-        // Banned check
+        // Banned check — auto-lift expired temporary bans before deciding
         if ($user->banned) {
-            return response()->json([
-                'message' => 'Your account has been banned.',
-                'banned' => true,
-                'ban_details' => $user->ban_details,
-                'user_id' => $user->id, // for appeal submission
-            ], 403);
+            $banDetails = $user->ban_details ?? [];
+            $expiry = $banDetails['expiry_date'] ?? null;
+            $isTemporary = ($banDetails['ban_type'] ?? null) === 'temporary';
+
+            if ($isTemporary && $expiry && now()->greaterThan(\Carbon\Carbon::parse($expiry))) {
+                // Temporary ban has expired — lift it automatically
+                $user->update([
+                    'banned' => false,
+                    'status' => 'approved',
+                    'ban_details' => null,
+                ]);
+                ActivityLogger::logAction($user->id, 'ban_expired', 'Temporary ban expired and auto-lifted');
+                $user->refresh();
+            } else {
+                $banningAdminId = $banDetails['admin_id'] ?? null;
+                $banningAdmin = $banningAdminId ? User::find($banningAdminId) : null;
+                return response()->json([
+                    'message'    => 'Your account has been banned.',
+                    'banned'     => true,
+                    'ban_details' => $this->camelizeKeys($banDetails) + [
+                        'banningAdminId'   => $banningAdminId,
+                        'banningAdminName' => $banningAdmin?->name,
+                    ],
+                    'user_id'    => $user->id,
+                    'user_name'  => $user->name,
+                    'user_email' => $user->email,
+                    'user_hospital_id' => $user->linked_hospital_id ?? $user->preferred_hospital_id,
+                ], 403);
+            }
         }
 
         // Soft-deleted check
         if ($user->is_deleted) {
+            $details = $user->deletion_details ?? [];
+            $deletingAdminId = $details['admin_id'] ?? null;
+            $isSelfDelete = !empty($details['is_self_delete']) || $deletingAdminId === $user->id;
+            $deletingAdmin = (!$isSelfDelete && $deletingAdminId) ? User::find($deletingAdminId) : null;
+            $hospitalScope = $user->linked_hospital_id ?? $user->preferred_hospital_id;
+
+            $deletionPayload = [
+                'reason'             => $details['reason'] ?? null,
+                'category'           => $details['category'] ?? null,
+                'isSelfDelete'       => $isSelfDelete,
+                'deletingAdminId'    => $deletingAdminId,
+                'deletingAdminName'  => $deletingAdmin?->name,
+                'deletionDate'       => $details['deletion_date'] ?? null,
+                'recoveryDeadline'   => optional($user->recovery_deadline)->toIso8601String(),
+            ];
+
             if ($user->recovery_deadline && $user->recovery_deadline->isFuture()) {
                 return response()->json([
-                    'message' => 'Account marked for deletion. You can recover it.',
-                    'deleted' => true,
+                    'message'           => 'Account marked for deletion. You can recover it.',
+                    'deleted'           => true,
                     'recovery_deadline' => $user->recovery_deadline,
-                    'user_id' => $user->id,
+                    'deletion_details'  => $deletionPayload,
+                    'user_id'           => $user->id,
+                    'user_name'         => $user->name,
+                    'user_email'        => $user->email,
+                    'user_hospital_id'  => $hospitalScope,
                 ], 403);
             }
-            return response()->json(['message' => 'Account permanently deleted.'], 403);
+            return response()->json([
+                'message'          => 'Account permanently deleted.',
+                'deleted'          => true,
+                'deletion_details' => $deletionPayload,
+                'user_id'          => $user->id,
+            ], 403);
         }
 
         // Account locked
@@ -298,11 +348,18 @@ class AuthController extends Controller
             'registrationDate' => optional($user->created_at)->toIso8601String(),
             'emailVerifiedAt' => optional($user->email_verified_at)->toIso8601String(),
             'banned' => (bool) $user->banned,
-            'banDetails' => $user->ban_details,
+            'banDetails' => $this->camelizeKeys($user->ban_details),
             'isDeleted' => (bool) $user->is_deleted,
-            'deletionDetails' => $user->deletion_details,
+            'deletionDetails' => $this->camelizeKeys($user->deletion_details),
             'recoveryDeadline' => optional($user->recovery_deadline)->toIso8601String(),
             'twoFactorEnabled' => (bool) $user->two_factor_enabled,
+            // Notification preferences — default to true so a never-saved user sees toggles ON
+            'emailNotifications' => $user->email_notifications ?? true,
+            'appNotifications'   => $user->app_notifications ?? true,
+            'statusUpdates'      => $user->status_updates ?? true,
+            'opportunityAlerts'  => $user->opportunity_alerts ?? true,
+            // Role-specific notification preferences (camelCase keys, see PREFS_BY_ROLE on frontend)
+            'notificationPrefs'  => $user->notification_prefs ?? (object) [],
             'linkedHospitalId' => $user->linked_hospital_id,
             'preferredHospitalId' => $user->preferred_hospital_id,
             'hospitalId' => $user->hospital_id,
@@ -321,6 +378,19 @@ class AuthController extends Controller
             $data['adminFeedback'] = $user->hospitalProfile->admin_feedback;
             $data['rejectionReason'] = $user->hospitalProfile->rejection_reason;
             $data['adminMessage'] = $user->hospitalProfile->admin_message;
+        }
+
+        // Resolve the parent hospital's name for any non-hospital, non-super-admin user
+        // who is associated with one (admin linked to a hospital, doctor/data_entry/auditor
+        // employees, donors/recipients with a preferred hospital).
+        if (!in_array($user->role, ['hospital', 'super_admin'], true)) {
+            $parentHospitalId = $user->linked_hospital_id ?? $user->preferred_hospital_id;
+            if ($parentHospitalId) {
+                $parent = User::with('hospitalProfile')->find($parentHospitalId);
+                if ($parent && $parent->hospitalProfile) {
+                    $data['linkedHospitalName'] = $parent->hospitalProfile->hospital_name;
+                }
+            }
         }
 
         if ($user->donorProfile) {
@@ -388,5 +458,17 @@ class AuthController extends Controller
         }
 
         return $data;
+    }
+
+    /** Convert snake_case array keys to camelCase so the frontend can read fields consistently. */
+    private function camelizeKeys(?array $arr): ?array
+    {
+        if ($arr === null) return null;
+        $result = [];
+        foreach ($arr as $key => $value) {
+            $camel = lcfirst(str_replace('_', '', ucwords((string) $key, '_')));
+            $result[$camel] = is_array($value) ? $this->camelizeKeys($value) : $value;
+        }
+        return $result;
     }
 }

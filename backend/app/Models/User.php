@@ -28,6 +28,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'last_login_at', 'last_login_ip', 'failed_login_attempts', 'locked_until',
         'profile_changelog', 'email_verified_at',
         'two_factor_enabled',
+        'notification_prefs',
     ];
 
     protected $hidden = [
@@ -49,6 +50,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'status_updates' => 'boolean',
             'opportunity_alerts' => 'boolean',
             'two_factor_enabled' => 'boolean',
+            'notification_prefs' => 'array',
             'ban_details' => 'array',
             'deletion_details' => 'array',
             'profile_changelog' => 'array',

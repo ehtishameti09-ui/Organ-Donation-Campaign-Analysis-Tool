@@ -67,6 +67,13 @@ const RecipientManagement = ({ currentUser }) => {
 
   useEffect(() => {
     loadRecipients();
+    const intervalId = setInterval(loadRecipients, 20000);
+    const onFocus = () => loadRecipients();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   useEffect(() => {

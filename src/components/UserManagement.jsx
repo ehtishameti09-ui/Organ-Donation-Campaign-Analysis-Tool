@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus } from '../utils/auth';
+import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, unbanUser, restoreUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus } from '../utils/auth';
 import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI } from '../utils/api';
 import Pagination, { usePagination } from './Pagination';
 import { toast } from '../utils/toast';
@@ -36,6 +36,14 @@ const UserManagement = ({ currentUser }) => {
   useEffect(() => {
     loadUsers();
     loadAppeals();
+    // Auto-refresh every 20s and on tab focus so new registrations / status changes appear live
+    const intervalId = setInterval(() => { loadUsers(); loadAppeals(); }, 20000);
+    const onFocus = () => { loadUsers(); loadAppeals(); };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   // Keyboard navigation for Category Modal
@@ -144,6 +152,28 @@ const UserManagement = ({ currentUser }) => {
     setCategoryModalData({ userId, userName, reason: '', action: 'delete' });
     setSelectedCategory('');
     setShowCategoryModal(true);
+  };
+
+  const handleUnbanUser = async (userId, userName) => {
+    if (!window.confirm(`Unban "${userName}"? They will be able to sign in again immediately.`)) return;
+    try {
+      await unbanUser(userId);
+      toast(`"${userName}" has been unbanned.`, 'success');
+      loadUsers();
+    } catch (err) {
+      toast(err.message || 'Unban failed.', 'error');
+    }
+  };
+
+  const handleRestoreUser = async (userId, userName) => {
+    if (!window.confirm(`Restore "${userName}"'s account? They will be able to sign in again immediately.`)) return;
+    try {
+      await restoreUser(userId);
+      toast(`"${userName}" has been restored.`, 'success');
+      loadUsers();
+    } catch (err) {
+      toast(err.message || 'Restore failed.', 'error');
+    }
   };
 
   const handleCategorySubmit = async () => {
@@ -340,13 +370,21 @@ const UserManagement = ({ currentUser }) => {
   const approvedUsers = scopedUsers.filter(u => u.status === 'approved');
   const rejectedUsers = scopedUsers.filter(u => u.status === 'rejected');
   const bannedUsers = scopedUsers.filter(u => u.banned === true);
-  const deletedUsers = scopedUsers.filter(u => u.deleted === true);
+  // The backend exposes the soft-delete flag as `isDeleted` (camelCase). The older `deleted`
+  // key never existed on the API response, so the previous filter silently returned an empty list.
+  const deletedUsers = scopedUsers.filter(u => u.isDeleted === true);
 
   // Pagination for each long list (10–15 per page so headers + pagination fit on screen)
   const pendingPg  = usePagination(pendingRegistrations, 10);
-  const approvedPg = usePagination(approvedHospitals, 8);   // each row expands to show admins
+  const approvedPg = usePagination(approvedHospitals, 8);   // hospital registrations — each row expands to show admins
   const rejectedPg = usePagination(rejectedHospitals, 10);
   const appealsPg  = usePagination(appeals, 10);
+  const approvedUsersPg = usePagination(approvedUsers, 10);
+  const bannedPg   = usePagination(bannedUsers, 8);
+  const deletedPg  = usePagination(deletedUsers, 8);
+
+  // Tab state for the User Accounts card (Approved / Banned / Deleted)
+  const [userListTab, setUserListTab] = useState('approved');
 
   return (
     <div>
@@ -573,44 +611,251 @@ const UserManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Approved Users — Admin Only */}
+      {/* User Accounts — Admin Only — tabbed: Approved / Banned / Deleted */}
       {currentUser.role === 'admin' && (
       <div className="card">
         <div className="card-header">
-          <div className="card-title">✓ Approved Users</div>
-          <div className="card-sub">Active donors, recipients, admins, and hospitals</div>
+          <div className="card-title">User Accounts</div>
+          <div className="card-sub">Active, banned, and deleted user accounts</div>
         </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>User</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Registered</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {approvedUsers.length > 0 ? (
-                approvedUsers.map(user => (
-                  <UserRow
-                    key={user.id}
-                    user={user}
-                    onBan={openBanModal}
-                    onDelete={handleDeleteUser}
-                  />
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
-                    No approved users yet
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+
+        {/* Tab bar */}
+        <div role="tablist" style={{
+          display: 'flex',
+          gap: '4px',
+          borderBottom: '1px solid var(--border)',
+          padding: '0 4px',
+          marginBottom: '8px',
+        }}>
+          {[
+            { id: 'approved', label: '✓ Approved', count: approvedUsers.length, accent: 'var(--accent)' },
+            { id: 'banned',   label: '🚫 Banned',   count: bannedUsers.length,   accent: '#dc2626' },
+            { id: 'deleted',  label: '🗑️ Deleted', count: deletedUsers.length,  accent: '#9333ea' },
+          ].map(tab => {
+            const active = userListTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setUserListTab(tab.id)}
+                style={{
+                  padding: '10px 16px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  background: 'transparent',
+                  border: 'none',
+                  borderBottom: active ? `2px solid ${tab.accent}` : '2px solid transparent',
+                  color: active ? tab.accent : 'var(--text2)',
+                  cursor: 'pointer',
+                  transition: 'color .15s, border-color .15s',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                {tab.label}
+                <span style={{
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  padding: '2px 7px',
+                  borderRadius: '999px',
+                  background: active ? tab.accent : 'var(--surface3)',
+                  color: active ? '#fff' : 'var(--text3)',
+                  minWidth: '20px',
+                  textAlign: 'center',
+                }}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
         </div>
+
+        {/* Approved tab content */}
+        {userListTab === 'approved' && (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Registered</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {approvedUsersPg.slice.length > 0 ? (
+                    approvedUsersPg.slice.map(user => (
+                      <UserRow
+                        key={user.id}
+                        user={user}
+                        isSelf={user.id === currentUser.id}
+                        currentUser={currentUser}
+                        onBan={openBanModal}
+                        onDelete={handleDeleteUser}
+                      />
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No approved users yet
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {approvedUsers.length > 0 && <Pagination {...approvedUsersPg} label="approved users" />}
+          </>
+        )}
+
+        {/* Banned tab content */}
+        {userListTab === 'banned' && (
+          <>
+            <div className="table-wrap">
+              <table style={{ fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: '8px 10px' }}>User</th>
+                    <th style={{ padding: '8px 10px' }}>Type</th>
+                    <th style={{ padding: '8px 10px' }}>Reason</th>
+                    <th style={{ padding: '8px 10px' }}>Banned</th>
+                    <th style={{ padding: '8px 10px' }}>Status</th>
+                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bannedPg.slice.length > 0 ? bannedPg.slice.map(user => {
+                    const bd = user.banDetails || {};
+                    const banDateRaw = bd.banDate || bd.banned_at || null;
+                    const banDate = banDateRaw ? new Date(banDateRaw) : null;
+                    const validDate = banDate && !isNaN(banDate.getTime());
+                    const expiryRaw = bd.expiryDate || null;
+                    const expiryDate = expiryRaw ? new Date(expiryRaw) : null;
+                    const validExpiry = expiryDate && !isNaN(expiryDate.getTime());
+                    const daysRemaining = validExpiry ? Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24)) : null;
+                    const isPermanent = bd.banType === 'permanent';
+                    const reason = bd.detailedReason || bd.reason || bd.categoryLabel || '—';
+                    return (
+                      <tr key={user.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 10px' }}>
+                          <div style={{ fontWeight: '600' }}>{user.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user.email}</div>
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          <span className={isPermanent ? 'badge badge-red' : 'badge badge-amber'} style={{ fontSize: '10px' }}>
+                            {isPermanent ? 'Permanent' : 'Temporary'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '8px 10px', color: 'var(--text2)', maxWidth: '260px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={reason}>
+                          {reason}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: 'var(--text3)' }}>
+                          {validDate ? banDate.toLocaleDateString() : '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontWeight: '600', color: isPermanent ? 'var(--danger)' : daysRemaining > 0 ? 'var(--text1)' : 'var(--danger)' }}>
+                          {isPermanent ? 'Permanent' : daysRemaining === null ? '—' : daysRemaining > 0 ? `${daysRemaining}d left` : 'Expired'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                          <button
+                            className="btn btn-sm btn-outline"
+                            onClick={() => handleUnbanUser(user.id, user.name)}
+                            title="Reverse this ban and restore the account"
+                            style={{ fontSize: '11px', padding: '4px 10px' }}
+                          >
+                            ✓ Unban
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No banned users
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {bannedUsers.length > 0 && <Pagination {...bannedPg} label="banned users" />}
+          </>
+        )}
+
+        {/* Deleted tab content */}
+        {userListTab === 'deleted' && (
+          <>
+            <div className="table-wrap">
+              <table style={{ fontSize: '12px' }}>
+                <thead>
+                  <tr>
+                    <th style={{ padding: '8px 10px' }}>User</th>
+                    <th style={{ padding: '8px 10px' }}>Role</th>
+                    <th style={{ padding: '8px 10px' }}>Reason</th>
+                    <th style={{ padding: '8px 10px' }}>Deleted</th>
+                    <th style={{ padding: '8px 10px' }}>Recovery Window</th>
+                    <th style={{ padding: '8px 10px', textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deletedPg.slice.length > 0 ? deletedPg.slice.map(user => {
+                    const dd = user.deletionDetails || {};
+                    const delDateRaw = dd.deletionDate || null;
+                    const delDate = delDateRaw ? new Date(delDateRaw) : null;
+                    const validDel = delDate && !isNaN(delDate.getTime());
+                    const recDeadlineRaw = dd.recoveryDeadline || user.recoveryDeadline || null;
+                    const recDeadline = recDeadlineRaw ? new Date(recDeadlineRaw) : null;
+                    const daysLeft = recDeadline && !isNaN(recDeadline.getTime())
+                      ? Math.ceil((recDeadline - new Date()) / (1000 * 60 * 60 * 24))
+                      : null;
+                    const reason = dd.reason || dd.detailedReason || '—';
+                    return (
+                      <tr key={user.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 10px' }}>
+                          <div style={{ fontWeight: '600' }}>{user.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user.email}</div>
+                        </td>
+                        <td style={{ padding: '8px 10px' }}>
+                          <span className="badge badge-gray" style={{ fontSize: '10px' }}>{user.role.replace('_', ' ')}</span>
+                        </td>
+                        <td style={{ padding: '8px 10px', color: 'var(--text2)', maxWidth: '260px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={reason}>
+                          {reason}
+                        </td>
+                        <td style={{ padding: '8px 10px', color: 'var(--text3)' }}>
+                          {validDel ? delDate.toLocaleDateString() : '—'}
+                        </td>
+                        <td style={{ padding: '8px 10px', fontWeight: '600', color: daysLeft === null ? 'var(--text3)' : daysLeft > 0 ? 'var(--text1)' : 'var(--danger)' }}>
+                          {daysLeft === null ? '—' : daysLeft > 0 ? `${daysLeft}d left` : 'Expired'}
+                        </td>
+                        <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                          <button
+                            className="btn btn-sm btn-outline"
+                            onClick={() => handleRestoreUser(user.id, user.name)}
+                            title="Reverse the deletion and restore the account"
+                            disabled={daysLeft !== null && daysLeft <= 0}
+                            style={{ fontSize: '11px', padding: '4px 10px' }}
+                          >
+                            ↺ Restore
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                        No deleted users
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {deletedUsers.length > 0 && <Pagination {...deletedPg} label="deleted users" />}
+          </>
+        )}
       </div>
       )}
 
@@ -641,103 +886,6 @@ const UserManagement = ({ currentUser }) => {
                     </td>
                     <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
                       {user.registrationDate ? new Date(user.registrationDate).toLocaleDateString() : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Banned Users — Admin Only */}
-      {currentUser.role === 'admin' && bannedUsers.length > 0 && (
-        <div className="card" style={{ marginTop: '20px', borderColor: '#dc2626', background: '#fee2e2' }}>
-          <div className="card-header">
-            <div className="card-title">🚫 Banned Users ({bannedUsers.length})</div>
-            <div className="card-sub">Users temporarily or permanently banned</div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Ban Type</th>
-                  <th>Reason</th>
-                  <th>Ban Date</th>
-                  <th>Days Remaining</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bannedUsers.map(user => {
-                  const banDate = new Date(user.banDetails.banDate);
-                  const duration = user.banDetails.duration || 0;
-                  const expiryDate = new Date(banDate.getTime() + duration * 24 * 60 * 60 * 1000);
-                  const daysRemaining = Math.ceil((expiryDate - new Date()) / (1000 * 60 * 60 * 24));
-                  
-                  return (
-                    <tr key={user.id}>
-                      <td>
-                        <strong>{user.name}</strong>
-                        <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user.email}</div>
-                      </td>
-                      <td>
-                        <span className={user.banDetails.banType === 'permanent' ? 'badge badge-red' : 'badge badge-amber'}>
-                          {user.banDetails.banType === 'permanent' ? 'Permanent' : 'Temporary'}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: '12px', color: 'var(--text2)', maxWidth: '200px' }}>
-                        {user.banDetails.reason}
-                      </td>
-                      <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
-                        {banDate.toLocaleDateString()}
-                      </td>
-                      <td style={{ fontSize: '12px', fontWeight: '600', color: user.banDetails.banType === 'permanent' ? 'var(--danger)' : 'var(--text1)' }}>
-                        {user.banDetails.banType === 'permanent' ? '∞' : daysRemaining > 0 ? daysRemaining + ' days' : 'Expired'}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Deleted Users — Admin Only */}
-      {currentUser.role === 'admin' && deletedUsers.length > 0 && (
-        <div className="card" style={{ marginTop: '20px', borderColor: '#9333ea', background: '#f3e8ff' }}>
-          <div className="card-header">
-            <div className="card-title">🗑️ Deleted Users ({deletedUsers.length})</div>
-            <div className="card-sub">Permanently deleted user accounts</div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Role</th>
-                  <th>Deletion Reason</th>
-                  <th>Deleted Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deletedUsers.map(user => (
-                  <tr key={user.id}>
-                    <td>
-                      <strong>{user.name}</strong>
-                      <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user.email}</div>
-                    </td>
-                    <td>
-                      <span className="badge badge-gray">
-                        {user.role.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: '12px', color: 'var(--text2)', maxWidth: '250px' }}>
-                      {user.deletionReason}
-                    </td>
-                    <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
-                      {user.deletionDate ? new Date(user.deletionDate).toLocaleDateString() : '—'}
                     </td>
                   </tr>
                 ))}
@@ -1618,9 +1766,9 @@ const UserManagement = ({ currentUser }) => {
 };
 
 // User Row Component
-const UserRow = ({ user, onBan, onDelete }) => {
+const UserRow = ({ user, isSelf, currentUser, onBan, onDelete }) => {
   const statusBadge = user.status === 'approved' ? 'badge-green' : user.status === 'pending' ? 'badge-amber' : 'badge-red';
-  
+
   const roleBadgeMap = {
     super_admin: 'badge-purple',
     admin: 'badge-blue',
@@ -1628,9 +1776,21 @@ const UserRow = ({ user, onBan, onDelete }) => {
     donor: 'badge-green',
     recipient: 'badge-gray'
   };
-  
+
   const roleBadge = roleBadgeMap[user.role] || 'badge-gray';
-  const canDelete = user.role !== 'super_admin';
+
+  // Role hierarchy:
+  //   - never act on super_admin
+  //   - never act on yourself
+  //   - admins cannot act on other admins (peer rule)
+  //   - only super_admin OR the owning hospital can act on admins
+  let canAct = user.role !== 'super_admin' && !isSelf;
+  if (canAct && user.role === 'admin' && currentUser) {
+    const isSuperAdmin = currentUser.role === 'super_admin';
+    const isOwningHospital = currentUser.role === 'hospital' && Number(user.linkedHospitalId) === Number(currentUser.id);
+    canAct = isSuperAdmin || isOwningHospital;
+  }
+  const canDelete = canAct;
 
   return (
     <tr>

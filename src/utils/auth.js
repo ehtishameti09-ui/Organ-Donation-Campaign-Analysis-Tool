@@ -429,6 +429,16 @@ export const restoreDeletedAccount = async (userId) => {
   return result;
 };
 
+// Admin action: unban a user
+export const unbanUser = async (userId) => {
+  return await API.unbanUserViaAPI(userId);
+};
+
+// Admin action: restore a soft-deleted user
+export const restoreUser = async (userId) => {
+  return await API.restoreUserViaAPI(userId);
+};
+
 // No-op — backend handles auto-deletion via scheduler
 export const cleanupExpiredDeletedAccounts = () => {};
 

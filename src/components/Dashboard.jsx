@@ -684,29 +684,55 @@ const Dashboard = ({ user, onNavigate }) => {
   const showCharts = user.role === 'admin' || user.role === 'super_admin' || (user.role === 'hospital' && user.status === 'approved');
 
   useEffect(() => {
-    const loadData = async () => {
-      // ONE consolidated call replaces six. Cached server-side for 30s.
-      const [summary, chartDataResult] = await Promise.all([
-        getDashboardSummary(),
-        showCharts ? getChartData() : Promise.resolve(null),
-      ]);
+    let cancelled = false;
 
-      setActivities(summary.recent_activities || []);
-      setApprovedHospitals(summary.approved_hospitals || []);
-      setMetrics(summary.metrics || {});
-      setAllUsers(summary.recent_users || []);
-      // Donors/recipients now lazy-load if anything in the dashboard truly needs them; for now metrics counts come from the summary
-      setDonors([]);
-      setRecipients([]);
+    const loadData = async ({ withCharts } = { withCharts: true }) => {
+      try {
+        const [summary, chartDataResult] = await Promise.all([
+          getDashboardSummary(),
+          (withCharts && showCharts) ? getChartData() : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
 
-      if (showCharts && chartDataResult) {
-        initCharts(chartDataResult);
-      }
+        setActivities(summary.recent_activities || []);
+        setApprovedHospitals(summary.approved_hospitals || []);
+        setAllUsers(summary.recent_users || []);
+        setDonors([]);
+        setRecipients([]);
+
+        // If the consolidated summary lost the metrics for any reason (network blip, stale
+        // proxy cache, etc.), fall back to the dedicated /dashboard/metrics endpoint so the
+        // stat cards never get stuck at zero when there's real data behind them.
+        const m = summary.metrics || {};
+        if (m && typeof m.totalUsers === 'number') {
+          setMetrics(m);
+        } else {
+          try {
+            const fallback = await import('../utils/api.js').then(mod => mod.getDashboardMetricsViaAPI());
+            if (!cancelled && fallback) setMetrics(fallback);
+          } catch { setMetrics(m); }
+        }
+
+        if (withCharts && showCharts && chartDataResult) {
+          initCharts(chartDataResult);
+        }
+      } catch { /* swallow — next tick will retry */ }
     };
 
-    loadData();
+    loadData({ withCharts: true });
+
+    // Auto-refresh metrics every 20 seconds so new registrations / status changes
+    // surface without a manual reload. Charts only re-init on the first load.
+    const intervalId = setInterval(() => loadData({ withCharts: false }), 20000);
+
+    // Refresh immediately when the user comes back to the tab
+    const onFocus = () => loadData({ withCharts: false });
+    window.addEventListener('focus', onFocus);
 
     return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
       if (trendsChartInstance.current) trendsChartInstance.current.destroy();
       if (organsChartInstance.current) organsChartInstance.current.destroy();
     };
@@ -944,23 +970,93 @@ const Dashboard = ({ user, onNavigate }) => {
 
   // ---- ADMIN / SUPER_ADMIN Dashboard ----
   if (user.role === 'admin' || user.role === 'super_admin') {
-    const pendingHospitals = allUsers.filter(u => u.role === 'hospital' && u.status === 'pending').length;
+    // Use the global count from the backend, not the (limit-10) recent_users sample
+    const pendingHospitals = metrics.pendingHospitals || 0;
+    // "Pending Hospitals" only makes sense for super admin (hospital-linked admins
+    // can't approve hospitals). Hospital-linked admins get a 3-up grid instead.
+    const showPendingHospitalsCard = user.role === 'super_admin';
+    const gridClass = showPendingHospitalsCard ? 'grid4' : 'grid3';
+
+    // Icons for the breakdown chips, keyed by the backend's `key` field
+    const BREAKDOWN_ICONS = {
+      donors:      '🫀',
+      recipients:  '🩺',
+      hospitals:   '🏥',
+      hospital:    '🏥',
+      staff:       '👨‍⚕️',
+      admins:      '🛡️',
+      super_admin: '⭐',
+    };
+    const BREAKDOWN_COLORS = {
+      donors:      { bg: 'var(--accent-light)',  fg: 'var(--accent)' },
+      recipients:  { bg: 'var(--warning-light)', fg: 'var(--warning)' },
+      hospitals:   { bg: 'var(--primary-light)', fg: 'var(--primary)' },
+      hospital:    { bg: 'var(--primary-light)', fg: 'var(--primary)' },
+      staff:       { bg: '#f3f0ff',              fg: '#7c5cbf' },
+      admins:      { bg: 'var(--danger-light)',  fg: 'var(--danger)' },
+      super_admin: { bg: '#fff4e0',              fg: '#c2860b' },
+    };
+    const breakdown = Array.isArray(metrics.breakdown) ? metrics.breakdown.filter(b => (b.count || 0) > 0) : [];
 
     return (
       <div>
-        <div className="grid4" style={{ marginBottom: '20px' }}>
-          <StatCard value={metrics.totalUsers || 0} label="Total Users"
-            color="blue" change={`${metrics.totalDonors || 0} donors, ${metrics.totalRecipients || 0} recipients`} direction="neutral"
-            icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>} />
+        <div className={gridClass} style={{ marginBottom: '20px' }}>
+          {/* Total Users card with role breakdown chips below the value */}
+          <div className="stat-card">
+            <div className="stat-icon" style={{ background: 'var(--primary-light)', color: 'var(--primary)' }}>
+              <svg viewBox="0 0 24 24" strokeWidth="1.8" fill="none" stroke="currentColor">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+            </div>
+            <div className="stat-value">{metrics.totalUsers || 0}</div>
+            <div className="stat-label">{user.role === 'super_admin' ? 'Total Users' : 'Users at My Hospital'}</div>
+            {breakdown.length > 0 && (
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '6px',
+                marginTop: '10px',
+                paddingTop: '10px',
+                borderTop: '1px solid var(--border)',
+              }}>
+                {breakdown.map(item => {
+                  const c = BREAKDOWN_COLORS[item.key] || { bg: 'var(--surface3)', fg: 'var(--text2)' };
+                  return (
+                    <span key={item.key} style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '3px 8px',
+                      background: c.bg,
+                      color: c.fg,
+                      borderRadius: '999px',
+                      fontSize: '11px',
+                      fontWeight: '600',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      <span style={{ fontSize: '12px' }}>{BREAKDOWN_ICONS[item.key] || '•'}</span>
+                      <span>{item.count}</span>
+                      <span style={{ opacity: 0.85 }}>{item.label}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
           <StatCard value={metrics.totalDonors || 0} label="Registered Donors"
             color="green" change={`${metrics.approvedDonors || 0} approved`} direction="up"
             icon={<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>} />
           <StatCard value={metrics.totalRecipients || 0} label="Recipients on Waitlist"
             color="amber" change={`${metrics.approvedRecipients || 0} approved`} direction="neutral"
             icon={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></>} />
-          <StatCard value={pendingHospitals} label="Pending Hospitals"
-            color="red" change="Awaiting review" direction="neutral"
-            icon={<><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M12 7v10M7 12h10"/></>} />
+          {showPendingHospitalsCard && (
+            <StatCard value={pendingHospitals} label="Pending Hospitals"
+              color="red" change="Awaiting review" direction="neutral"
+              icon={<><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M12 7v10M7 12h10"/></>} />
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '20px' }}>
