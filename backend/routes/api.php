@@ -33,6 +33,22 @@ Route::post('/oauth/google/complete-registration', [GoogleAuthController::class,
 Route::post('/2fa/email/verify', [TwoFactorController::class, 'verifyLoginCode'])->name('2fa.email.verify');
 Route::post('/2fa/email/resend', [TwoFactorController::class, 'resendLoginCode'])->name('2fa.email.resend');
 
+// Public appeals endpoint — banned/deleted users can't log in, so they submit from
+// the login modal. Server-side validation ensures only actually banned/deleted users
+// can create appeals, and duplicate-pending checks prevent spam.
+Route::post('/appeals/public', [\App\Http\Controllers\AppealController::class, 'store'])->name('appeals.public.store');
+
+// Public marketing stats — used on the login page splash. Cached briefly.
+Route::get('/stats/public', function () {
+    return \Illuminate\Support\Facades\Cache::remember('stats:public:v1', 30, function () {
+        return [
+            'transplants'  => \App\Models\User::where('role', 'donor')->where('status', 'approved')->count(),
+            'activeDonors' => \App\Models\User::where('role', 'donor')->where('status', 'approved')->where('registration_complete', true)->count(),
+            'hospitals'    => \App\Models\User::where('role', 'hospital')->where('status', 'approved')->count(),
+        ];
+    });
+})->name('stats.public');
+
 // Authenticated routes
 Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->group(function () {
     // Auth routes
@@ -51,6 +67,7 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.update');
     Route::post('/users/{user}/ban', [UserController::class, 'ban'])->name('users.ban');
     Route::post('/users/{user}/unban', [UserController::class, 'unban'])->name('users.unban');
+    Route::post('/users/{user}/restore', [UserController::class, 'restore'])->name('users.restore');
     Route::post('/users/restore-self', [UserController::class, 'restoreSelf'])->name('users.restore-self');
     Route::post('/users/delete-self', [UserController::class, 'deleteSelf'])->name('users.delete-self');
     Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');

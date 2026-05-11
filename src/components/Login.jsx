@@ -20,6 +20,15 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [resendingOtp, setResendingOtp] = useState(false);
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0); // 40-second countdown; 0 = expired
 
+  // Live public stats shown on the splash panel
+  const [publicStats, setPublicStats] = useState({ transplants: null, activeDonors: null, hospitals: null });
+  useEffect(() => {
+    fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setPublicStats(d); })
+      .catch(() => {});
+  }, []);
+
   // Tick the OTP countdown every second while a challenge is active
   useEffect(() => {
     if (!twoFA || otpSecondsLeft <= 0) return;
@@ -117,6 +126,8 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   // Appeal State
   const [showAppealModal, setShowAppealModal] = useState(false);
   const [appealExplanation, setAppealExplanation] = useState('');
+  // 'ban' when appealing a ban, 'delete' when appealing an admin deletion
+  const [appealType, setAppealType] = useState('ban');
   const [appealLoading, setAppealLoading] = useState(false);
 
   // Run cleanup on component mount
@@ -163,27 +174,37 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [showAppealModal, appealExplanation, appealLoading]);
 
-  const handleAppealClick = () => {
-    if (bannedUserInfo) {
-      setAppealExplanation('');
-      setShowAppealModal(true);
-    }
+  const handleAppealClick = (type = 'ban') => {
+    setAppealType(type);
+    setAppealExplanation('');
+    setShowAppealModal(true);
   };
 
   const handleSubmitAppeal = async () => {
-    if (!appealExplanation.trim()) {
-      toast('🚨 Please enter your appeal explanation.', 'error');
+    if (appealExplanation.trim().length < 20) {
+      toast('Please write at least 20 characters explaining your appeal.', 'error');
+      return;
+    }
+
+    const target = appealType === 'delete' ? deletedUserInfo : bannedUserInfo;
+    if (!target?.id) {
+      toast('Unable to submit appeal — missing account info.', 'error');
       return;
     }
 
     setAppealLoading(true);
     try {
-      await submitAppeal(bannedUserInfo.id, appealExplanation);
-      toast('Appeal submitted successfully! An admin will review your appeal within 7 days.', 'success');
+      await submitAppeal(target.id, appealExplanation, {}, appealType);
+      toast('Appeal submitted. A different administrator will review it within 7 days.', 'success');
       setShowAppealModal(false);
       setAppealExplanation('');
-      setShowBannedModal(false);
-      setBannedUserInfo(null);
+      if (appealType === 'delete') {
+        setShowDeletedRecoveryModal(false);
+        setDeletedUserInfo(null);
+      } else {
+        setShowBannedModal(false);
+        setBannedUserInfo(null);
+      }
     } catch (err) {
       toast(err.message || 'Appeal submission failed.', 'error');
     } finally {
@@ -285,10 +306,34 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
       toast(`Welcome back, ${user.name}!`, 'success');
       setTimeout(() => onLoginSuccess(user), 500);
     } catch (error) {
+      // The backend may have sent us a rich payload — surface the right recovery modal
+      if (error.banned) {
+        setBannedUserInfo({
+          id: error.user_id,
+          name: error.user_name || email,
+          email: error.user_email || email,
+          ban_details: error.ban_details || {},
+          hospital_id: error.user_hospital_id || null,
+        });
+        setShowBannedModal(true);
+        setLoading(false);
+        return;
+      }
+      if (error.deleted) {
+        setDeletedUserInfo({
+          id: error.user_id,
+          name: error.user_name || email,
+          email: error.user_email || email,
+          deletionDetails: error.deletion_details || {},
+          hospital_id: error.user_hospital_id || null,
+        });
+        setShowDeletedRecoveryModal(true);
+        setLoading(false);
+        return;
+      }
+
       const msg = error.message || 'Login failed. Please check your credentials.';
-      if (msg.includes('banned')) {
-        toast('Your account has been banned. Use the appeal option below.', 'error');
-      } else if (msg.includes('verified') || msg.includes('verification')) {
+      if (msg.includes('verified') || msg.includes('verification')) {
         toast('Please verify your email before logging in.', 'error');
       } else if (msg.includes('credentials') || msg.includes('password') || msg.includes('401')) {
         toast('Incorrect email or password. Please try again.', 'error');
@@ -460,15 +505,15 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
         <div style={{ position: 'relative', zIndex: 2, margin: '24px 0' }}>
           <div className="auth-stats">
             <div className="auth-stat">
-              <div className="auth-stat-val">1,247</div>
+              <div className="auth-stat-val">{publicStats.transplants !== null ? publicStats.transplants.toLocaleString() : '—'}</div>
               <div className="auth-stat-lbl">Transplants</div>
             </div>
             <div className="auth-stat">
-              <div className="auth-stat-val">523</div>
+              <div className="auth-stat-val">{publicStats.activeDonors !== null ? publicStats.activeDonors.toLocaleString() : '—'}</div>
               <div className="auth-stat-lbl">Active Donors</div>
             </div>
             <div className="auth-stat">
-              <div className="auth-stat-val">48</div>
+              <div className="auth-stat-val">{publicStats.hospitals !== null ? publicStats.hospitals.toLocaleString() : '—'}</div>
               <div className="auth-stat-lbl">Hospitals</div>
             </div>
           </div>
@@ -735,12 +780,28 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
             {googleConfigured ? 'Continue with Google' : 'Google sign-in (not configured)'}
           </button>
 
-          <p style={{ textAlign: 'center', fontSize: '13px', color: 'var(--text2)' }}>
-            Don't have an account?{' '}
-            <a href="#" className="form-link" onClick={(e) => { e.preventDefault(); onCreateAccount && onCreateAccount(); }}>
-              Create account
-            </a>
-          </p>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); onCreateAccount && onCreateAccount(); }}
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              background: 'transparent',
+              border: '2px solid var(--primary)',
+              color: 'var(--primary)',
+              borderRadius: 'var(--radius)',
+              fontSize: '15px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              marginTop: '4px',
+              marginBottom: '12px',
+              transition: 'background .15s, color .15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--primary)'; e.currentTarget.style.color = '#fff'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--primary)'; }}
+          >
+            Don't have an account? Create one
+          </button>
 
           <div className="demo-box">
             <div className="demo-box-title">Demo Credentials — Click any role to test</div>
@@ -832,7 +893,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                 Close
               </button>
               {bannedUserInfo.banDetails?.banType !== 'permanent' && (
-                <button className="btn btn-primary" onClick={handleAppealClick}>
+                <button className="btn btn-primary" onClick={() => handleAppealClick('ban')}>
                   📝 Create Appeal
                 </button>
               )}
@@ -863,7 +924,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   <div style={{ marginBottom: '16px' }}>
                     <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '6px' }}>Reason</div>
                     <div style={{ fontSize: '12px', color: 'var(--text2)' }}>
-                      {deletedUserInfo.deletionDetails?.detailedReason || 'User requested deletion'}
+                      {deletedUserInfo.deletionDetails?.reason || deletedUserInfo.deletionDetails?.detailedReason || 'User requested deletion'}
                     </div>
                   </div>
 
@@ -875,21 +936,44 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   </div>
                 </>
               ) : (
-                <div style={{ padding: '12px', background: '#fee2e2', borderRadius: 'var(--radius)', borderLeft: '3px solid #dc2626' }}>
-                  <div style={{ fontSize: '11px', color: '#991b1b', fontWeight: '600', marginBottom: '6px' }}>⚠️ Note</div>
-                  <div style={{ fontSize: '12px', color: '#991b1b' }}>
-                    This is an admin deletion. You cannot recover this account directly. Please contact support if you believe this was a mistake.
+                <>
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '6px' }}>Deleted by</div>
+                    <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>
+                      {deletedUserInfo.deletionDetails?.deletingAdminName || 'an administrator'}
+                    </div>
                   </div>
-                </div>
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '6px' }}>Reason given</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text2)', background: 'var(--surface2)', padding: '10px', borderRadius: 'var(--radius)', whiteSpace: 'pre-wrap' }}>
+                      {deletedUserInfo.deletionDetails?.reason || deletedUserInfo.deletionDetails?.detailedReason || 'No reason provided'}
+                    </div>
+                  </div>
+                  {deletedUserInfo.deletionDetails?.recoveryDeadline && (
+                    <div style={{ marginBottom: '16px', fontSize: '11px', color: 'var(--text3)' }}>
+                      Recovery window closes on <strong>{new Date(deletedUserInfo.deletionDetails.recoveryDeadline).toLocaleDateString()}</strong>.
+                    </div>
+                  )}
+                  <div style={{ padding: '12px', background: '#f0fdf4', borderRadius: 'var(--radius)', borderLeft: '3px solid #10b981' }}>
+                    <div style={{ fontSize: '11px', color: '#166534', fontWeight: '600', marginBottom: '6px' }}>📋 Request Reinstatement</div>
+                    <div style={{ fontSize: '12px', color: '#166534' }}>
+                      If you believe this deletion was a mistake, you can submit a request. A different administrator at your hospital will review it within 7 days.
+                    </div>
+                  </div>
+                </>
               )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => { setShowDeletedRecoveryModal(false); setDeletedUserInfo(null); }}>
                 Close
               </button>
-              {deletedUserInfo.deletionDetails?.isSelfDelete && (
+              {deletedUserInfo.deletionDetails?.isSelfDelete ? (
                 <button className="btn btn-primary" onClick={handleRecoverAccount}>
                   ✅ Restore Account
+                </button>
+              ) : (
+                <button className="btn btn-primary" onClick={() => handleAppealClick('delete')}>
+                  📝 Request Reinstatement
                 </button>
               )}
             </div>
@@ -897,41 +981,60 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
         </div>
       )}
 
-      {/* Appeal Submission Modal */}
-      {showAppealModal && bannedUserInfo && (
+      {/* Appeal Submission Modal — works for both ban and delete appeals */}
+      {showAppealModal && (appealType === 'delete' ? deletedUserInfo : bannedUserInfo) && (() => {
+        const isDelete = appealType === 'delete';
+        const ctx = isDelete ? deletedUserInfo : bannedUserInfo;
+        const details = isDelete ? ctx?.deletionDetails : ctx?.banDetails;
+        return (
         <div className="modal-overlay show">
           <div className="modal" style={{ maxWidth: '550px' }}>
             <div className="modal-header" style={{ background: '#dbeafe' }}>
-              <h3>⚖️ Submit Appeal</h3>
+              <h3>⚖️ {isDelete ? 'Request Account Reinstatement' : 'Submit Appeal'}</h3>
               <button className="modal-close" onClick={() => setShowAppealModal(false)}>×</button>
             </div>
             <div className="modal-body">
               <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--surface2)', borderRadius: 'var(--radius)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '4px' }}>Ban Details</div>
+                <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '4px' }}>
+                  {isDelete ? 'Deletion Details' : 'Ban Details'}
+                </div>
                 <div style={{ fontSize: '12px' }}>
-                  <strong>Category:</strong> {BAN_CATEGORIES[bannedUserInfo.banDetails?.category]?.label}<br/>
-                  <strong>Type:</strong> {bannedUserInfo.banDetails?.banType === 'permanent' ? 'Permanent' : `Temporary (${bannedUserInfo.banDetails?.duration} days)`}
+                  {isDelete ? (
+                    <>
+                      <strong>Deleted by:</strong> {details?.deletingAdminName || 'an administrator'}<br/>
+                      {details?.deletionDate && <>
+                        <strong>Date:</strong> {new Date(details.deletionDate).toLocaleDateString()}
+                      </>}
+                    </>
+                  ) : (
+                    <>
+                      <strong>Category:</strong> {BAN_CATEGORIES[details?.category]?.label || details?.category}<br/>
+                      <strong>Type:</strong> {details?.banType === 'permanent' ? 'Permanent' : `Temporary (${details?.duration} days)`}
+                    </>
+                  )}
                 </div>
               </div>
 
               <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--surface1)', borderRadius: 'var(--radius)' }}>
-                <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '4px' }}>Reason</div>
+                <div style={{ fontSize: '11px', color: 'var(--text3)', fontWeight: '600', marginBottom: '4px' }}>Reason given</div>
                 <div style={{ fontSize: '12px', color: 'var(--text2)', whiteSpace: 'pre-wrap' }}>
-                  {bannedUserInfo.banDetails?.detailedReason}
+                  {details?.reason || details?.detailedReason || 'No reason provided'}
                 </div>
               </div>
 
               <div className="form-group">
-                <label className="form-label">Your Explanation & Defense *</label>
+                <label className="form-label">Your explanation *</label>
                 <textarea
                   className="form-input"
                   value={appealExplanation}
                   onChange={(e) => setAppealExplanation(e.target.value)}
-                  placeholder="Explain why you believe this ban should be reversed or reconsidered. Be clear and honest..."
+                  placeholder={isDelete
+                    ? "Explain why your account should be reinstated. Be clear and honest..."
+                    : "Explain why you believe this ban should be reversed or reconsidered..."}
                   style={{ minHeight: '120px' }}
                 />
                 <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
-                  An admin will review your appeal within 7 days. Your appeal must be submitted within 30 days of the ban.
+                  A different administrator at your hospital will review your appeal within 7 days. ({appealExplanation.length}/20 minimum)
                 </div>
               </div>
             </div>
@@ -939,13 +1042,14 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
               <button className="btn btn-ghost" onClick={() => setShowAppealModal(false)} disabled={appealLoading}>
                 Cancel
               </button>
-              <button className="btn btn-primary" onClick={handleSubmitAppeal} disabled={appealLoading || !appealExplanation.trim()}>
+              <button className="btn btn-primary" onClick={handleSubmitAppeal} disabled={appealLoading || appealExplanation.trim().length < 20}>
                 {appealLoading ? '⏳ Submitting...' : '📝 Submit Appeal'}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Forgot Password Modal */}
       {showForgotPassword && (

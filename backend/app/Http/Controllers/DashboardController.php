@@ -12,13 +12,16 @@ use Illuminate\Support\Facades\Cache;
 
 class DashboardController extends Controller
 {
-    /** GET /api/dashboard/summary — ONE consolidated call replacing 6 parallel ones. Cached 30s. */
+    /** GET /api/dashboard/summary — ONE consolidated call replacing 6 parallel ones.
+     *  Cached briefly (5s) so the same user hammering the dashboard doesn't run all the
+     *  count queries every render — but short enough that registrations & status changes
+     *  appear in near real-time. */
     public function summary(Request $request): JsonResponse
     {
         $user = $request->user();
         $cacheKey = "dashboard:summary:{$user->id}:{$user->role}";
 
-        $payload = Cache::remember($cacheKey, 30, function () use ($user) {
+        $payload = Cache::remember($cacheKey, 5, function () use ($user) {
             $hospitalScope = $user->isHospital() ? $user->id : ($user->linked_hospital_id ?? null);
 
             // Reuse existing metrics builder
@@ -87,8 +90,41 @@ class DashboardController extends Controller
             $recipientQuery->where('preferred_hospital_id', $hospitalScope);
         }
 
+        // Scope "Total Users" to the hospital when applicable so the count actually reflects
+        // who belongs to this hospital (donors + recipients + employees + the hospital user
+        // itself), instead of leaking the system-wide total.
+        if ($hospitalScope) {
+            $totalUsers = User::where(function ($q) use ($hospitalScope) {
+                $q->where('preferred_hospital_id', $hospitalScope)
+                  ->orWhere('linked_hospital_id', $hospitalScope)
+                  ->orWhere('id', $hospitalScope); // the hospital user itself
+            })->count();
+
+            // Role-by-role breakdown of the users tied to this hospital
+            $staffCount = User::whereIn('role', ['doctor', 'data_entry', 'auditor', 'admin'])
+                ->where('linked_hospital_id', $hospitalScope)
+                ->count();
+            $breakdown = [
+                ['key' => 'donors',     'label' => 'Donors',     'count' => $donorQuery->count()],
+                ['key' => 'recipients', 'label' => 'Recipients', 'count' => $recipientQuery->count()],
+                ['key' => 'staff',      'label' => 'Staff',      'count' => $staffCount],
+                ['key' => 'hospital',   'label' => 'Hospital',   'count' => 1],
+            ];
+        } else {
+            $totalUsers = User::count();
+            // System-wide breakdown for super admin
+            $breakdown = [
+                ['key' => 'donors',      'label' => 'Donors',      'count' => User::where('role', 'donor')->count()],
+                ['key' => 'recipients',  'label' => 'Recipients',  'count' => User::where('role', 'recipient')->count()],
+                ['key' => 'hospitals',   'label' => 'Hospitals',   'count' => User::where('role', 'hospital')->count()],
+                ['key' => 'admins',      'label' => 'Admins',      'count' => User::where('role', 'admin')->count()],
+                ['key' => 'staff',       'label' => 'Staff',       'count' => User::whereIn('role', ['doctor', 'data_entry', 'auditor'])->count()],
+                ['key' => 'super_admin', 'label' => 'Super Admin', 'count' => User::where('role', 'super_admin')->count()],
+            ];
+        }
+
         return [
-            'totalUsers' => User::count(),
+            'totalUsers' => $totalUsers,
             'totalDonors' => $donorQuery->count(),
             'totalRecipients' => $recipientQuery->count(),
             'totalHospitals' => User::where('role', 'hospital')->where('status', 'approved')->count(),
@@ -97,6 +133,7 @@ class DashboardController extends Controller
             'approvedDonors' => (clone $donorQuery)->where('status', 'approved')->count(),
             'approvedRecipients' => (clone $recipientQuery)->where('status', 'approved')->count(),
             'totalDocuments' => Document::count(),
+            'breakdown' => $breakdown,
         ];
     }
     /** GET /api/dashboard/chart-data — cached 60s */
@@ -188,8 +225,18 @@ class DashboardController extends Controller
             $recipientQuery->where('preferred_hospital_id', $hospitalScope);
         }
 
+        if ($hospitalScope) {
+            $totalUsers = User::where(function ($q) use ($hospitalScope) {
+                $q->where('preferred_hospital_id', $hospitalScope)
+                  ->orWhere('linked_hospital_id', $hospitalScope)
+                  ->orWhere('id', $hospitalScope);
+            })->count();
+        } else {
+            $totalUsers = User::count();
+        }
+
         return response()->json([
-            'totalUsers' => User::count(),
+            'totalUsers' => $totalUsers,
             'totalDonors' => $donorQuery->count(),
             'totalRecipients' => $recipientQuery->count(),
             'totalHospitals' => User::where('role', 'hospital')->where('status', 'approved')->count(),

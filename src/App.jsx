@@ -183,10 +183,21 @@ function App() {
       setUnreadCount(0);
       return;
     }
-    getUnreadNotifications(currentUser.id)
-      .then(unread => setUnreadCount(unread.length))
-      .catch(() => setUnreadCount(0));
-  }, [currentUser?.id]); // only re-run when the user ID changes, not on every object reference change
+    const refresh = () => {
+      getUnreadNotifications(currentUser.id)
+        .then(unread => setUnreadCount(unread.length))
+        .catch(() => setUnreadCount(0));
+    };
+    refresh();
+    // Poll the unread count every 30s so the topbar badge stays current
+    const intervalId = setInterval(refresh, 30000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [currentUser?.id]);
 
   // Refresh current user from API
   const refreshCurrentUser = async () => {
@@ -285,7 +296,7 @@ function App() {
 
     if (currentUser.role === 'super_admin') {
       items.push({ id: 'users', label: 'Hospital Registrations', icon: 'users' });
-      items.push({ id: 'admin-requests', label: 'Admin Requests', icon: 'inbox' });
+      items.push({ id: 'admin-requests', label: 'Admin Management', icon: 'inbox' });
     }
 
     if (currentUser.role === 'admin') {
@@ -302,12 +313,12 @@ function App() {
     }
 
     if (currentUser.role === 'hospital' && currentUser.status === 'approved') {
+      items.push({ id: 'admin-requests', label: 'Admin Management', icon: 'inbox' });
       items.push({ id: 'donors', label: 'Donor Management', icon: 'heart' });
       items.push({ id: 'recipients', label: 'Recipients', icon: 'activity' });
       items.push({ id: 'allocation', label: 'Allocation Engine', icon: 'cpu' });
       items.push({ id: 'matching', label: 'Matching & Governance', icon: 'shield' });
       items.push({ id: 'fairness', label: 'Fairness Lab', icon: 'scale' });
-      items.push({ id: 'admin-requests', label: 'Admin Requests', icon: 'inbox' });
     }
 
     if (currentUser.role === 'doctor') {
@@ -384,6 +395,7 @@ function App() {
           <AccountSettings
             user={currentUser}
             initialTab={settingsTab}
+            onNavigate={(page, tab) => navigateTo(page, tab)}
             onUpdate={(updatedUser) => {
               setCurrentUser(updatedUser);
               localStorage.setItem('odcat_current', JSON.stringify(updatedUser));
@@ -453,7 +465,7 @@ function App() {
       allocation: { title: 'Allocation Engine', sub: 'Explainable, version-controlled organ allocation with simulation' },
       matching:   { title: 'Matching & Governance', sub: 'Compatibility rules, hospital distances, override accountability' },
       fairness:   { title: 'Fairness Lab', sub: 'Auto-running fairness analysis, sensitivity reports, bias detection' },
-      'admin-requests': { title: 'Admin Account Requests', sub: 'Hospital-initiated requests for admin accounts. Super admin reviews & approves.' },
+      'admin-requests': { title: 'Admin Management', sub: 'Request, review, and manage hospital admin accounts.' },
       settings: { title: 'Account Settings', sub: 'Update your profile and preferences' },
       'complete-registration': { title: 'Complete Registration', sub: 'Sign the consent form, submit clinical info, and upload documents' },
       'complete-hospital-registration': { title: 'Complete Hospital Registration', sub: 'Provide hospital details for super admin review' },
@@ -533,9 +545,9 @@ function App() {
               <div className="user-details">
                 <div className="user-name">{currentUser.name}</div>
                 <div className="user-role">{getRoleLabel(currentUser.role)}</div>
-                {currentUser.linkedHospitalName && (
+                {(currentUser.linkedHospitalName || (currentUser.role === 'hospital' && currentUser.hospitalName)) && (
                   <div className="user-role" style={{ color: 'var(--primary)', marginTop: '2px' }}>
-                    🏥 {currentUser.linkedHospitalName}
+                    🏥 {currentUser.linkedHospitalName || currentUser.hospitalName}
                   </div>
                 )}
               </div>
@@ -554,8 +566,27 @@ function App() {
         <div className="main-wrap">
           <header id="topbar">
             <div className="topbar-breadcrumb">
-              <h2>{pageTitle}</h2>
-              <p>{pageSub}</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <h2 style={{ marginBottom: 0 }}>{pageTitle}</h2>
+                {(currentUser.linkedHospitalName || (currentUser.role === 'hospital' && currentUser.hospitalName)) && (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '4px 10px',
+                    background: 'var(--primary-light)',
+                    border: '1px solid rgba(26,92,158,.2)',
+                    borderRadius: '20px',
+                    fontSize: '12px',
+                    fontWeight: '600',
+                    color: 'var(--primary)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    🏥 {currentUser.linkedHospitalName || currentUser.hospitalName}
+                  </span>
+                )}
+              </div>
+              <p style={{ marginTop: '2px' }}>{pageSub}</p>
             </div>
             <div className="topbar-actions">
               {/* Notification Bell */}
@@ -579,9 +610,9 @@ function App() {
                 <div>
                   <div className="user-chip-name">{currentUser.name.split(' ')[0]}</div>
                   <div style={{ fontSize: '10px', color: 'var(--text3)' }}>{getRoleLabel(currentUser.role)}</div>
-                  {currentUser.linkedHospitalName && (
+                  {(currentUser.linkedHospitalName || (currentUser.role === 'hospital' && currentUser.hospitalName)) && (
                     <div style={{ fontSize: '10px', color: 'var(--primary)', fontWeight: '600' }}>
-                      🏥 {currentUser.linkedHospitalName}
+                      🏥 {currentUser.linkedHospitalName || currentUser.hospitalName}
                     </div>
                   )}
                 </div>

@@ -23,49 +23,82 @@ class AppealController extends Controller
         return response()->json(['appeals' => $query->orderByDesc('created_at')->get()]);
     }
 
-    /** POST /api/appeals — submit a ban/delete appeal */
+    /** POST /api/appeals — submit a ban/delete appeal (no auth needed: banned/deleted users
+     *  cannot log in, so they submit from the login modal). We protect against spam by
+     *  requiring the target user to actually be banned or soft-deleted. */
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'user_id' => ['required', 'integer', 'exists:users,id'],
-            'explanation' => ['required', 'string', 'min:20'],
-            'evidence' => ['nullable', 'array'],
+            'user_id'         => ['required', 'integer', 'exists:users,id'],
+            'explanation'     => ['required', 'string', 'min:20'],
+            'evidence'        => ['nullable', 'array'],
             'original_action' => ['required', Rule::in(['ban', 'delete'])],
         ]);
 
         $target = User::findOrFail($data['user_id']);
-        if ($target->id !== ($request->user()?->id ?? 0)) {
-            // Allow unauthenticated submission only with explicit user_id check (e.g., via banned modal)
-            // But require correct identification — for safety, require auth
-            if (!$request->user()) abort(401);
+
+        // Verify the user is in a state that warrants an appeal
+        if ($data['original_action'] === 'ban' && !$target->banned) {
+            return response()->json(['message' => 'This account is not currently banned.'], 422);
+        }
+        if ($data['original_action'] === 'delete' && !$target->is_deleted) {
+            return response()->json(['message' => 'This account is not currently deleted.'], 422);
         }
 
+        // Block duplicate pending appeals
+        $existing = Appeal::where('user_id', $target->id)
+            ->where('original_action', $data['original_action'])
+            ->where('status', 'pending')
+            ->exists();
+        if ($existing) {
+            return response()->json(['message' => 'You already have a pending appeal under review.'], 409);
+        }
+
+        // Source the original admin + reason from whichever details apply to this action
+        $sourceDetails = $data['original_action'] === 'ban' ? ($target->ban_details ?? []) : ($target->deletion_details ?? []);
+
         $appeal = Appeal::create([
-            'user_id' => $target->id,
-            'explanation' => $data['explanation'],
-            'evidence' => $data['evidence'] ?? null,
-            'original_action' => $data['original_action'],
-            'original_category' => optional($target->ban_details)['category'] ?? null,
-            'original_reason' => optional($target->ban_details)['detailed_reason'] ?? null,
-            'original_admin_id' => optional($target->ban_details)['admin_id'] ?? null,
-            'submitted_date' => now(),
+            'user_id'                => $target->id,
+            'explanation'            => $data['explanation'],
+            'evidence'               => $data['evidence'] ?? null,
+            'original_action'        => $data['original_action'],
+            'original_category'      => $sourceDetails['category'] ?? null,
+            'original_reason'        => $sourceDetails['detailed_reason'] ?? $sourceDetails['reason'] ?? null,
+            'original_admin_id'      => $sourceDetails['admin_id'] ?? null,
+            'submitted_date'         => now(),
             'admin_response_deadline' => now()->addDays(7),
-            'status' => 'pending',
+            'status'                 => 'pending',
         ]);
 
-        ActivityLogger::logAction($target->id, 'appeal_submitted', 'User submitted appeal', ['appeal_id' => $appeal->id]);
+        ActivityLogger::logAction($target->id, 'appeal_submitted', 'User submitted '.$data['original_action'].' appeal', ['appeal_id' => $appeal->id]);
 
-        // Notify all admins
-        $adminIds = User::whereIn('role', ['admin', 'super_admin'])->pluck('id');
-        foreach ($adminIds as $adminId) {
+        // Route the notification to admins of the same hospital, EXCLUDING the admin who took
+        // the original action (conflict of interest). Super admins are always notified as a
+        // fallback so appeals never go unseen.
+        $hospitalScope = $target->linked_hospital_id ?? $target->preferred_hospital_id;
+        $reviewerQuery = User::whereIn('role', ['admin', 'super_admin'])->whereNull('deleted_at');
+        $reviewerQuery->where(function ($q) use ($hospitalScope) {
+            $q->where('role', 'super_admin');
+            if ($hospitalScope) {
+                $q->orWhere(function ($q2) use ($hospitalScope) {
+                    $q2->where('role', 'admin')->where('linked_hospital_id', $hospitalScope);
+                });
+            }
+        });
+        if (!empty($sourceDetails['admin_id'])) {
+            $reviewerQuery->where('id', '!=', $sourceDetails['admin_id']);
+        }
+        $reviewerIds = $reviewerQuery->pluck('id');
+        foreach ($reviewerIds as $adminId) {
             Notification::create([
                 'user_id' => $adminId, 'type' => 'appeal_status',
-                'title' => 'New appeal submitted', 'message' => $target->name.' has submitted an appeal.',
-                'data' => ['appeal_id' => $appeal->id, 'user_id' => $target->id],
+                'title'   => 'New '.$data['original_action'].' appeal',
+                'message' => $target->name.' has submitted an appeal for review.',
+                'data'    => ['appeal_id' => $appeal->id, 'user_id' => $target->id, 'original_action' => $data['original_action']],
             ]);
         }
 
-        return response()->json(['message' => 'Appeal submitted.', 'appeal' => $appeal], 201);
+        return response()->json(['message' => 'Appeal submitted. Another administrator will review it within 7 days.', 'appeal' => $appeal], 201);
     }
 
     /** POST /api/appeals/{appeal}/review */
@@ -77,9 +110,20 @@ class AppealController extends Controller
             'notes' => ['required', 'string'],
         ]);
 
-        // Conflict-of-interest: cannot review own ban
+        if (!$admin->isAdmin()) {
+            return response()->json(['message' => 'Only administrators can review appeals.'], 403);
+        }
+        // Conflict-of-interest: cannot review your own ban/delete
         if ($appeal->original_admin_id && $appeal->original_admin_id === $admin->id) {
-            return response()->json(['message' => 'Conflict of interest. Another admin must review this appeal.'], 403);
+            return response()->json(['message' => 'Conflict of interest — another admin must review this appeal.'], 403);
+        }
+        // Hospital-scope: hospital-linked admins can only review appeals for users tied to
+        // their own hospital. Super admins can review anything.
+        if ($admin->role === 'admin' && $admin->linked_hospital_id) {
+            $targetHospital = $appeal->user->linked_hospital_id ?? $appeal->user->preferred_hospital_id;
+            if ($targetHospital !== $admin->linked_hospital_id) {
+                return response()->json(['message' => 'This appeal is for a user from another hospital.'], 403);
+            }
         }
 
         $statusMap = ['uphold' => 'denied', 'reverse' => 'approved', 'modify' => 'modified'];

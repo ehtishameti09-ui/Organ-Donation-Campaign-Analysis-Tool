@@ -15,11 +15,12 @@ const formatPKPhone = (value) => {
   return `${local.slice(0, 4)}-${local.slice(4)}`;
 };
 
+// Admins are NOT created here — they use the "Add Admin" flow in UserManagement.
+// The /users/create-employee endpoint only accepts these three roles.
 const ROLES = [
   { value: 'doctor', label: 'Doctor' },
   { value: 'data_entry', label: 'Data Entry Operator' },
   { value: 'auditor', label: 'Auditor' },
-  { value: 'admin', label: 'Admin' },
 ];
 
 const EmployeeManagement = ({ currentUser }) => {
@@ -44,6 +45,14 @@ const EmployeeManagement = ({ currentUser }) => {
         setHospitals(all);
       }
     }).catch(() => {});
+    // Auto-refresh every 20s and on tab focus so new employees appear live
+    const intervalId = setInterval(refresh, 20000);
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', onFocus);
+    };
   }, []);
 
   const refresh = async () => {
@@ -230,7 +239,18 @@ const EmployeeManagement = ({ currentUser }) => {
             {filtered.length === 0 && (
               <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No employees found.</td></tr>
             )}
-            {empPg.slice.map(emp => (
+            {empPg.slice.map(emp => {
+              // Role hierarchy: an admin cannot suspend/edit another admin.
+              // Only the super admin OR the owning hospital can act on admins.
+              const isSelf = emp.id === currentUser?.id;
+              let canAct = !isSelf;
+              if (canAct && emp.role === 'admin') {
+                const isSuperAdmin = currentUser?.role === 'super_admin';
+                const isOwningHospital = currentUser?.role === 'hospital'
+                  && Number(emp.linkedHospitalId) === Number(currentUser?.id);
+                canAct = isSuperAdmin || isOwningHospital;
+              }
+              return (
               <tr key={emp.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -254,18 +274,27 @@ const EmployeeManagement = ({ currentUser }) => {
                 <td style={{ padding: '12px 16px' }}>{getStatusBadge(emp.status, emp.banned)}</td>
                 <td style={{ padding: '12px 16px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    <button className="btn btn-sm btn-outline" onClick={() => openEdit(emp)}>Edit</button>
-                    <button
-                      className="btn btn-sm"
-                      style={{ background: emp.banned ? 'var(--accent-light)' : 'var(--warning-light)', color: emp.banned ? 'var(--accent)' : 'var(--warning)', border: 'none' }}
-                      onClick={() => handleToggleStatus(emp)}
-                    >
-                      {emp.banned ? 'Activate' : 'Suspend'}
-                    </button>
+                    {canAct ? (
+                      <>
+                        <button className="btn btn-sm btn-outline" onClick={() => openEdit(emp)}>Edit</button>
+                        <button
+                          className="btn btn-sm"
+                          style={{ background: emp.banned ? 'var(--accent-light)' : 'var(--warning-light)', color: emp.banned ? 'var(--accent)' : 'var(--warning)', border: 'none' }}
+                          onClick={() => handleToggleStatus(emp)}
+                        >
+                          {emp.banned ? 'Activate' : 'Suspend'}
+                        </button>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: '11px', color: 'var(--text3)', fontStyle: 'italic' }}>
+                        {isSelf ? 'You' : '—'}
+                      </span>
+                    )}
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {filtered.length > 0 && (

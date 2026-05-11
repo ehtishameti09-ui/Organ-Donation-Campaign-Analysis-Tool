@@ -194,6 +194,8 @@ class UserController extends Controller
             'app_notifications' => ['sometimes', 'boolean'],
             'status_updates' => ['sometimes', 'boolean'],
             'opportunity_alerts' => ['sometimes', 'boolean'],
+            'notification_prefs' => ['sometimes', 'array'],
+            'notification_prefs.*' => ['sometimes', 'boolean'],
 
             // Hospital profile fields — accepted as flat keys for convenience
             'hospitalName'        => ['sometimes', 'nullable', 'string', 'max:120'],
@@ -205,6 +207,24 @@ class UserController extends Controller
 
             // Or as nested object — both work
             'hospital_profile'    => ['sometimes', 'array'],
+
+            // Donor-profile fields — accepted as flat camelCase keys
+            'donationConsent'    => ['sometimes', 'boolean'],
+            'donationWillingness'=> ['sometimes', 'string', 'max:20'],
+            'familyNotified'     => ['sometimes', 'boolean'],
+            'pledgedOrgans'      => ['sometimes', 'array'],
+            'donationType'       => ['sometimes', Rule::in(['deceased', 'living', 'both'])],
+            'familyInformed'     => ['sometimes', 'boolean'],
+            'nextOfKin'          => ['sometimes', 'nullable', 'string', 'max:191'],
+            'contactPreference'  => ['sometimes', 'nullable', 'string', 'max:30'],
+            'availableForUrgent' => ['sometimes', 'boolean'],
+
+            // Recipient-profile fields — accepted as flat camelCase keys
+            'organNeeded'        => ['sometimes', 'nullable', 'string', 'max:60'],
+            'bloodCompatibility' => ['sometimes', 'nullable', 'string', 'max:191'],
+            'urgencySelf'        => ['sometimes', 'nullable', 'integer', 'min:1', 'max:10'],
+            'waitingListVisibility' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'travelReady'        => ['sometimes', 'boolean'],
         ], [
             'registrationNumber.regex' => 'Registration number must follow format like PMDC-AKU-1985-001 (uppercase code + dashes/numbers).',
             'licenseNumber.regex'      => 'License number must follow format like SHC-AKU-1985-LIC (uppercase code + dashes/numbers).',
@@ -236,10 +256,48 @@ class UserController extends Controller
             \Illuminate\Support\Facades\Cache::forget('hospitals:overview:v1');
         }
 
-        // Strip the hospital-profile keys before updating the user model
+        // Donor profile preferences (camelCase → snake_case mapping)
+        $donorMap = [
+            'donationConsent'    => 'donation_consent',
+            'donationWillingness'=> 'donation_willingness',
+            'familyNotified'     => 'family_notified',
+            'pledgedOrgans'      => 'pledged_organs',
+            'donationType'       => 'donation_type',
+            'familyInformed'     => 'family_informed',
+            'nextOfKin'          => 'next_of_kin',
+            'contactPreference'  => 'contact_preference',
+            'availableForUrgent' => 'available_for_urgent',
+        ];
+        $donorUpdates = collect($donorMap)
+            ->filter(fn($_v, $camel) => array_key_exists($camel, $data))
+            ->mapWithKeys(fn($snake, $camel) => [$snake => $data[$camel]])
+            ->toArray();
+        if ($user->role === 'donor' && !empty($donorUpdates)) {
+            \App\Models\DonorProfile::updateOrCreate(['user_id' => $user->id], $donorUpdates);
+        }
+
+        // Recipient profile preferences
+        $recipientMap = [
+            'organNeeded'           => 'organ_needed',
+            'bloodCompatibility'    => 'blood_compatibility',
+            'urgencySelf'           => 'urgency_self',
+            'waitingListVisibility' => 'waiting_list_visibility',
+            'travelReady'           => 'travel_ready',
+        ];
+        $recipientUpdates = collect($recipientMap)
+            ->filter(fn($_v, $camel) => array_key_exists($camel, $data))
+            ->mapWithKeys(fn($snake, $camel) => [$snake => $data[$camel]])
+            ->toArray();
+        if ($user->role === 'recipient' && !empty($recipientUpdates)) {
+            \App\Models\RecipientProfile::updateOrCreate(['user_id' => $user->id], $recipientUpdates);
+        }
+
+        // Strip the hospital + donor + recipient flat keys before updating the user model
         $userData = collect($data)->except([
             'hospitalName', 'registrationNumber', 'licenseNumber', 'hospitalAddress',
             'contactPerson', 'city', 'hospital_profile',
+            ...array_keys($donorMap),
+            ...array_keys($recipientMap),
         ])->toArray();
 
         if (!empty($userData)) {
@@ -280,6 +338,21 @@ class UserController extends Controller
 
         if ($user->isSuperAdmin()) {
             return response()->json(['message' => 'Cannot delete super admin.'], 403);
+        }
+        if ($request->user()->id === $user->id) {
+            return response()->json(['message' => 'You cannot delete your own account from here. Use Account Settings.'], 403);
+        }
+        // Role hierarchy: an admin cannot delete another admin. Only super admin OR the
+        // hospital that owns the linked admin can delete admin accounts.
+        if ($user->role === 'admin') {
+            $actor = $request->user();
+            $isSuperAdmin = $actor->role === 'super_admin';
+            $isOwningHospital = $actor->role === 'hospital' && (int) $user->linked_hospital_id === (int) $actor->id;
+            if (!$isSuperAdmin && !$isOwningHospital) {
+                return response()->json([
+                    'message' => 'Admins can only be deleted by the super admin or by the hospital they are linked to.',
+                ], 403);
+            }
         }
 
         $user->update([
@@ -324,6 +397,21 @@ class UserController extends Controller
         if ($user->isSuperAdmin()) {
             return response()->json(['message' => 'Cannot ban super admin.'], 403);
         }
+        if ($request->user()->id === $user->id) {
+            return response()->json(['message' => 'You cannot ban your own account.'], 403);
+        }
+        // Role hierarchy: an admin cannot ban another admin. Only the super admin OR the
+        // hospital that owns the linked admin can take action against admins.
+        if ($user->role === 'admin') {
+            $actor = $request->user();
+            $isSuperAdmin = $actor->role === 'super_admin';
+            $isOwningHospital = $actor->role === 'hospital' && (int) $user->linked_hospital_id === (int) $actor->id;
+            if (!$isSuperAdmin && !$isOwningHospital) {
+                return response()->json([
+                    'message' => 'Admins can only be banned by the super admin or by the hospital they are linked to.',
+                ], 403);
+            }
+        }
 
         $expiry = $data['ban_type'] === 'temporary' && !empty($data['duration'])
             ? now()->addDays((int)$data['duration'])
@@ -367,9 +455,12 @@ class UserController extends Controller
     /** POST /api/users/{user}/unban */
     public function unban(Request $request, User $user): JsonResponse
     {
-        $user->update(['banned' => false, 'status' => 'approved', 'ban_details' => null]);
-        ActivityLogger::logAction($user->id, 'ban_reversed', 'Ban reversed by admin', [], $request->user()->id);
         $actor = $request->user();
+        $authError = $this->checkUserActionPermission($actor, $user, 'unban');
+        if ($authError) return response()->json(['message' => $authError], 403);
+
+        $user->update(['banned' => false, 'status' => 'approved', 'ban_details' => null]);
+        ActivityLogger::logAction($user->id, 'ban_reversed', 'Ban reversed by admin', [], $actor->id);
         $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
         if ($scopeHospital) {
             ActivityLogger::logActivity(
@@ -384,7 +475,50 @@ class UserController extends Controller
             'title' => 'Account restored',
             'message' => 'Your account has been restored. You can log in normally.',
         ]);
-        return response()->json(['message' => 'User unbanned.']);
+        return response()->json([
+            'message' => 'User unbanned.',
+            'user' => app(AuthController::class)->userResource($user->fresh()),
+        ]);
+    }
+
+    /** POST /api/users/{user}/restore — admin/hospital restores a soft-deleted user.
+     *  Mirrors unban; the user keeps their data because the row was never actually destroyed. */
+    public function restore(Request $request, User $user): JsonResponse
+    {
+        $actor = $request->user();
+        $authError = $this->checkUserActionPermission($actor, $user, 'restore');
+        if ($authError) return response()->json(['message' => $authError], 403);
+        if (!$user->is_deleted) {
+            return response()->json(['message' => 'This account is not currently deleted.'], 422);
+        }
+
+        $user->update([
+            'is_deleted'        => false,
+            'status'            => 'approved',
+            'deletion_details'  => null,
+            'recovery_deadline' => null,
+        ]);
+
+        ActivityLogger::logAction($user->id, 'account_restored', 'Account restored by admin', [], $actor->id);
+        $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
+        if ($scopeHospital) {
+            ActivityLogger::logActivity(
+                'user_restored',
+                'User account restored',
+                "{$actor->name} restored {$user->name}'s account",
+                ['actor_id' => $actor->id, 'user_id' => $user->id, 'scope_hospital_id' => $scopeHospital]
+            );
+        }
+        Notification::create([
+            'user_id' => $user->id, 'type' => 'info',
+            'title'   => 'Account restored',
+            'message' => 'Your account has been restored by an administrator. You can log in normally.',
+        ]);
+
+        return response()->json([
+            'message' => 'User restored.',
+            'user'    => app(AuthController::class)->userResource($user->fresh()),
+        ]);
     }
 
     /** POST /api/users/me/restore — restore self-deleted account during recovery window */
@@ -440,5 +574,56 @@ class UserController extends Controller
         $user->tokens()->where('id', '!=', $user->currentAccessToken()->id)->delete();
         ActivityLogger::logAction($user->id, 'password_changed', 'Password changed by user');
         return response()->json(['message' => 'Password changed. Other sessions logged out.']);
+    }
+
+    /**
+     * Centralized authorization for admin-style actions (ban/unban/delete/restore) on a target user.
+     * Returns null if allowed, or an error message string if denied.
+     *
+     * Rules:
+     *   - You cannot act on a super admin
+     *   - You cannot act on yourself via these endpoints
+     *   - super_admin can act on anyone
+     *   - hospital can act on users tied to it (linked_hospital_id or preferred_hospital_id == self id),
+     *     including its own linked admins
+     *   - admin can act on non-admin users tied to its hospital (donors/recipients/employees) but NOT
+     *     on other admins (peer rule). Only super_admin or the owning hospital may act on admins.
+     */
+    private function checkUserActionPermission(User $actor, User $target, string $action): ?string
+    {
+        $verb = $action; // for nicer error messages
+        if ($target->isSuperAdmin()) {
+            return "Cannot {$verb} super admin.";
+        }
+        if ($actor->id === $target->id) {
+            return "You cannot {$verb} your own account.";
+        }
+        if ($actor->role === 'super_admin') return null;
+
+        if ($actor->role === 'hospital') {
+            $belongsToThisHospital =
+                (int) $target->linked_hospital_id === (int) $actor->id ||
+                (int) $target->preferred_hospital_id === (int) $actor->id ||
+                (int) $target->id === (int) $actor->id; // self check already above, but harmless
+            return $belongsToThisHospital
+                ? null
+                : "You can only {$verb} users tied to your hospital.";
+        }
+
+        if ($actor->role === 'admin') {
+            if ($target->role === 'admin') {
+                return "Admins cannot {$verb} other admins. Only the super admin or the owning hospital can do that.";
+            }
+            // Optional scope check: admin can only act within its own hospital
+            if ($actor->linked_hospital_id) {
+                $targetHospital = $target->linked_hospital_id ?? $target->preferred_hospital_id;
+                if ($targetHospital && (int) $targetHospital !== (int) $actor->linked_hospital_id) {
+                    return "You can only {$verb} users at your assigned hospital.";
+                }
+            }
+            return null;
+        }
+
+        return "You are not authorized to {$verb} users.";
     }
 }
