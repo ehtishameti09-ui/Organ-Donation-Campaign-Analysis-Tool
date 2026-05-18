@@ -1,22 +1,52 @@
 import { useState, useEffect } from 'react';
 import {
-  getDonors, getDonorsByHospital, verifyDonor, updateDonorDocumentStatus,
-  getVerificationMetrics, createNotification, logUserAction, addActivity
+  getDonors, getDonorsByHospital, verifyDonor, reviewDocument, getDocumentBlob,
+  getVerificationMetrics, createNotification, logUserAction, addActivity,
+  getAppeals, reviewAppeal
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
 import { ORGANS_LOWER as ORGANS } from '../utils/organs';
 import Pagination, { usePagination } from './Pagination';
 
-// Helper to download a single document file (used in row download button)
-const downloadDocument = (doc) => {
-  if (!doc?.data) return;
-  const link = document.createElement('a');
-  link.href = doc.data;
-  link.download = doc.name || 'document';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+// Friendly labels for document type keys uploaded by the donor wizard
+const DOC_TYPE_LABELS = {
+  cnic_front: 'CNIC — Front Side',
+  cnic_back: 'CNIC — Back Side',
+  idProof: 'Government ID Proof',
+  medicalCertificate: 'Medical Fitness Certificate',
+  other: 'Other Document',
+};
+const docTypeLabel = (t) => DOC_TYPE_LABELS[t] || (t ? t.replace(/[_-]/g, ' ').replace(/([A-Z])/g, ' $1').trim() : 'Document');
+
+// Securely download a single document file via the authenticated API.
+const downloadDocument = async (doc) => {
+  try {
+    const { url } = await getDocumentBlob(doc.id);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = doc.name || 'document';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch {
+    toast('Could not download document.', 'error');
+  }
+};
+
+// A donor may re-upload a document of the same type. Keep only the most
+// recent file per documentType so the reviewer sees a single, current entry.
+const latestDocsByType = (docs = []) => {
+  const byType = {};
+  for (const d of docs) {
+    const key = d.documentType || d.id;
+    const cur = byType[key];
+    if (!cur || new Date(d.uploadedAt || 0) >= new Date(cur.uploadedAt || 0)) {
+      byType[key] = d;
+    }
+  }
+  return Object.values(byType);
 };
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -81,10 +111,26 @@ const DonorManagement = ({ currentUser }) => {
   const [verifying, setVerifying] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
   const [lightboxDoc, setLightboxDoc] = useState(null);
+  const [appeals, setAppeals] = useState([]);
+  const [appealDecision, setAppealDecision] = useState('');
+
+  // Map: donor user id -> their pending case-rejection appeal
+  const appealByDonor = {};
+  for (const a of appeals) {
+    const act = a.original_action || a.originalAction;
+    if (act === 'case_rejection' && a.status === 'pending') {
+      appealByDonor[a.user_id || a.userId] = a;
+    }
+  }
+
+  const loadAppeals = () => getAppeals()
+    .then(list => setAppeals(Array.isArray(list) ? list : []))
+    .catch(() => {});
 
   useEffect(() => {
     const refresh = () => {
       loadDonors();
+      loadAppeals();
       getVerificationMetrics().then(m => setMetrics(m)).catch(() => {});
     };
     refresh();
@@ -114,6 +160,13 @@ const DonorManagement = ({ currentUser }) => {
         data = await getDonors();
       }
       setDonors(data);
+      // Keep an open review modal in sync so newly (re)uploaded documents
+      // appear without the admin having to close and reopen it.
+      setSelectedDonor(prev => {
+        if (!prev) return prev;
+        const fresh = data.find(d => d.id === prev.id);
+        return fresh || prev;
+      });
       const m = await getVerificationMetrics();
       setMetrics(m);
     } catch {}
@@ -137,6 +190,10 @@ const DonorManagement = ({ currentUser }) => {
       d.verificationStatus === 'under_review';
     if (activeTab === 'approved') return matchSearch && matchBlood && matchOrgan && matchFrom && matchTo &&
       d.verificationStatus === 'approved';
+    if (activeTab === 'rejected') return matchSearch && matchBlood && matchOrgan && matchFrom && matchTo &&
+      d.verificationStatus === 'rejected';
+    if (activeTab === 'appeal') return matchSearch && matchBlood && matchOrgan && matchFrom && matchTo &&
+      !!appealByDonor[d.id];
 
     return matchSearch && matchBlood && matchStatus && matchOrgan && matchFrom && matchTo;
   });
@@ -167,17 +224,56 @@ const DonorManagement = ({ currentUser }) => {
     }
   };
 
-  const handleDocStatus = async (docType, docStatus) => {
-    await updateDonorDocumentStatus(selectedDonor.id, docType, docStatus, currentUser.id);
-    const allDonors = await getDonors();
-    const updated = allDonors.find(d => d.id === selectedDonor.id);
-    if (updated) setSelectedDonor(updated);
-    await loadDonors();
-    toast(`Document marked as ${docStatus}.`, 'info');
+  const handleDocStatus = async (docId, docStatus) => {
+    try {
+      await reviewDocument(docId, docStatus);
+      const allDonors = currentUser.role === 'hospital'
+        ? await getDonorsByHospital(currentUser.id)
+        : await getDonors();
+      const updated = allDonors.find(d => d.id === selectedDonor.id);
+      if (updated) setSelectedDonor(updated);
+      await loadDonors();
+      toast(`Document marked as ${docStatus}.`, 'success');
+    } catch (e) {
+      toast(e.message || 'Could not update document.', 'error');
+    }
+  };
+
+  const openDocViewer = async (doc) => {
+    try {
+      const { url, type } = await getDocumentBlob(doc.id);
+      setLightboxDoc({ name: doc.name, data: url, type: type || doc.mimeType });
+    } catch {
+      toast('Could not open document.', 'error');
+    }
   };
 
   const handleMarkUnderReview = () => {
     handleVerify('under_review');
+  };
+
+  // Admin B reviews a rejected donor's appeal. 'reverse' reopens the case,
+  // 'uphold' keeps the rejection. The admin who rejected cannot act (conflict).
+  const handleAppealDecision = async (decision) => {
+    const appeal = appealByDonor[selectedDonor.id];
+    if (!appeal) return;
+    if (!verifyNotes.trim()) {
+      toast('Please add review notes for the appeal decision.', 'error');
+      return;
+    }
+    setAppealDecision(decision);
+    try {
+      await reviewAppeal(appeal.id, decision, verifyNotes, currentUser.id);
+      await Promise.all([loadDonors(), loadAppeals()]);
+      setShowModal(false);
+      toast(decision === 'reverse'
+        ? 'Appeal accepted — case reopened for review.'
+        : 'Appeal reviewed — rejection upheld.', decision === 'reverse' ? 'success' : 'info');
+    } catch (e) {
+      toast(e.message || 'Appeal review failed.', 'error');
+    } finally {
+      setAppealDecision('');
+    }
   };
 
   const resetFilters = () => {
@@ -294,6 +390,8 @@ const DonorManagement = ({ currentUser }) => {
           { key: 'pending', label: `Pending (${donors.filter(d => !d.verificationStatus || d.verificationStatus === 'pending').length})` },
           { key: 'review', label: `Under Review (${donors.filter(d => d.verificationStatus === 'under_review').length})` },
           { key: 'approved', label: `Approved (${donors.filter(d => d.verificationStatus === 'approved').length})` },
+          { key: 'rejected', label: `Rejected (${donors.filter(d => d.verificationStatus === 'rejected').length})` },
+          { key: 'appeal', label: `Under Appeal (${donors.filter(d => !!appealByDonor[d.id]).length})` },
         ].map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)}
             style={{
@@ -335,7 +433,7 @@ const DonorManagement = ({ currentUser }) => {
                 {pagedDonors.map(donor => {
                   const vs = donor.verificationStatus || 'pending';
                   const sc = statusConfig[vs] || statusConfig.pending;
-                  const docs = donor.uploadedDocuments || [];
+                  const docs = latestDocsByType(donor.uploadedDocuments || []);
                   return (
                     <tr key={donor.id}>
                       <td>
@@ -362,7 +460,12 @@ const DonorManagement = ({ currentUser }) => {
                           ))}
                         </div>
                       </td>
-                      <td><span className={`badge ${sc.cls}`}>{sc.label}</span></td>
+                      <td>
+                        <span className={`badge ${sc.cls}`}>{sc.label}</span>
+                        {appealByDonor[donor.id] && (
+                          <span className="badge badge-amber" style={{ marginLeft: '6px', fontSize: '10px' }}>⚖️ Under Appeal</span>
+                        )}
+                      </td>
                       <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
                         {donor.registrationDate ? new Date(donor.registrationDate).toLocaleDateString() : '—'}
                       </td>
@@ -484,36 +587,34 @@ const DonorManagement = ({ currentUser }) => {
                   <div style={{ background: 'var(--danger-light)', border: '1px solid var(--danger)', borderRadius: 'var(--radius)', padding: '12px', fontSize: '13px', color: 'var(--danger)' }}>
                     🔒 Documents are only visible to the assigned hospital
                   </div>
-                ) : (selectedDonor.uploadedDocuments || []).length === 0 ? (
+                ) : latestDocsByType(selectedDonor.uploadedDocuments || []).length === 0 ? (
                   <div style={{ background: 'var(--warning-light)', border: '1px solid var(--warning)', borderRadius: 'var(--radius)', padding: '12px', fontSize: '13px', color: 'var(--warning)' }}>
                     No documents uploaded yet
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    {(selectedDonor.uploadedDocuments || []).map((doc, i) => {
-                      const ds = selectedDonor.documentStatuses?.[doc.documentType] || {};
+                    {latestDocsByType(selectedDonor.uploadedDocuments || []).map((doc, i) => {
+                      const dStatus = doc.status || 'pending';
                       return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' }}>
+                        <div key={doc.id || i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)' }}>
                           <div style={{ width: '32px', height: '32px', background: 'var(--primary-light)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
                             📄
                           </div>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: '13px', fontWeight: '600' }}>{doc.name}</div>
+                            <div style={{ fontSize: '13px', fontWeight: '600' }}>{docTypeLabel(doc.documentType)}</div>
                             <div style={{ fontSize: '11px', color: 'var(--text3)' }}>
-                              {doc.documentType?.replace(/([A-Z])/g, ' $1').trim()} • {(doc.size / 1024).toFixed(1)} KB
+                              {doc.name} • {(doc.size / 1024).toFixed(1)} KB
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            {ds.status && (
-                              <span className={`badge ${ds.status === 'approved' ? 'badge-green' : ds.status === 'rejected' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: '10px' }}>
-                                {ds.status}
-                              </span>
-                            )}
-                            <button className="btn btn-xs btn-outline" onClick={() => setLightboxDoc(doc)} title="View document in viewer">👁 View</button>
+                            <span className={`badge ${dStatus === 'approved' ? 'badge-green' : dStatus === 'rejected' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: '10px' }}>
+                              {dStatus}
+                            </span>
+                            <button className="btn btn-xs btn-outline" onClick={() => openDocViewer(doc)} title="View document in viewer">👁 View</button>
                             <button className="btn btn-xs btn-outline" onClick={() => downloadDocument(doc)} title="Download document file">⬇ Download</button>
-                            <button className="btn btn-ghost btn-xs" onClick={() => handleDocStatus(doc.documentType, 'approved')}>✓ OK</button>
+                            <button className="btn btn-ghost btn-xs" onClick={() => handleDocStatus(doc.id, 'approved')}>✓ OK</button>
                             <button className="btn btn-xs" style={{ background: 'var(--danger-light)', color: 'var(--danger)', border: 'none' }}
-                              onClick={() => handleDocStatus(doc.documentType, 'rejected')}>✗ Reject</button>
+                              onClick={() => handleDocStatus(doc.id, 'rejected')}>✗ Reject</button>
                           </div>
                         </div>
                       );
@@ -526,23 +627,54 @@ const DonorManagement = ({ currentUser }) => {
               <div style={{ background: 'var(--surface2)', padding: '12px 14px', borderRadius: 'var(--radius)', marginBottom: '16px' }}>
                 <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text3)', marginBottom: '8px', textTransform: 'uppercase' }}>Required Documents</div>
                 {[
-                  { key: 'idProof', label: 'Government ID Proof (CNIC/Passport)' },
-                  { key: 'medicalCertificate', label: 'Medical Fitness Certificate' },
+                  { key: 'cnic_front', label: 'CNIC — Front Side', required: true },
+                  { key: 'cnic_back', label: 'CNIC — Back Side', required: true },
+                  { key: 'medicalCertificate', label: 'Medical Fitness Certificate', required: false },
                 ].map(req => {
                   const hasDoc = (selectedDonor.uploadedDocuments || []).some(d => d.documentType === req.key);
                   return (
                     <div key={req.key} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                      <span style={{ color: hasDoc ? 'var(--accent)' : 'var(--danger)', fontWeight: '700', fontSize: '14px' }}>{hasDoc ? '✓' : '✗'}</span>
-                      <span style={{ fontSize: '13px', color: 'var(--text1)' }}>{req.label}</span>
-                      {!hasDoc && <span className="badge badge-red" style={{ fontSize: '10px', marginLeft: 'auto' }}>Missing</span>}
+                      <span style={{ color: hasDoc ? 'var(--accent)' : (req.required ? 'var(--danger)' : 'var(--text3)'), fontWeight: '700', fontSize: '14px' }}>{hasDoc ? '✓' : (req.required ? '✗' : '—')}</span>
+                      <span style={{ fontSize: '13px', color: 'var(--text1)' }}>{req.label}{!req.required && ' (Optional)'}</span>
+                      {!hasDoc && req.required && <span className="badge badge-red" style={{ fontSize: '10px', marginLeft: 'auto' }}>Missing</span>}
+                      {!hasDoc && !req.required && <span className="badge badge-gray" style={{ fontSize: '10px', marginLeft: 'auto' }}>Not provided</span>}
                     </div>
                   );
                 })}
               </div>
 
+              {/* Appeal Review — shown when this donor has a pending appeal */}
+              {appealByDonor[selectedDonor.id] && (() => {
+                const ap = appealByDonor[selectedDonor.id];
+                const rejectingAdminId = ap.original_admin_id || ap.originalAdminId;
+                const isConflict = rejectingAdminId && Number(rejectingAdminId) === Number(currentUser.id);
+                return (
+                  <div style={{ marginBottom: '16px', border: '1px solid var(--warning)', borderRadius: 'var(--radius)', background: 'var(--warning-light)', padding: '14px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: '700', color: 'var(--warning)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: '8px' }}>
+                      ⚖️ Appeal Under Review
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '6px' }}>
+                      <strong>Original rejection reason:</strong> {ap.original_reason || ap.originalReason || '—'}
+                    </div>
+                    <div style={{ fontSize: '13px', color: 'var(--text1)', background: 'var(--surface)', borderRadius: '6px', padding: '10px', marginBottom: '8px' }}>
+                      <strong>Donor's appeal:</strong> {ap.explanation}
+                    </div>
+                    {isConflict ? (
+                      <div style={{ fontSize: '12px', color: 'var(--danger)', fontWeight: '600' }}>
+                        🔒 You rejected this case, so you cannot review its appeal. Another admin of this hospital must decide.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text3)' }}>
+                        Add review notes below, then Uphold or Reverse the decision.
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Verification Notes */}
               <div style={{ marginBottom: '16px' }}>
-                <label className="form-label">Verification Notes / Reason</label>
+                <label className="form-label">{appealByDonor[selectedDonor.id] ? 'Appeal Review Notes' : 'Verification Notes / Reason'}</label>
                 <textarea className="form-input" style={{ height: '80px', resize: 'vertical', paddingTop: '8px' }}
                   value={verifyNotes} onChange={e => setVerifyNotes(e.target.value)}
                   placeholder="Add notes about this donor's verification (required for rejection)..." />
@@ -561,23 +693,47 @@ const DonorManagement = ({ currentUser }) => {
 
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn btn-sm" style={{ background: 'var(--warning-light)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
-                onClick={handleMarkUnderReview} disabled={verifying}>
-                Mark Under Review
-              </button>
-              <button className="btn btn-danger btn-sm" onClick={() => handleVerify('rejected')} disabled={verifying}>
-                Reject
-              </button>
-              <button className="btn btn-primary btn-sm" onClick={() => handleVerify('approved')} disabled={verifying}>
-                {verifying ? 'Saving...' : 'Approve Donor'}
-              </button>
+              {appealByDonor[selectedDonor.id] ? (() => {
+                const ap = appealByDonor[selectedDonor.id];
+                const rejectingAdminId = ap.original_admin_id || ap.originalAdminId;
+                const isConflict = rejectingAdminId && Number(rejectingAdminId) === Number(currentUser.id);
+                const busy = !!appealDecision;
+                return (
+                  <>
+                    <button className="btn btn-danger btn-sm" disabled={isConflict || busy}
+                      onClick={() => handleAppealDecision('uphold')}>
+                      {appealDecision === 'uphold' ? 'Saving...' : 'Uphold Rejection'}
+                    </button>
+                    <button className="btn btn-primary btn-sm" disabled={isConflict || busy}
+                      onClick={() => handleAppealDecision('reverse')}>
+                      {appealDecision === 'reverse' ? 'Saving...' : 'Reverse — Reopen Case'}
+                    </button>
+                  </>
+                );
+              })() : (
+                <>
+                  <button className="btn btn-sm" style={{ background: 'var(--warning-light)', color: 'var(--warning)', border: '1px solid var(--warning)' }}
+                    onClick={handleMarkUnderReview} disabled={verifying}>
+                    Mark Under Review
+                  </button>
+                  <button className="btn btn-danger btn-sm" onClick={() => handleVerify('rejected')} disabled={verifying}>
+                    Reject
+                  </button>
+                  <button className="btn btn-primary btn-sm" onClick={() => handleVerify('approved')} disabled={verifying}>
+                    {verifying ? 'Saving...' : 'Approve Donor'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
       )}
 
       {/* Document Lightbox */}
-      {lightboxDoc && <DocumentLightboxModal doc={lightboxDoc} onClose={() => setLightboxDoc(null)} />}
+      {lightboxDoc && <DocumentLightboxModal doc={lightboxDoc} onClose={() => {
+        if (lightboxDoc.data?.startsWith('blob:')) URL.revokeObjectURL(lightboxDoc.data);
+        setLightboxDoc(null);
+      }} />}
     </div>
   );
 };

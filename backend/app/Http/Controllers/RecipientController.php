@@ -135,10 +135,20 @@ class RecipientController extends Controller
         $verificationMap = ['approve' => 'approved', 'reject' => 'rejected', 'request_info' => 'under_review'];
 
         $recipient->update(['status' => $statusMap[$data['action']]]);
-        $recipient->recipientProfile()->update([
+        $profileUpdate = [
             'verification_status' => $verificationMap[$data['action']],
             'case_status' => $data['action'] === 'approve' ? 'approved' : ($data['action'] === 'reject' ? 'rejected' : 'submitted'),
-        ]);
+        ];
+        if ($data['action'] === 'reject') {
+            $profileUpdate['rejected_by'] = $request->user()->id;
+            $profileUpdate['rejection_reason'] = $data['notes'] ?? null;
+            $profileUpdate['rejected_at'] = now();
+        } elseif ($data['action'] === 'approve') {
+            $profileUpdate['rejected_by'] = null;
+            $profileUpdate['rejection_reason'] = null;
+            $profileUpdate['rejected_at'] = null;
+        }
+        $recipient->recipientProfile()->update($profileUpdate);
 
         Notification::create([
             'user_id' => $recipient->id, 'type' => 'case_'.$data['action'],

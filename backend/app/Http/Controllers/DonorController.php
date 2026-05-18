@@ -19,7 +19,7 @@ class DonorController extends Controller
     public function index(Request $request): JsonResponse
     {
         $authUser = $request->user();
-        $query = User::where('role', 'donor')->with(['donorProfile', 'clinicalProfile']);
+        $query = User::where('role', 'donor')->with(['donorProfile', 'clinicalProfile', 'documents']);
 
         if ($authUser->isHospital()) {
             $query->where('preferred_hospital_id', $authUser->id);
@@ -110,7 +110,7 @@ class DonorController extends Controller
 
         return response()->json([
             'message' => 'Donor registration submitted for review.',
-            'user' => app(AuthController::class)->userResource($user->fresh()->load(['donorProfile', 'clinicalProfile'])),
+            'user' => app(AuthController::class)->userResource($user->fresh()->load(['donorProfile', 'clinicalProfile', 'documents'])),
         ]);
     }
 
@@ -128,10 +128,21 @@ class DonorController extends Controller
         $verificationMap = ['approve' => 'approved', 'reject' => 'rejected', 'request_info' => 'under_review'];
 
         $donor->update(['status' => $statusMap[$data['action']]]);
-        $donor->donorProfile()->update([
+        $profileUpdate = [
             'verification_status' => $verificationMap[$data['action']],
             'case_status' => $data['action'] === 'approve' ? 'approved' : ($data['action'] === 'reject' ? 'rejected' : 'submitted'),
-        ]);
+        ];
+        if ($data['action'] === 'reject') {
+            // Record who rejected so an appeal is routed to a DIFFERENT admin.
+            $profileUpdate['rejected_by'] = $request->user()->id;
+            $profileUpdate['rejection_reason'] = $data['notes'] ?? null;
+            $profileUpdate['rejected_at'] = now();
+        } elseif ($data['action'] === 'approve') {
+            $profileUpdate['rejected_by'] = null;
+            $profileUpdate['rejection_reason'] = null;
+            $profileUpdate['rejected_at'] = null;
+        }
+        $donor->donorProfile()->update($profileUpdate);
 
         Notification::create([
             'user_id' => $donor->id, 'type' => 'case_'.$data['action'],

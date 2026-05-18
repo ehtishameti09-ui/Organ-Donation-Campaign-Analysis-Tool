@@ -17,6 +17,7 @@ class DonorProfile extends Model
         'donation_consent', 'donation_willingness', 'family_notified',
         'contact_preference', 'available_for_urgent',
         'document_statuses', 'documents_resubmitted', 'resubmission_date',
+        'rejected_by', 'rejection_reason', 'rejected_at',
     ];
 
     protected function casts(): array
@@ -33,6 +34,7 @@ class DonorProfile extends Model
             'consent_date' => 'datetime',
             'submission_date' => 'datetime',
             'resubmission_date' => 'datetime',
+            'rejected_at' => 'datetime',
         ];
     }
 

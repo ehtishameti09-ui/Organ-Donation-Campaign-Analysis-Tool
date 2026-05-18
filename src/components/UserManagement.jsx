@@ -923,9 +923,12 @@ const UserManagement = ({ currentUser }) => {
                         <div style={{ fontSize: '11px', color: 'var(--text3)' }}>{user?.email || '—'}</div>
                       </td>
                       <td>
-                        <span className={(appeal.original_action || appeal.originalAction) === 'ban' ? 'badge badge-red' : 'badge badge-purple'}>
-                          {(appeal.original_action || appeal.originalAction) === 'ban' ? 'Ban' : 'Delete'}
-                        </span>
+                        {(() => {
+                          const act = appeal.original_action || appeal.originalAction;
+                          const map = { ban: ['badge badge-red', 'Ban'], delete: ['badge badge-purple', 'Delete'], case_rejection: ['badge badge-amber', 'Case Rejected'] };
+                          const [cls, label] = map[act] || ['badge', act];
+                          return <span className={cls}>{label}</span>;
+                        })()}
                       </td>
                       <td style={{ fontSize: '12px', color: 'var(--text3)' }}>
                         {new Date(appeal.submitted_date || appeal.submittedDate || appeal.created_at).toLocaleDateString()}
