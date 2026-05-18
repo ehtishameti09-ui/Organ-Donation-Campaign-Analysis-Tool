@@ -690,6 +690,34 @@ export const getDocumentsViaAPI = async (params = {}) => {
   return await response.json();
 };
 
+// Fetch a document's binary content with the auth token and return an object URL.
+// The download route requires a Bearer token, so a plain <img>/<a> tag cannot load it.
+export const fetchDocumentBlobViaAPI = async (documentId) => {
+  const token = localStorage.getItem('odcat_token');
+  const response = await fetch(`${API_BASE}/documents/${documentId}/download`, {
+    method: 'GET',
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    throw new Error('Failed to load document');
+  }
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), type: blob.type };
+};
+
+export const reviewDocumentViaAPI = async (documentId, status, notes = '') => {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/review`, {
+    method: 'POST',
+    headers: getHeaders(true),
+    body: JSON.stringify({ status, notes }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.message || 'Document review failed');
+  }
+  return await response.json();
+};
+
 // ===== ACTIVITIES API CALLS =====
 
 export const getActivitiesViaAPI = async () => {
@@ -1001,6 +1029,8 @@ export default {
   getActionLogsViaAPI,
   uploadDocumentsViaAPI,
   getDocumentsViaAPI,
+  fetchDocumentBlobViaAPI,
+  reviewDocumentViaAPI,
   getActivitiesViaAPI,
   getDonorsViaAPI,
   completeDonorRegistrationViaAPI,

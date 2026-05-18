@@ -521,8 +521,13 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
     getUserAppeals(user.id).then(a => setExistingAppeals(a)).catch(() => {});
   }, [user.id]);
 
-  const pendingBanAppeal = existingAppeals.find(a => a.status === 'pending');
-  const pendingCaseAppeal = existingAppeals.find(a => a.status === 'pending');
+  // This card only renders for a rejected donor/recipient case.
+  const isHospitalRejection = true;
+  const actionOf = (a) => a.original_action || a.originalAction;
+  const caseAppeals = existingAppeals.filter(a => actionOf(a) === 'case_rejection');
+  const pendingCaseAppeal = caseAppeals.find(a => a.status === 'pending');
+  const deniedCaseAppeal = caseAppeals.find(a => a.status === 'denied');
+  const pendingBanAppeal = null;
 
   const reviewDate = user.hospitalReviewDate ? new Date(user.hospitalReviewDate) : new Date();
   const deadline = new Date(reviewDate.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -532,8 +537,8 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
     if (!appealText.trim()) { toast('Please provide an explanation for your appeal.', 'error'); return; }
     setSubmittingAppeal(true);
     try {
-      await submitAppeal(user.id, appealText);
-      toast('Appeal submitted successfully. Administrators will review your case.', 'success');
+      await submitAppeal(user.id, appealText, {}, 'case_rejection');
+      toast('Appeal submitted. A different administrator will review your case.', 'success');
       setShowAppealForm(false);
       setAppealText('');
       const updated = await getUserAppeals(user.id);
@@ -567,19 +572,15 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
               </div>
             </div>
 
-            {isHospitalRejection && user.caseAppealRejected ? (
+            {deniedCaseAppeal ? (
               <div style={{ padding: '12px 16px', background: 'var(--danger-light)', borderRadius: '8px', fontSize: '13px', color: 'var(--danger)', fontWeight: '600' }}>
                 Your appeal has been reviewed and rejected. No further appeals are possible for this case.
               </div>
             ) : pendingCaseAppeal ? (
               <div style={{ padding: '12px 16px', background: 'var(--warning-light)', borderRadius: '8px', fontSize: '13px', color: 'var(--warning)', fontWeight: '600' }}>
-                Your appeal is being reviewed by the hospital. You will be notified of the outcome.
+                Your appeal is being reviewed by another administrator. You will be notified of the outcome.
               </div>
-            ) : pendingBanAppeal ? (
-              <div style={{ padding: '12px 16px', background: 'var(--warning-light)', borderRadius: '8px', fontSize: '13px', color: 'var(--warning)', fontWeight: '600' }}>
-                Your appeal is being reviewed by 3 administrators. You will be notified of the outcome.
-              </div>
-            ) : daysRemaining > 0 && !user.caseAppealRejected ? (
+            ) : daysRemaining > 0 ? (
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button className="btn" style={{ background: '#dc2626', color: '#fff', border: 'none' }}
                   onClick={() => setShowAppealForm(true)}>
@@ -603,7 +604,7 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>Appeal Rejection</h3>
             <p style={{ fontSize: '13px', color: 'var(--text3)', marginBottom: '16px' }}>
               {isHospitalRejection
-                ? 'Your appeal will be sent to the hospital for reconsideration of your case.'
+                ? 'Your appeal will be reviewed by a different administrator (not the one who rejected your case) for reconsideration.'
                 : 'Your appeal will be sent to 3 independent administrators for review. A majority vote (2 approvals) is required to restore your account.'}
             </p>
 

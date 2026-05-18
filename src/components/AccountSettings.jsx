@@ -4,7 +4,7 @@ import {
   getNotifications, markNotificationRead, getUserActionLogs, getUserAppeals,
   submitAppeal, uploadAdditionalHospitalDocuments, addActivity
 } from '../utils/auth';
-import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, confirmTwoFactorSetup, disableTwoFactor } from '../utils/api';
+import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, confirmTwoFactorSetup, disableTwoFactor, getMeViaAPI, uploadDocumentsViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 import { ORGANS as ORGANS_LIST } from '../utils/organs';
 
@@ -28,6 +28,23 @@ const DOCUMENT_CONFIG = {
   transplantLicense: { label: 'Transplant Authorization License', required: false, maxSizeMB: 10, sample: '🏅 HOTA authorization for transplant surgeries' },
 };
 
+// Donor / recipient document checklist — keys must match the registration wizard
+const DONOR_DOCS = [
+  { key: 'cnic_front', label: 'CNIC — Front Side', required: true },
+  { key: 'cnic_back', label: 'CNIC — Back Side', required: true },
+  { key: 'medicalCertificate', label: 'Medical Fitness Certificate', required: false },
+  { key: 'bloodTypeReport', label: 'Blood Type Lab Report', required: false },
+  { key: 'consentWitness', label: 'Witness Signed Consent', required: false },
+];
+const RECIPIENT_DOCS = [
+  { key: 'cnic_front', label: 'CNIC — Front Side', required: true },
+  { key: 'cnic_back', label: 'CNIC — Back Side', required: true },
+  { key: 'medicalReport', label: 'Medical Diagnosis Report', required: false },
+  { key: 'labReports', label: 'Recent Lab Reports', required: false },
+  { key: 'doctorReferral', label: 'Doctor Referral Letter', required: false },
+  { key: 'insuranceProof', label: 'Insurance/Treatment Coverage', required: false },
+];
+
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
@@ -43,6 +60,9 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
       base.splice(2, 0, { id: 'preferences', label: 'Preferences', icon: '⚙️' });
     }
     if (user.role === 'hospital') {
+      base.splice(2, 0, { id: 'documents', label: 'Documents', icon: '📂' });
+    }
+    if (user.role === 'donor' || user.role === 'recipient') {
       base.splice(2, 0, { id: 'documents', label: 'Documents', icon: '📂' });
     }
     if (user.role === 'super_admin') {
@@ -189,6 +209,10 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   // Document re-upload state
   const [uploadedDocs, setUploadedDocs] = useState({});
   const [reuploadSubmitting, setReuploadSubmitting] = useState(false);
+  // Donors/recipients may re-upload while pending, when info is requested, OR
+  // after a case rejection (so they can fix and re-submit the flagged documents).
+  const canReupload = ['pending', 'info_requested'].includes(user.status)
+    || (user.status === 'rejected' && (user.role === 'donor' || user.role === 'recipient'));
 
   // Two-factor authentication state
   const [twoFAEnabled, setTwoFAEnabled] = useState(!!user.twoFactorEnabled);
@@ -492,6 +516,38 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
       toast(err.message || 'Document upload failed.', 'error');
     } finally {
       setReuploadSubmitting(false);
+    }
+  };
+
+  // Donor/recipient: re-upload a single document type immediately. The new file
+  // goes back to the hospital/admin as "pending" for re-review.
+  const [docUploading, setDocUploading] = useState('');
+  // Optimistic record of just-reuploaded docs so the UI flips to "Pending Review"
+  // immediately, even before the /api/me refresh round-trips.
+  const [reuploaded, setReuploaded] = useState({});
+  const handleSingleDocReupload = async (docKey, file) => {
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast('File too large. Maximum 5 MB allowed.', 'error'); return; }
+    if (file.size < 3000) { toast('File appears too small or blank.', 'warning'); return; }
+    setDocUploading(docKey);
+    try {
+      // Upload the real File directly so backend validation errors surface
+      // instead of being silently swallowed.
+      await uploadDocumentsViaAPI([file], docKey);
+      // Optimistically flip this document to pending right away.
+      setReuploaded(prev => ({
+        ...prev,
+        [docKey]: { name: file.name, status: 'pending', uploadedAt: new Date().toISOString() },
+      }));
+      toast('Document uploaded. The hospital will review it again.', 'success');
+      try {
+        const fresh = await getMeViaAPI();
+        onUpdate && onUpdate(fresh);
+      } catch { /* keep current view if refresh fails */ }
+    } catch (err) {
+      toast(err.message || 'Upload failed. Please try a JPG/PNG/PDF under 10 MB.', 'error');
+    } finally {
+      setDocUploading('');
     }
   };
 
@@ -976,9 +1032,16 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                           </div>
                         )}
                       </div>
-                      <span className={`badge ${status === 'approved' ? 'badge-green' : status === 'rejected' ? 'badge-red' : 'badge-amber'}`}>
-                        {status === 'approved' ? '✓ Approved' : status === 'rejected' ? '✗ Rejected' : 'Pending Review'}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', maxWidth: '45%' }}>
+                        <span className={`badge ${status === 'approved' ? 'badge-green' : status === 'rejected' ? 'badge-red' : 'badge-amber'}`}>
+                          {status === 'approved' ? '✓ Approved' : status === 'rejected' ? '✗ Rejected' : 'Pending Review'}
+                        </span>
+                        {status === 'rejected' && doc.reviewNotes && (
+                          <span style={{ fontSize: '11px', color: 'var(--danger)', textAlign: 'right', lineHeight: '1.4' }}>
+                            Reason: {doc.reviewNotes}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -987,7 +1050,7 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
           </div>
 
           {/* Upload locked notice — shown when re-uploads are not allowed */}
-          {!['pending', 'info_requested'].includes(user.status) && (
+          {!canReupload && (
             <div className="card" style={{ background: 'var(--surface2)', border: '1px dashed var(--border)' }}>
               <div style={{ padding: '20px', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
                 <span style={{ fontSize: '24px' }}>🔒</span>
@@ -1003,12 +1066,14 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
           )}
 
           {/* Upload New / Additional Documents — only when status allows it */}
-          {['pending', 'info_requested'].includes(user.status) && (
+          {canReupload && (
           <div className="card">
             <div className="card-header">
-              <div className="card-title">{user.status === 'info_requested' ? 'Upload Additional Documents' : 'Upload / Update Documents'}</div>
+              <div className="card-title">{user.status === 'rejected' ? 'Re-upload Rejected Documents' : user.status === 'info_requested' ? 'Upload Additional Documents' : 'Upload / Update Documents'}</div>
               <div className="card-sub">
-                {user.status === 'info_requested'
+                {user.status === 'rejected'
+                  ? 'Replace the documents that were rejected, then submit. You can also appeal the decision from your Dashboard.'
+                  : user.status === 'info_requested'
                   ? 'Upload the documents requested by admin. Submitting will automatically change your status back to Pending Review.'
                   : 'You can update or add documents at any time.'}
               </div>
@@ -1070,6 +1135,86 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
           )}
         </div>
       )}
+
+      {/* ---- DOCUMENTS TAB (DONOR / RECIPIENT) ---- */}
+      {activeTab === 'documents' && (user.role === 'donor' || user.role === 'recipient') && (() => {
+        const checklist = user.role === 'recipient' ? RECIPIENT_DOCS : DONOR_DOCS;
+        const allDocs = user.uploadedDocuments || [];
+        const latestOf = (key) => {
+          const serverLatest = allDocs
+            .filter(d => d.documentType === key)
+            .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0))[0];
+          const optimistic = reuploaded[key];
+          if (optimistic && (!serverLatest || new Date(optimistic.uploadedAt) >= new Date(serverLatest.uploadedAt || 0))) {
+            return optimistic;
+          }
+          return serverLatest;
+        };
+        const hasRejected = checklist.some(c => latestOf(c.key)?.status === 'rejected');
+        return (
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">My Documents</div>
+              <div className="card-sub">
+                Review each document's status. If a document was rejected, re-upload a corrected copy —
+                the hospital will check it again.
+              </div>
+            </div>
+
+            {hasRejected && (
+              <div className="alert alert-warning" style={{ marginBottom: '16px' }}>
+                <span className="alert-icon">⚠️</span>
+                <div className="alert-content">
+                  <h4>Action needed</h4>
+                  <p>One or more documents were rejected. Please re-upload them below.</p>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {checklist.map(item => {
+                const doc = latestOf(item.key);
+                const status = doc?.status || (doc ? 'pending' : 'missing');
+                const badge = {
+                  approved: ['badge-green', '✓ Approved'],
+                  rejected: ['badge-red', '✗ Rejected'],
+                  pending: ['badge-amber', 'Pending Review'],
+                  missing: ['badge-gray', item.required ? 'Missing (Required)' : 'Not uploaded'],
+                }[status];
+                const busy = docUploading === item.key;
+                return (
+                  <div key={item.key} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '14px', background: status === 'rejected' ? 'var(--danger-light)' : 'var(--surface)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                      <div style={{ flex: 1, minWidth: '180px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '700' }}>
+                          {item.label}{item.required && <span style={{ color: 'var(--danger)' }}> *</span>}
+                        </div>
+                        {doc && (
+                          <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '2px' }}>
+                            {doc.name} • {doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString() : ''}
+                          </div>
+                        )}
+                      </div>
+                      <span className={`badge ${badge[0]}`}>{badge[1]}</span>
+                      <label className="btn btn-sm btn-outline" style={{ cursor: busy ? 'wait' : 'pointer', margin: 0 }}>
+                        {busy ? 'Uploading...' : (status === 'rejected' ? 'Re-upload' : doc ? 'Replace' : 'Upload')}
+                        <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
+                          disabled={busy}
+                          onChange={e => { handleSingleDocReupload(item.key, e.target.files?.[0]); e.target.value = ''; }} />
+                      </label>
+                    </div>
+                    {status === 'rejected' && doc?.reviewNotes && (
+                      <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--danger)' }}>
+                        <strong>Reason for rejection:</strong> {doc.reviewNotes}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ---- PREFERENCES TAB (DONOR) ---- */}
       {activeTab === 'preferences' && user.role === 'donor' && (

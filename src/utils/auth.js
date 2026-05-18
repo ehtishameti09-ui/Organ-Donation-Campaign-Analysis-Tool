@@ -470,13 +470,26 @@ export const getDonors = async () => {
   } catch { return []; }
 };
 
-export const verifyDonor = async (donorId, status, notes, adminId) => {
-  return await API.verifyDonorViaAPI(donorId, status, notes || '');
+// The UI uses verification-status words; the backend expects action verbs.
+const VERIFY_ACTION_MAP = {
+  approved: 'approve', approve: 'approve',
+  rejected: 'reject', reject: 'reject',
+  under_review: 'request_info', request_info: 'request_info',
 };
 
-export const updateDonorDocumentStatus = async (donorId, docType, docStatus, adminId) => {
-  await API.updateUserViaAPI(donorId, { documentStatuses: { [docType]: { status: docStatus } } });
-  return true;
+export const verifyDonor = async (donorId, status, notes, adminId) => {
+  const action = VERIFY_ACTION_MAP[status] || status;
+  return await API.verifyDonorViaAPI(donorId, action, notes || '');
+};
+
+// Approve / reject a single uploaded document by its id (hospital/admin).
+export const reviewDocument = async (documentId, status, notes = '') => {
+  return await API.reviewDocumentViaAPI(documentId, status, notes);
+};
+
+// Fetch a document's file (authenticated) and return an object URL + mime type.
+export const getDocumentBlob = async (documentId) => {
+  return await API.fetchDocumentBlobViaAPI(documentId);
 };
 
 export const getVerificationMetrics = async () => {
@@ -701,6 +714,32 @@ export const registerBasicAccount = async (name, email, password, role, phone = 
 };
 
 // Phase 2: Complete donor/recipient registration (consent + clinical + docs + hospital)
+// Convert a base64 data-URL (as produced by FileReader in the wizard) into a File
+const dataUrlToFile = (dataUrl, fileName) => {
+  const arr = String(dataUrl).split(',');
+  const mime = (arr[0].match(/:(.*?);/) || [])[1] || 'application/octet-stream';
+  const bstr = atob(arr[1]);
+  const u8arr = new Uint8Array(bstr.length);
+  for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+  return new File([u8arr], fileName || 'document', { type: mime });
+};
+
+// Upload the documents collected by the wizard to the backend (one call per type).
+// docs: array of { name, type, size, data (base64 dataURL), documentType }
+const uploadRegistrationDocuments = async (docs, targetUserId = null) => {
+  for (const doc of docs || []) {
+    try {
+      let fileObj = doc.file;
+      if (!fileObj && doc.data) {
+        fileObj = dataUrlToFile(doc.data, doc.name);
+      }
+      if (fileObj && doc.documentType) {
+        await API.uploadDocumentsViaAPI([fileObj], doc.documentType, targetUserId);
+      }
+    } catch { /* keep uploading the remaining documents */ }
+  }
+};
+
 export const completeDonorRecipientRegistration = async (userId, payload) => {
   const currentUser = getCurrentUser();
   const role = currentUser?.role || payload.role;
@@ -722,8 +761,9 @@ export const completeDonorRecipientRegistration = async (userId, payload) => {
     preferred_hospital_id:    hospitalId ? parseInt(hospitalId, 10) : null,
   };
 
+  let result;
   if (role === 'donor') {
-    return await API.completeDonorRegistrationViaAPI({
+    result = await API.completeDonorRegistrationViaAPI({
       ...common,
       pledged_organs:   payload.pledgedOrgans  || payload.pledged_organs  || [],
       donation_type:    payload.donationType   || payload.donation_type   || 'deceased',
@@ -731,7 +771,7 @@ export const completeDonorRecipientRegistration = async (userId, payload) => {
       next_of_kin:      payload.nextOfKin      || payload.next_of_kin     || null,
     });
   } else {
-    return await API.completeRecipientRegistrationViaAPI({
+    result = await API.completeRecipientRegistrationViaAPI({
       ...common,
       organ_needed:     payload.organNeeded    || payload.organ_needed,
       diagnosis:        payload.diagnosis      || null,
@@ -741,6 +781,12 @@ export const completeDonorRecipientRegistration = async (userId, payload) => {
       current_hospital: payload.currentHospital || payload.current_hospital || null,
     });
   }
+
+  // Upload the documents the user attached in the wizard so the hospital/admin
+  // can review them. The user uploads for themselves (targetUserId = null).
+  await uploadRegistrationDocuments(payload.documents);
+
+  return result;
 };
 
 // Get cases assigned to a hospital (for hospital review dashboard)
@@ -767,7 +813,9 @@ export const hospitalReviewCase = async (caseUserId, action, notes, hospitalId, 
 
 // User resubmits case with new info / docs after info_requested
 export const resubmitCaseInfo = async (userId, additionalData, newDocuments) => {
-  return await API.updateUserViaAPI(userId, { ...additionalData, status: 'submitted' });
+  const result = await API.updateUserViaAPI(userId, { ...additionalData, status: 'submitted' });
+  await uploadRegistrationDocuments(newDocuments);
+  return result;
 };
 
 // ===== ENHANCED HOSPITAL APPROVAL (with activity tracking) =====

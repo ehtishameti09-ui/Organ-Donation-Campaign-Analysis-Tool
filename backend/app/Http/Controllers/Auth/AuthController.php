@@ -108,7 +108,7 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Registration successful. Please check your email to verify your account.',
-            'user' => $this->userResource($user->fresh()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile'])),
+            'user' => $this->userResource($user->fresh()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile', 'documents'])),
             'token' => $token,
             'token_type' => 'Bearer',
         ], 201);
@@ -250,7 +250,7 @@ class AuthController extends Controller
         ActivityLogger::logAction($user->id, 'login_success', 'User logged in');
 
         return response()->json([
-            'user' => $this->userResource($user->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile'])),
+            'user' => $this->userResource($user->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile', 'documents'])),
             'token' => $token,
             'token_type' => 'Bearer',
         ]);
@@ -274,7 +274,7 @@ class AuthController extends Controller
      */
     public function me(Request $request): JsonResponse
     {
-        $user = $request->user()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile']);
+        $user = $request->user()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile', 'documents']);
         return response()->json(['user' => $this->userResource($user)]);
     }
 
@@ -404,6 +404,9 @@ class AuthController extends Controller
                 'caseStatus' => $user->donorProfile->case_status,
                 'consentSigned' => $user->donorProfile->consent_signed,
                 'submissionDate' => optional($user->donorProfile->submission_date)->toIso8601String(),
+                'hospitalReviewNotes' => $user->donorProfile->rejection_reason,
+                'hospitalReviewDate' => optional($user->donorProfile->rejected_at)->toIso8601String(),
+                'rejectedBy' => $user->donorProfile->rejected_by,
             ]);
         }
 
@@ -422,6 +425,9 @@ class AuthController extends Controller
                 'caseStatus' => $user->recipientProfile->case_status,
                 'consentSigned' => $user->recipientProfile->consent_signed,
                 'submissionDate' => optional($user->recipientProfile->submission_date)->toIso8601String(),
+                'hospitalReviewNotes' => $user->recipientProfile->rejection_reason,
+                'hospitalReviewDate' => optional($user->recipientProfile->rejected_at)->toIso8601String(),
+                'rejectedBy' => $user->recipientProfile->rejected_by,
             ]);
         }
 

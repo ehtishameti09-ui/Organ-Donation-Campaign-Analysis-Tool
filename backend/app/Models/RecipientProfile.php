@@ -19,6 +19,7 @@ class RecipientProfile extends Model
         'blood_compatibility', 'urgency_self', 'waiting_list_visibility',
         'travel_ready', 'notify_on_match', 'preferred_hospital_notes',
         'document_statuses', 'documents_resubmitted', 'resubmission_date',
+        'rejected_by', 'rejection_reason', 'rejected_at',
     ];
 
     protected function casts(): array
@@ -35,6 +36,7 @@ class RecipientProfile extends Model
             'consent_date' => 'datetime',
             'submission_date' => 'datetime',
             'resubmission_date' => 'datetime',
+            'rejected_at' => 'datetime',
         ];
     }
 

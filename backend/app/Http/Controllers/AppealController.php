@@ -32,7 +32,7 @@ class AppealController extends Controller
             'user_id'         => ['required', 'integer', 'exists:users,id'],
             'explanation'     => ['required', 'string', 'min:20'],
             'evidence'        => ['nullable', 'array'],
-            'original_action' => ['required', Rule::in(['ban', 'delete'])],
+            'original_action' => ['required', Rule::in(['ban', 'delete', 'case_rejection'])],
         ]);
 
         $target = User::findOrFail($data['user_id']);
@@ -43,6 +43,9 @@ class AppealController extends Controller
         }
         if ($data['original_action'] === 'delete' && !$target->is_deleted) {
             return response()->json(['message' => 'This account is not currently deleted.'], 422);
+        }
+        if ($data['original_action'] === 'case_rejection' && $target->status !== 'rejected') {
+            return response()->json(['message' => 'Your case is not currently rejected.'], 422);
         }
 
         // Block duplicate pending appeals
@@ -55,7 +58,19 @@ class AppealController extends Controller
         }
 
         // Source the original admin + reason from whichever details apply to this action
-        $sourceDetails = $data['original_action'] === 'ban' ? ($target->ban_details ?? []) : ($target->deletion_details ?? []);
+        if ($data['original_action'] === 'case_rejection') {
+            $profile = $target->donorProfile ?? $target->recipientProfile;
+            $sourceDetails = [
+                'admin_id'        => $profile?->rejected_by,
+                'reason'          => $profile?->rejection_reason,
+                'detailed_reason' => $profile?->rejection_reason,
+                'category'        => 'case_rejection',
+            ];
+        } elseif ($data['original_action'] === 'ban') {
+            $sourceDetails = $target->ban_details ?? [];
+        } else {
+            $sourceDetails = $target->deletion_details ?? [];
+        }
 
         $appeal = Appeal::create([
             'user_id'                => $target->id,
@@ -136,12 +151,24 @@ class AppealController extends Controller
         ]);
 
         if ($data['decision'] === 'reverse') {
-            // Lift the ban / restore deletion
+            // Lift the ban / restore deletion / reopen the rejected case
             $user = $appeal->user;
             if ($appeal->original_action === 'ban') {
                 $user->update(['banned' => false, 'status' => 'approved', 'ban_details' => null]);
-            } else {
+            } elseif ($appeal->original_action === 'delete') {
                 $user->update(['is_deleted' => false, 'status' => 'approved', 'deletion_details' => null, 'recovery_deadline' => null]);
+            } else {
+                // case_rejection — reopen the case for a fresh review
+                $user->update(['status' => 'submitted']);
+                $resetFields = [
+                    'verification_status' => 'submitted',
+                    'case_status' => 'submitted',
+                    'rejected_by' => null,
+                    'rejection_reason' => null,
+                    'rejected_at' => null,
+                ];
+                if ($user->donorProfile) $user->donorProfile()->update($resetFields);
+                if ($user->recipientProfile) $user->recipientProfile()->update($resetFields);
             }
         }
 
