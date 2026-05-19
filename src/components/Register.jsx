@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName } from '../utils/auth';
+import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName, capitalizeName } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 // ============================================================
@@ -180,7 +180,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     value.toUpperCase().replace(/[^A-Z0-9\-\/]/g, '').slice(0, 30);
 
   const formatPersonName = (value) =>
-    value.replace(/\s{2,}/g, ' ').slice(0, 60);
+    capitalizeName(value.replace(/\s{2,}/g, ' ').slice(0, 60));
 
   const handleInput = (e) => {
     const { name, value } = e.target;

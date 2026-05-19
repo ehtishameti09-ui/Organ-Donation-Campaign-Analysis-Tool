@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, unbanUser, restoreUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus } from '../utils/auth';
+import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, unbanUser, restoreUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus, capitalizeName } from '../utils/auth';
 import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI } from '../utils/api';
 import Pagination, { usePagination } from './Pagination';
 import { toast } from '../utils/toast';
@@ -518,10 +518,20 @@ const UserManagement = ({ currentUser }) => {
                             </div>
                             <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '2px' }}>✓ Approved</div>
                           </div>
-                          <div style={{ fontSize: '11px', color: 'var(--text3)', textAlign: 'right', maxWidth: '180px' }}>
-                            Admins are added via the<br/>
-                            <strong>Admin Requests</strong> page<br/>
-                            <span style={{ color: 'var(--text2)' }}>(hospital must request first)</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              onClick={() => handleRegistrationAction(hospital, 'view')}
+                              style={{ whiteSpace: 'nowrap' }}
+                            >
+                              👁 View Details
+                            </button>
+                            <div style={{ fontSize: '11px', color: 'var(--text3)', textAlign: 'right', maxWidth: '180px' }}>
+                              Admins are added via the<br/>
+                              <strong>Admin Requests</strong> page<br/>
+                              <span style={{ color: 'var(--text2)' }}>(hospital must request first)</span>
+                            </div>
                           </div>
                         </div>
 
@@ -974,7 +984,7 @@ const UserManagement = ({ currentUser }) => {
                 <input
                   className="form-input"
                   value={newAdmin.name}
-                  onChange={(e) => setNewAdmin({ ...newAdmin, name: e.target.value })}
+                  onChange={(e) => setNewAdmin({ ...newAdmin, name: capitalizeName(e.target.value) })}
                   placeholder="Dr. Sarah Ahmed"
                 />
               </div>
@@ -1030,76 +1040,139 @@ const UserManagement = ({ currentUser }) => {
                 {modalAction === 'approve' && '✓ Approve Hospital'}
                 {modalAction === 'reject' && '✗ Reject Application'}
                 {modalAction === 'info' && 'ℹ️ Request Additional Info'}
+                {modalAction === 'view' && '🏥 Hospital Details'}
               </h3>
               <button className="modal-close" onClick={() => setShowRegistrationModal(false)}>
                 ×
               </button>
             </div>
             <div className="modal-body">
-              <div style={{ 
-                background: 'var(--surface2)', 
-                padding: '12px', 
+              <div style={{
+                background: 'var(--surface2)',
+                padding: '12px',
                 borderRadius: 'var(--radius)',
                 marginBottom: '16px',
                 fontSize: '12px'
               }}>
-                <div style={{ fontWeight: '600', marginBottom: '4px' }}>{selectedRegistration.hospitalName}</div>
-                <div style={{ color: 'var(--text3)' }}>Reg #: {selectedRegistration.registrationNumber}</div>
+                <div style={{ fontWeight: '600', marginBottom: '8px', fontSize: '13px' }}>
+                  {selectedRegistration.hospitalName}
+                  {selectedRegistration.status && (() => {
+                    const sMap = {
+                      approved: ['badge-green', '✓ Approved'],
+                      rejected: ['badge-red', '✗ Rejected'],
+                      info_requested: ['badge-amber', 'Info Requested'],
+                      pending: ['badge-blue', 'Pending'],
+                    };
+                    const [cls, lbl] = sMap[selectedRegistration.status] || ['badge-blue', selectedRegistration.status];
+                    return <span className={`badge ${cls}`} style={{ marginLeft: '8px', fontSize: '10px' }}>{lbl}</span>;
+                  })()}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px' }}>
+                  {[
+                    ['Registration #', selectedRegistration.registrationNumber],
+                    ['License #', selectedRegistration.licenseNumber],
+                    ['Contact Person', selectedRegistration.contactPerson],
+                    ['Official Email', selectedRegistration.email],
+                    ['Phone', selectedRegistration.phone],
+                    ['Submitted', selectedRegistration.registrationDate ? new Date(selectedRegistration.registrationDate).toLocaleDateString() : null],
+                  ].map(([label, val]) => (
+                    <div key={label}>
+                      <div style={{ color: 'var(--text3)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.3px' }}>{label}</div>
+                      <div style={{ color: 'var(--text1)', wordBreak: 'break-word' }}>{val || '—'}</div>
+                    </div>
+                  ))}
+                </div>
+                {selectedRegistration.hospitalAddress && (
+                  <div style={{ marginTop: '8px' }}>
+                    <div style={{ color: 'var(--text3)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.3px' }}>Address</div>
+                    <div style={{ color: 'var(--text1)' }}>{selectedRegistration.hospitalAddress}</div>
+                  </div>
+                )}
+                {selectedRegistration.adminMessage && (
+                  <div style={{ marginTop: '10px', padding: '8px 10px', background: 'var(--warning-light)', borderRadius: 'var(--radius)', borderLeft: '3px solid var(--warning)' }}>
+                    <div style={{ color: 'var(--warning)', fontSize: '10px', textTransform: 'uppercase', fontWeight: '700', marginBottom: '2px' }}>You previously requested</div>
+                    <div style={{ color: 'var(--text1)' }}>{selectedRegistration.adminMessage}</div>
+                  </div>
+                )}
               </div>
 
-              {selectedRegistration.uploadedDocuments && selectedRegistration.uploadedDocuments.length > 0 && (
-                <div style={{ 
-                  background: 'var(--surface2)', 
-                  padding: '12px', 
-                  borderRadius: 'var(--radius)',
-                  marginBottom: '16px',
-                  fontSize: '12px'
-                }}>
-                  <div style={{ fontWeight: '600', marginBottom: '8px' }}>📄 Attached Documents</div>
-                  {selectedRegistration.uploadedDocuments.map((doc, idx) => {
-                    const docTypeLabels = {
-                      registrationCertificate: 'Hospital Registration Certificate',
-                      healthcareLicense: 'Healthcare License',
-                      emailVerification: 'Official Email Verification',
-                      basicDetailsForm: 'Basic Details Form',
-                      other: 'Additional Document'
-                    };
-                    return (
-                      <div key={idx} style={{ 
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'flex-start',
-                        paddingBottom: '8px',
-                        borderBottom: idx < selectedRegistration.uploadedDocuments.length - 1 ? '1px solid var(--border)' : 'none',
-                        marginBottom: '8px'
-                      }}>
-                        <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => previewDoc(doc)}>
-                          <div style={{ color: 'var(--text1)', textDecoration: 'underline' }}>{doc.name}</div>
-                          <div style={{ fontSize: '10px', color: 'var(--primary)', marginBottom: '2px' }}>
-                            {docTypeLabels[doc.documentType] || docTypeLabels.other}
+              {(() => {
+                const docTypeLabels = {
+                  registrationCertificate: 'Hospital Registration Certificate',
+                  healthcareLicense: 'Healthcare License',
+                  emailVerification: 'Official Email Verification',
+                  basicDetailsForm: 'Basic Details Form',
+                  other: 'Additional Document'
+                };
+                // One slot per document type — keep only the most recently
+                // uploaded file for each type so older copies don't repeat.
+                const latestByType = {};
+                (selectedRegistration.uploadedDocuments || []).forEach(doc => {
+                  const key = doc.documentType || 'other';
+                  const prev = latestByType[key];
+                  const t = new Date(doc.uploadedAt || 0).getTime();
+                  const pt = prev ? new Date(prev.uploadedAt || 0).getTime() : -1;
+                  if (!prev || t > pt || (t === pt && (doc.id || 0) > (prev.id || 0))) {
+                    latestByType[key] = doc;
+                  }
+                });
+                const docs = Object.values(latestByType);
+                if (docs.length === 0) return null;
+                return (
+                  <div style={{
+                    background: 'var(--surface2)',
+                    padding: '14px',
+                    borderRadius: 'var(--radius)',
+                    marginBottom: '16px',
+                    fontSize: '12px'
+                  }}>
+                    <div style={{ fontWeight: '600', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>📄</span> Attached Documents
+                      <span style={{ color: 'var(--text3)', fontWeight: '400' }}>({docs.length})</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {docs.map((doc, idx) => (
+                        <div key={doc.id || idx} style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          gap: '10px',
+                          padding: '10px 12px',
+                          background: 'var(--surface)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius)'
+                        }}>
+                          <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => previewDoc(doc)}>
+                            <div style={{ fontSize: '11px', color: 'var(--primary)', fontWeight: '600', marginBottom: '2px' }}>
+                              {docTypeLabels[doc.documentType] || docTypeLabels.other}
+                            </div>
+                            <div style={{ color: 'var(--text1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={doc.name}>
+                              {doc.name}
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'var(--text3)', marginTop: '2px' }}>
+                              {((doc.size || 0) / 1024 / 1024).toFixed(2)} MB
+                              {doc.uploadedAt && ` • ${new Date(doc.uploadedAt).toLocaleDateString()}`}
+                              {doc.status && doc.status !== 'pending' && (
+                                <span className={`badge ${doc.status === 'approved' ? 'badge-green' : 'badge-red'}`} style={{ marginLeft: '6px', fontSize: '9px' }}>
+                                  {doc.status}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div style={{ fontSize: '10px', color: 'var(--text3)' }}>
-                            {((doc.size || 0) / 1024 / 1024).toFixed(2)} MB
-                            {doc.status && doc.status !== 'pending' && (
-                              <span className={`badge ${doc.status === 'approved' ? 'badge-green' : 'badge-red'}`} style={{ marginLeft: '6px', fontSize: '9px' }}>
-                                {doc.status}
-                              </span>
-                            )}
+                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                            <button type="button" className="btn btn-xs btn-ghost" onClick={() => previewDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
+                              👁 View
+                            </button>
+                            <button type="button" className="btn btn-xs btn-outline" onClick={() => downloadDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
+                              ⬇ Download
+                            </button>
                           </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '6px', marginLeft: '8px' }}>
-                          <button type="button" className="btn btn-xs btn-ghost" onClick={() => previewDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
-                            👁 View
-                          </button>
-                          <button type="button" className="btn btn-xs btn-outline" onClick={() => downloadDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
-                            ⬇ Download
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {modalAction === 'approve' && (
                 <>
@@ -1177,16 +1250,18 @@ const UserManagement = ({ currentUser }) => {
             </div>
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => setShowRegistrationModal(false)}>
-                Cancel
+                {modalAction === 'view' ? 'Close' : 'Cancel'}
               </button>
-              <button 
-                className={`btn ${modalAction === 'reject' ? 'btn-danger' : 'btn-primary'}`} 
-                onClick={submitRegistrationAction}
-              >
-                {modalAction === 'approve' && 'Approve Hospital'}
-                {modalAction === 'reject' && 'Reject Application'}
-                {modalAction === 'info' && 'Request Information'}
-              </button>
+              {modalAction !== 'view' && (
+                <button
+                  className={`btn ${modalAction === 'reject' ? 'btn-danger' : 'btn-primary'}`}
+                  onClick={submitRegistrationAction}
+                >
+                  {modalAction === 'approve' && 'Approve Hospital'}
+                  {modalAction === 'reject' && 'Reject Application'}
+                  {modalAction === 'info' && 'Request Information'}
+                </button>
+              )}
             </div>
           </div>
         </div>

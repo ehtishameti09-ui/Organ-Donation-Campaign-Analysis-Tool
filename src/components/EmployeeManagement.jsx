@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals } from '../utils/auth';
+import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals, capitalizeName } from '../utils/auth';
 import { toast } from '../utils/toast';
 import Pagination, { usePagination } from './Pagination';
 
@@ -321,7 +321,7 @@ const EmployeeManagement = ({ currentUser }) => {
               <div className="form-group">
                 <label className="form-label">Full Name *</label>
                 <input className="form-input" value={formData.name}
-                  onChange={e => setFormData(p => ({ ...p, name: e.target.value }))} placeholder="Employee name" required />
+                  onChange={e => setFormData(p => ({ ...p, name: capitalizeName(e.target.value) }))} placeholder="Employee name" required />
               </div>
               <div className="form-group">
                 <label className="form-label">Email *</label>

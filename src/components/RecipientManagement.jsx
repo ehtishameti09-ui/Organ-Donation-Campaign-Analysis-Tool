@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   getRecipients, getRecipientsByHospital, updateRecipientCase, calculateSurvivalEstimate,
-  getWaitingTimeAnalytics
+  getWaitingTimeAnalytics, getAppeals
 } from '../utils/auth';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
@@ -64,11 +64,28 @@ const RecipientManagement = ({ currentUser }) => {
   const [saving, setSaving] = useState(false);
   const [caseForm, setCaseForm] = useState({});
   const [lightboxDoc, setLightboxDoc] = useState(null);
+  const [activeTab, setActiveTab] = useState('all');
+  const [appeals, setAppeals] = useState([]);
+
+  // Map: recipient user id -> their pending case-rejection appeal
+  const appealByRecipient = {};
+  for (const a of appeals) {
+    const act = a.original_action || a.originalAction;
+    if (act === 'case_rejection' && a.status === 'pending') {
+      appealByRecipient[a.user_id || a.userId] = a;
+    }
+  }
+  const pendingStatuses = ['', 'pending', 'submitted', 'registered'];
+
+  const loadAppeals = () => getAppeals()
+    .then(list => setAppeals(Array.isArray(list) ? list : []))
+    .catch(() => {});
 
   useEffect(() => {
-    loadRecipients();
-    const intervalId = setInterval(loadRecipients, 20000);
-    const onFocus = () => loadRecipients();
+    const refresh = () => { loadRecipients(); loadAppeals(); };
+    refresh();
+    const intervalId = setInterval(refresh, 20000);
+    const onFocus = () => refresh();
     window.addEventListener('focus', onFocus);
     return () => {
       clearInterval(intervalId);
@@ -109,7 +126,16 @@ const RecipientManagement = ({ currentUser }) => {
         (filterUrgency === 'high' && urgency >= 7) ||
         (filterUrgency === 'medium' && urgency >= 4 && urgency < 7) ||
         (filterUrgency === 'low' && urgency < 4);
-      return matchSearch && matchOrgan && matchStatus && matchUrgency;
+
+      const vs = r.verificationStatus || '';
+      let matchTab = true;
+      if (activeTab === 'pending')  matchTab = pendingStatuses.includes(vs);
+      else if (activeTab === 'review')   matchTab = vs === 'under_review';
+      else if (activeTab === 'approved') matchTab = vs === 'approved';
+      else if (activeTab === 'rejected') matchTab = vs === 'rejected';
+      else if (activeTab === 'appeal')   matchTab = !!appealByRecipient[r.id];
+
+      return matchSearch && matchOrgan && matchStatus && matchUrgency && matchTab;
     })
     .sort((a, b) => {
       if (sortBy === 'urgency') return (parseFloat(b.urgencyScore) || 0) - (parseFloat(a.urgencyScore) || 0);
@@ -284,6 +310,29 @@ const RecipientManagement = ({ currentUser }) => {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Status tabs */}
+      <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', background: 'var(--surface)', borderRadius: 'var(--radius)', padding: '4px', border: '1px solid var(--border)', width: 'fit-content', flexWrap: 'wrap' }}>
+        {[
+          { key: 'all',      label: `All (${recipients.length})` },
+          { key: 'pending',  label: `Pending (${recipients.filter(r => pendingStatuses.includes(r.verificationStatus || '')).length})` },
+          { key: 'review',   label: `Under Review (${recipients.filter(r => r.verificationStatus === 'under_review').length})` },
+          { key: 'approved', label: `Approved (${recipients.filter(r => r.verificationStatus === 'approved').length})` },
+          { key: 'rejected', label: `Rejected (${recipients.filter(r => r.verificationStatus === 'rejected').length})` },
+          { key: 'appeal',   label: `Under Appeal (${recipients.filter(r => !!appealByRecipient[r.id]).length})` },
+        ].map(t => (
+          <button key={t.key} onClick={() => setActiveTab(t.key)}
+            style={{
+              padding: '6px 14px', borderRadius: '6px', border: 'none',
+              fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+              background: activeTab === t.key ? 'var(--primary)' : 'transparent',
+              color: activeTab === t.key ? '#fff' : 'var(--text2)',
+              transition: 'all .15s'
+            }}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {/* Recipient List */}

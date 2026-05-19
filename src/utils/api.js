@@ -225,6 +225,17 @@ export const sendPasswordResetLinkViaAPI = async (email) => {
   return await response.json();
 };
 
+export const verifyResetCodeViaAPI = async (email, code) => {
+  const response = await fetch(`${API_BASE}/password-reset/verify-code`, {
+    method: 'POST',
+    headers: getHeaders(false),
+    body: JSON.stringify({ email, code }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || 'Code verification failed');
+  return data;
+};
+
 export const resetPasswordViaAPI = async (email, token, password) => {
   const response = await fetch(`${API_BASE}/password-reset/reset`, {
     method: 'POST',
@@ -594,6 +605,24 @@ export const restoreSelfViaAPI = async () => {
   return await response.json();
 };
 
+// Public self-restore from the login screen (deleted user has no token, so we
+// re-verify their credentials). On success the backend returns a fresh token
+// and the user is signed straight back in.
+export const restoreSelfPublicViaAPI = async (email, password) => {
+  const response = await fetch(`${API_BASE}/users/restore-self-public`, {
+    method: 'POST',
+    headers: getHeaders(false),
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || 'Account restoration failed');
+  if (data.token) {
+    localStorage.setItem('odcat_token', data.token);
+    localStorage.setItem('odcat_user', JSON.stringify(data.user));
+  }
+  return data;
+};
+
 export const getAppealsViaAPI = async () => {
   const response = await fetch(`${API_BASE}/appeals`, {
     method: 'GET',
@@ -639,6 +668,29 @@ export const getActionLogsViaAPI = async () => {
     headers: getHeaders(true),
   });
   if (!response.ok) throw new Error('Failed to fetch action logs');
+  return await response.json();
+};
+
+// Scoped audit trail (super_admin/auditor: all; hospital/hospital-admin: own
+// hospital). Accepts { q, action_type, date_from, date_to, limit }.
+export const getAuditLogsViaAPI = async (params = {}) => {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== '' && v != null)
+  ).toString();
+  const response = await fetch(`${API_BASE}/audit-logs${qs ? `?${qs}` : ''}`, {
+    method: 'GET',
+    headers: getHeaders(true),
+  });
+  if (!response.ok) throw new Error('Failed to fetch audit logs');
+  return await response.json();
+};
+
+export const getSecurityAlertsViaAPI = async () => {
+  const response = await fetch(`${API_BASE}/security/alerts`, {
+    method: 'GET',
+    headers: getHeaders(true),
+  });
+  if (!response.ok) throw new Error('Failed to fetch security alerts');
   return await response.json();
 };
 
@@ -999,6 +1051,7 @@ export default {
   verifyEmailViaAPI,
   resendVerificationViaAPI,
   sendPasswordResetLinkViaAPI,
+  verifyResetCodeViaAPI,
   resetPasswordViaAPI,
   getUsersViaAPI,
   getUserViaAPI,
@@ -1023,10 +1076,13 @@ export default {
   verifyRecipientViaAPI,
   deleteSelfViaAPI,
   restoreSelfViaAPI,
+  restoreSelfPublicViaAPI,
   getAppealsViaAPI,
   submitAppealViaAPI,
   reviewAppealViaAPI,
   getActionLogsViaAPI,
+  getAuditLogsViaAPI,
+  getSecurityAlertsViaAPI,
   uploadDocumentsViaAPI,
   getDocumentsViaAPI,
   fetchDocumentBlobViaAPI,

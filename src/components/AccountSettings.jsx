@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import {
   userSelfDeleteAccount,
   getNotifications, markNotificationRead, getUserActionLogs, getUserAppeals,
-  submitAppeal, uploadAdditionalHospitalDocuments, addActivity
+  submitAppeal, uploadAdditionalHospitalDocuments, addActivity, capitalizeName
 } from '../utils/auth';
 import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, confirmTwoFactorSetup, disableTwoFactor, getMeViaAPI, uploadDocumentsViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 import { ORGANS as ORGANS_LIST } from '../utils/organs';
+import Pagination, { usePagination } from './Pagination';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -200,6 +201,8 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
 
   const [userNotifs, setUserNotifs] = useState([]);
   const [actionLogs, setActionLogs] = useState([]);
+  const [showActivityLog, setShowActivityLog] = useState(false);
+  const logsPg = usePagination(actionLogs, 15);
   const [appeals, setAppeals] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showCurrent, setShowCurrent] = useState(false);
@@ -209,9 +212,13 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   // Document re-upload state
   const [uploadedDocs, setUploadedDocs] = useState({});
   const [reuploadSubmitting, setReuploadSubmitting] = useState(false);
-  // Donors/recipients may re-upload while pending, when info is requested, OR
-  // after a case rejection (so they can fix and re-submit the flagged documents).
-  const canReupload = ['pending', 'info_requested'].includes(user.status)
+  // If nothing has been submitted yet, uploading must always be allowed —
+  // the lock only governs RE-uploads after documents are already on file.
+  // Donors/recipients may also re-upload while pending, when info is requested,
+  // OR after a case rejection (so they can fix and re-submit flagged documents).
+  const hasNoDocuments = (user.uploadedDocuments || []).length === 0;
+  const canReupload = hasNoDocuments
+    || ['pending', 'info_requested'].includes(user.status)
     || (user.status === 'rejected' && (user.role === 'donor' || user.role === 'recipient'));
 
   // Two-factor authentication state
@@ -672,7 +679,7 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
             <div className="form-group">
               <label className="form-label">Full Name *</label>
               <input className="form-input" value={profileData.name}
-                onChange={e => setProfileData(p => ({ ...p, name: e.target.value }))} />
+                onChange={e => setProfileData(p => ({ ...p, name: capitalizeName(e.target.value) }))} />
             </div>
             <div className="form-group">
               <label className="form-label">Email Address *</label>
@@ -1544,6 +1551,12 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
+                    className={`btn btn-sm ${showActivityLog ? 'btn-primary' : 'btn-outline'}`}
+                    onClick={() => setShowActivityLog(v => !v)}
+                  >
+                    {showActivityLog ? '✕ Hide Log' : '👁 View Log'}
+                  </button>
+                  <button
                     className="btn btn-sm btn-outline"
                     onClick={() => {
                       const headers = ['Action', 'Details', 'Date'];
@@ -1605,9 +1618,55 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                   )}
                 </div>
                 <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '8px' }}>
-                  Use the buttons above to export the full log. The file is generated locally in your browser — nothing is uploaded.
+                  Use the buttons above to export the full log, or click <strong>View Log</strong> to read it here. Exported files are generated locally in your browser — nothing is uploaded.
                 </div>
               </div>
+
+              {showActivityLog && (
+                <div style={{ marginTop: '14px', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
+                  <div style={{ maxHeight: '420px', overflowY: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--surface2)', position: 'sticky', top: 0 }}>
+                          {['Action', 'Details', 'IP', 'Device', 'Date'].map(h => (
+                            <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px', whiteSpace: 'nowrap', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {logsPg.slice.map((log, i) => {
+                          const action = (log.actionType || log.action_type || '').replace(/_/g, ' ');
+                          const ts = log.timestamp || log.created_at;
+                          const suspicious = log.suspicious || (log.actionType || log.action_type) === 'login_suspicious';
+                          return (
+                            <tr key={log.id || i} style={{ borderBottom: '1px solid var(--border)', background: suspicious ? 'var(--danger-light)' : 'transparent' }}>
+                              <td style={{ padding: '10px 14px', fontSize: '12px', fontWeight: '600', color: 'var(--text1)', whiteSpace: 'nowrap' }}>
+                                {suspicious && '⚠️ '}{action || '—'}
+                              </td>
+                              <td style={{ padding: '10px 14px', fontSize: '12px', color: 'var(--text2)', maxWidth: '280px' }}>
+                                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.reason}>{log.reason || '—'}</div>
+                              </td>
+                              <td style={{ padding: '10px 14px', fontSize: '12px', color: 'var(--text2)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{log.ip_address || '—'}</td>
+                              <td style={{ padding: '10px 14px', fontSize: '12px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{log.device || '—'}</td>
+                              <td style={{ padding: '10px 14px', fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{ts ? new Date(ts).toLocaleString() : '—'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+                    <Pagination
+                      page={logsPg.page}
+                      setPage={logsPg.setPage}
+                      totalPages={logsPg.totalPages}
+                      total={logsPg.total}
+                      pageSize={logsPg.pageSize}
+                      label="log entries"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

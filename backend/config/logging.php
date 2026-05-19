@@ -123,6 +123,18 @@ return [
             'handler' => NullHandler::class,
         ],
 
+        // Permanent file archive of recent-activity & notification rows that the
+        // daily purge removes from the database. The audit trail (action_logs
+        // table) is separate and is never pruned — this only stops the UI feeds
+        // from piling up while keeping a durable record on disk.
+        'activity_archive' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/activity-archive.log'),
+            'level' => 'info',
+            'days' => env('ACTIVITY_ARCHIVE_DAYS', 365),
+            'replace_placeholders' => false,
+        ],
+
         'emergency' => [
             'path' => storage_path('logs/laravel.log'),
         ],

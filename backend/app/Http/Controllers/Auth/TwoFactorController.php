@@ -178,7 +178,7 @@ class TwoFactorController extends Controller
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        ActivityLogger::logAction($user->id, 'login_success_2fa', 'User logged in with 2FA');
+        \App\Services\SecurityLogger::recordLogin($user, $request, '_2fa');
 
         $auth = app(AuthController::class);
         return response()->json([

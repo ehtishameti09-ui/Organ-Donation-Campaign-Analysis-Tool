@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { updateUserViaAPI } from '../utils/api';
+import { capitalizeName } from '../utils/auth';
 import { toast } from '../utils/toast';
 
 /**
@@ -89,7 +90,7 @@ const HospitalRegistrationForm = ({ user, onComplete }) => {
         <div className="grid2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           <div className="form-group">
             <label className="form-label">Contact Person *</label>
-            <input className="form-input" value={data.contactPerson} onChange={update('contactPerson')} placeholder="e.g. Dr. Sara Iqbal" />
+            <input className="form-input" value={data.contactPerson} onChange={e => setData(d => ({ ...d, contactPerson: capitalizeName(e.target.value) }))} placeholder="e.g. Dr. Sara Iqbal" />
           </div>
           <div className="form-group">
             <label className="form-label">Phone *</label>

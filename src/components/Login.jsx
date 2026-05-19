@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { login, verifyLoginTwoFactor, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, submitAppeal, validateEmail } from '../utils/auth';
-import { sendPasswordResetLinkViaAPI, resetPasswordViaAPI, resendTwoFactorLoginCode } from '../utils/api';
+import { sendPasswordResetLinkViaAPI, verifyResetCodeViaAPI, resetPasswordViaAPI, resendTwoFactorLoginCode } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
@@ -123,6 +123,14 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [forgotStep, setForgotStep] = useState('request'); // 'request', 'verify', 'reset'
   const [forgotLoading, setForgotLoading] = useState(false);
   const [resetTokenInput, setResetTokenInput] = useState('');
+  const [resetCodeSeconds, setResetCodeSeconds] = useState(0); // 60s countdown; 0 = expired
+
+  // Tick the reset-code countdown while the verify step is active
+  useEffect(() => {
+    if (forgotStep !== 'verify' || resetCodeSeconds <= 0) return;
+    const id = setInterval(() => setResetCodeSeconds(s => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(id);
+  }, [forgotStep, resetCodeSeconds]);
   // Appeal State
   const [showAppealModal, setShowAppealModal] = useState(false);
   const [appealExplanation, setAppealExplanation] = useState('');
@@ -219,8 +227,10 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     setForgotLoading(true);
     try {
       await sendPasswordResetLinkViaAPI(forgotEmail);
+      setResetTokenInput('');
+      setResetCodeSeconds(120);
       setForgotStep('verify');
-      toast('Reset link sent to your email! Enter the token from the email below.', 'success', 5000);
+      toast(`6-digit code sent to ${forgotEmail}. It expires in 2 minutes.`, 'success', 5000);
     } catch (err) {
       toast(err.message || 'Failed to send reset link.', 'error');
     } finally {
@@ -228,14 +238,29 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     }
   };
 
-  const handleVerifyResetToken = () => {
-    if (!resetTokenInput.trim()) {
-      toast('Please enter the reset token from your email.', 'error');
+  const handleVerifyResetToken = async () => {
+    const code = resetTokenInput.trim();
+    if (resetCodeSeconds <= 0) {
+      toast('Code expired. Click "Resend code" to get a new one.', 'error');
       return;
     }
-    setResetToken(resetTokenInput);
-    setForgotStep('reset');
-    toast('Token accepted. Set your new password.', 'success');
+    if (!/^\d{6}$/.test(code)) {
+      toast('Enter the 6-digit code from your email.', 'error');
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      // Validate the code against the backend BEFORE advancing — without this,
+      // a wrong code would silently pass the client-only check.
+      await verifyResetCodeViaAPI(forgotEmail, code);
+      setResetToken(code);
+      setForgotStep('reset');
+      toast('Code verified. Now set your new password.', 'success');
+    } catch (err) {
+      toast(err.message || 'Incorrect or expired code.', 'error');
+    } finally {
+      setForgotLoading(false);
+    }
   };
 
   const handleResetPassword = async () => {
@@ -262,14 +287,17 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   };
 
   const handleRecoverAccount = async () => {
+    if (!password.trim()) {
+      toast('Please enter your password to restore the account.', 'error');
+      return;
+    }
     try {
-      await restoreDeletedAccount(deletedUserInfo.id);
-      toast('Account restored successfully!', 'success');
+      // Public restore re-verifies credentials and signs the user back in (returns a token).
+      const user = await restoreDeletedAccount(email, password);
       setShowDeletedRecoveryModal(false);
       setDeletedUserInfo(null);
-      const user = await login(email, password);
-      toast(`Welcome back, ${user.name}!`, 'success');
-      setTimeout(() => onLoginSuccess(user), 500);
+      toast(`Welcome back, ${user?.name || ''}! Your account has been restored.`, 'success');
+      setTimeout(() => onLoginSuccess(user), 600);
     } catch (err) {
       toast(err.message || 'Account recovery failed.', 'error');
     }
@@ -1052,46 +1080,78 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
       })()}
 
       {/* Forgot Password Modal */}
-      {showForgotPassword && (
+      {showForgotPassword && (() => {
+        const closeForgot = () => { setShowForgotPassword(false); setForgotEmail(''); setResetToken(null); setNewPassword(''); setConfirmPassword(''); setForgotStep('request'); setResetTokenInput(''); };
+        const steps = [
+          { id: 'request', label: 'Email' },
+          { id: 'verify',  label: 'Code' },
+          { id: 'reset',   label: 'New Password' },
+        ];
+        const currentIdx = steps.findIndex(s => s.id === forgotStep);
+        const pwStrong = newPassword.length >= 8 && /[A-Za-z]/.test(newPassword) && /\d/.test(newPassword);
+        return (
         <div className="modal-overlay show">
-          <div className="modal" style={{ maxWidth: '550px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div className="modal-header" style={{ background: 'linear-gradient(135deg, #fef3c7 0%, #fef9e7 100%)', borderBottom: '2px solid #f59e0b' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '24px' }}>🔑</span>
-                <div>
-                  <h3 style={{ color: '#92400e', margin: 0 }}>Reset Your Password</h3>
-                  <div style={{ fontSize: '11px', color: '#b45309' }}>Secure password recovery</div>
+          <div className="modal" style={{ maxWidth: '460px', maxHeight: '90vh', overflowY: 'auto' }}>
+            {/* Header */}
+            <div className="modal-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '14px', paddingBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2">
+                      <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px' }}>Reset your password</h3>
+                    <div style={{ fontSize: '12px', color: 'var(--text3)' }}>We'll email you a one-time code</div>
+                  </div>
                 </div>
+                <button className="modal-close" onClick={closeForgot}>×</button>
               </div>
-              <button className="modal-close" onClick={() => { setShowForgotPassword(false); setForgotEmail(''); setResetToken(null); setNewPassword(''); setConfirmPassword(''); setForgotStep('request'); setResetTokenInput(''); }}>×</button>
+
+              {/* Step indicator */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                {steps.map((s, i) => {
+                  const done = i < currentIdx;
+                  const active = i === currentIdx;
+                  return (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', flex: i < steps.length - 1 ? 1 : 'none' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                        <div style={{
+                          width: '26px', height: '26px', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '12px', fontWeight: '700',
+                          background: done ? 'var(--accent)' : active ? 'var(--primary)' : 'var(--surface3)',
+                          color: done || active ? '#fff' : 'var(--text3)',
+                          transition: 'all .2s',
+                        }}>{done ? '✓' : i + 1}</div>
+                        <span style={{ fontSize: '10px', fontWeight: active ? '700' : '500', color: active ? 'var(--primary)' : 'var(--text3)', whiteSpace: 'nowrap' }}>{s.label}</span>
+                      </div>
+                      {i < steps.length - 1 && (
+                        <div style={{ flex: 1, height: '2px', margin: '0 6px', marginBottom: '16px', background: i < currentIdx ? 'var(--accent)' : 'var(--border)', transition: 'background .2s' }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="modal-body">
+
+            <div className="modal-body" style={{ paddingTop: '20px' }}>
               {forgotStep === 'request' && (
                 <>
-                  <div style={{ marginBottom: '20px', padding: '16px', background: '#f0fdf4', borderRadius: 'var(--radius)', borderLeft: '4px solid #10b981' }}>
-                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#166534', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>✅</span> How It Works
-                    </div>
-                    <ol style={{ fontSize: '12px', color: '#166534', margin: '0', paddingLeft: '20px', lineHeight: '1.8' }}>
-                      <li>Enter your registered email address</li>
-                      <li>We'll send you a secure reset code</li>
-                      <li>Use the code to create a new password</li>
-                      <li>Log in with your new credentials</li>
-                    </ol>
-                  </div>
-
+                  <p style={{ fontSize: '13px', color: 'var(--text2)', marginTop: 0, marginBottom: '18px', lineHeight: '1.6' }}>
+                    Enter the email address associated with your account and we'll send a 6-digit verification code.
+                  </p>
                   <div className="form-group">
-                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>📧</span> Email Address *
-                    </label>
+                    <label className="form-label">Email address</label>
                     <input
                       className="form-input"
                       type="email"
                       value={forgotEmail}
                       onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="Enter your registered email"
+                      placeholder="you@example.com"
                       disabled={forgotLoading}
-                      style={{ fontSize: '12px' }}
+                      autoFocus
                     />
                   </div>
                 </>
@@ -1099,67 +1159,80 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
 
               {forgotStep === 'verify' && (
                 <>
-                  <div style={{ marginBottom: '16px', padding: '16px', background: '#f0fdf4', borderRadius: 'var(--radius)', borderLeft: '4px solid #10b981' }}>
-                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#166534', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>✅</span> Reset Code Sent
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#166534' }}>
-                      Check your email for the reset code. Copy and paste it below:
-                    </div>
-                  </div>
-
-                  <div style={{ marginBottom: '20px', padding: '16px', background: 'linear-gradient(135deg, var(--surface2) 0%, var(--surface1) 100%)', borderRadius: 'var(--radius)', fontFamily: 'monospace', fontSize: '14px', fontWeight: '700', wordBreak: 'break-all', color: 'var(--primary)', textAlign: 'center', border: '2px dashed var(--primary)', letterSpacing: '2px' }}>
-                    {resetToken}
-                  </div>
-
+                  <p style={{ fontSize: '13px', color: 'var(--text2)', marginTop: 0, marginBottom: '18px', lineHeight: '1.6' }}>
+                    We sent a 6-digit code to <strong style={{ color: 'var(--text1)' }}>{forgotEmail}</strong>. Enter it below before it expires.
+                  </p>
                   <div className="form-group">
-                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>🔐</span> Enter Reset Code *
-                    </label>
+                    <label className="form-label" style={{ textAlign: 'center', display: 'block' }}>Verification code</label>
                     <input
                       className="form-input"
                       type="text"
+                      inputMode="numeric"
+                      pattern="\d{6}"
+                      maxLength={6}
                       value={resetTokenInput}
-                      onChange={(e) => setResetTokenInput(e.target.value)}
-                      placeholder="Paste the reset code from your email"
-                      disabled={forgotLoading}
-                      style={{ fontSize: '12px', fontWeight: '500' }}
+                      onChange={(e) => setResetTokenInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="– – – – – –"
+                      disabled={forgotLoading || resetCodeSeconds <= 0}
+                      autoFocus
+                      style={{ fontSize: '24px', fontWeight: '700', letterSpacing: '12px', textAlign: 'center', fontFamily: 'monospace', padding: '14px' }}
                     />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', fontSize: '12px' }}>
+                    {resetCodeSeconds > 0 ? (
+                      <span style={{ color: resetCodeSeconds <= 30 ? 'var(--danger)' : 'var(--text3)' }}>
+                        ⏱ Code expires in <strong>{Math.floor(resetCodeSeconds / 60)}:{String(resetCodeSeconds % 60).padStart(2, '0')}</strong>
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--danger)', fontWeight: 600 }}>⚠ Code expired</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={forgotLoading || resetCodeSeconds > 0}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: resetCodeSeconds > 0 ? 'var(--text3)' : 'var(--primary)',
+                        cursor: resetCodeSeconds > 0 ? 'not-allowed' : 'pointer',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        padding: 0,
+                      }}
+                    >
+                      {resetCodeSeconds > 0 ? `Resend in ${Math.floor(resetCodeSeconds / 60)}:${String(resetCodeSeconds % 60).padStart(2, '0')}` : 'Resend code'}
+                    </button>
                   </div>
                 </>
               )}
 
               {forgotStep === 'reset' && (
                 <>
-                  <div style={{ marginBottom: '20px', padding: '16px', background: '#dbeafe', borderRadius: 'var(--radius)', borderLeft: '4px solid #0891b2' }}>
-                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#0c4a6e', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>🔒</span> Create New Password
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#0c4a6e' }}>
-                      Enter a strong password (minimum 8 characters with mix of letters, numbers, and symbols).
-                    </div>
-                  </div>
-
+                  <p style={{ fontSize: '13px', color: 'var(--text2)', marginTop: 0, marginBottom: '18px', lineHeight: '1.6' }}>
+                    Choose a strong password — at least 8 characters with a mix of letters and numbers.
+                  </p>
                   <div className="form-group">
-                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>🔐</span> New Password *
-                    </label>
+                    <label className="form-label">New password</label>
                     <input
                       className="form-input"
                       type="password"
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter strong new password"
+                      placeholder="Enter a strong new password"
                       disabled={forgotLoading}
                       autoComplete="new-password"
-                      style={{ fontSize: '12px' }}
+                      autoFocus
                     />
+                    {newPassword && (
+                      <div style={{ marginTop: '6px', display: 'flex', gap: '4px' }}>
+                        {[newPassword.length >= 8, /[A-Z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword)].map((ok, i) => (
+                          <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px', background: ok ? 'var(--accent)' : 'var(--border)' }} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-
                   <div className="form-group">
-                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <span>✔️</span> Confirm Password *
-                    </label>
+                    <label className="form-label">Confirm password</label>
                     <input
                       className="form-input"
                       type="password"
@@ -1168,107 +1241,47 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                       placeholder="Re-enter new password"
                       disabled={forgotLoading}
                       autoComplete="new-password"
-                      style={{
-                        fontSize: '12px',
-                        borderColor: confirmPassword && newPassword !== confirmPassword ? '#dc2626' : 'var(--border)',
-                        borderWidth: confirmPassword ? '2px' : '1px'
-                      }}
+                      style={{ borderColor: confirmPassword && newPassword !== confirmPassword ? 'var(--danger)' : undefined }}
                     />
-                    {confirmPassword && newPassword !== confirmPassword && (
-                      <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span>❌</span> Passwords do not match
-                      </div>
-                    )}
-                    {confirmPassword && newPassword === confirmPassword && (
-                      <div style={{ fontSize: '11px', color: '#10b981', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span>✅</span> Passwords match
+                    {confirmPassword && (
+                      <div style={{ fontSize: '11px', marginTop: '4px', color: newPassword === confirmPassword ? 'var(--accent)' : 'var(--danger)' }}>
+                        {newPassword === confirmPassword ? '✓ Passwords match' : '✗ Passwords do not match'}
                       </div>
                     )}
                   </div>
                 </>
               )}
             </div>
-            <div className="modal-footer" style={{ borderTop: '2px solid #fef3c7' }}>
-              <button className="btn btn-ghost" onClick={() => { setShowForgotPassword(false); setForgotEmail(''); setResetToken(null); setNewPassword(''); setConfirmPassword(''); setForgotStep('request'); setResetTokenInput(''); }} disabled={forgotLoading} style={{ fontWeight: '600' }}>
-                Close
-              </button>
+
+            <div className="modal-footer">
+              {forgotStep !== 'request' && (
+                <button className="btn btn-ghost" disabled={forgotLoading}
+                  onClick={() => setForgotStep(forgotStep === 'reset' ? 'verify' : 'request')}>
+                  ← Back
+                </button>
+              )}
+              <button className="btn btn-ghost" onClick={closeForgot} disabled={forgotLoading}>Cancel</button>
               {forgotStep === 'request' && (
-                <button className="btn btn-primary" onClick={handleForgotPassword} disabled={forgotLoading || !forgotEmail.trim()} style={{ 
-                  background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                  border: '2px solid #d97706',
-                  fontWeight: '700',
-                  boxShadow: !forgotLoading && forgotEmail.trim() ? '0 4px 12px rgba(245, 158, 11, 0.25)' : 'none',
-                  transition: 'all 0.3s ease'
-                }}
-                onMouseEnter={(e) => {
-                  if (!forgotLoading && forgotEmail.trim()) {
-                    e.target.style.boxShadow = '0 6px 16px rgba(245, 158, 11, 0.35)';
-                    e.target.style.transform = 'translateY(-2px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!forgotLoading && forgotEmail.trim()) {
-                    e.target.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.25)';
-                    e.target.style.transform = 'translateY(0)';
-                  }
-                }}
-                >
-                  {forgotLoading ? '⏳ Sending...' : '📧 Send Reset Code'}
+                <button className="btn btn-primary" onClick={handleForgotPassword} disabled={forgotLoading || !forgotEmail.trim()}>
+                  {forgotLoading ? 'Sending…' : 'Send code'}
                 </button>
               )}
               {forgotStep === 'verify' && (
-                <button className="btn btn-primary" onClick={handleVerifyResetToken} disabled={forgotLoading || !resetTokenInput.trim()} style={{ 
-                  background: 'linear-gradient(135deg, #0891b2 0%, #0369a1 100%)',
-                  border: '2px solid #06b6d4',
-                  fontWeight: '700',
-                  boxShadow: !forgotLoading && resetTokenInput.trim() ? '0 4px 12px rgba(8, 145, 178, 0.25)' : 'none',
-                  transition: 'all 0.3s ease'
-                }}
-                onMouseEnter={(e) => {
-                  if (!forgotLoading && resetTokenInput.trim()) {
-                    e.target.style.boxShadow = '0 6px 16px rgba(8, 145, 178, 0.35)';
-                    e.target.style.transform = 'translateY(-2px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!forgotLoading && resetTokenInput.trim()) {
-                    e.target.style.boxShadow = '0 4px 12px rgba(8, 145, 178, 0.25)';
-                    e.target.style.transform = 'translateY(0)';
-                  }
-                }}
-                >
-                  {forgotLoading ? '⏳ Verifying...' : '✅ Verify Code'}
+                <button className="btn btn-primary" onClick={handleVerifyResetToken} disabled={forgotLoading || resetTokenInput.length !== 6 || resetCodeSeconds <= 0}>
+                  {forgotLoading ? 'Verifying…' : 'Verify code'}
                 </button>
               )}
               {forgotStep === 'reset' && (
-                <button className="btn btn-primary" onClick={handleResetPassword} disabled={forgotLoading || !newPassword.trim() || !confirmPassword.trim() || newPassword !== confirmPassword} style={{ 
-                  background: newPassword === confirmPassword && newPassword.trim() ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)' : '#e5e7eb',
-                  border: newPassword === confirmPassword && newPassword.trim() ? '2px solid #059669' : 'none',
-                  color: newPassword === confirmPassword && newPassword.trim() ? '#fff' : '#9ca3af',
-                  fontWeight: '700',
-                  boxShadow: !forgotLoading && newPassword === confirmPassword && newPassword.trim() ? '0 4px 12px rgba(16, 185, 129, 0.25)' : 'none',
-                  transition: 'all 0.3s ease'
-                }}
-                onMouseEnter={(e) => {
-                  if (!forgotLoading && newPassword === confirmPassword && newPassword.trim()) {
-                    e.target.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.35)';
-                    e.target.style.transform = 'translateY(-2px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!forgotLoading && newPassword === confirmPassword && newPassword.trim()) {
-                    e.target.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.25)';
-                    e.target.style.transform = 'translateY(0)';
-                  }
-                }}
-                >
-                  {forgotLoading ? '⏳ Resetting...' : '🔑 Reset Password'}
+                <button className="btn btn-primary" onClick={handleResetPassword}
+                  disabled={forgotLoading || !pwStrong || newPassword !== confirmPassword}>
+                  {forgotLoading ? 'Resetting…' : 'Reset password'}
                 </button>
               )}
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

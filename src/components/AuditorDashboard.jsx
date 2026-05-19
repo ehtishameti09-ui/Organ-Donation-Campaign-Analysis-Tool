@@ -1,48 +1,69 @@
 import { useState, useMemo, useEffect } from 'react';
-import { getAllUsers, getActionLogs, getAppeals, getRecentActivities, getDonors, getRecipients, getVerificationMetrics } from '../utils/auth';
+import { getAllUsers, getAuditLogs, getSecurityAlerts, getAppeals, getRecentActivities, getDonors, getRecipients, getVerificationMetrics } from '../utils/auth';
 
 const AuditorDashboard = ({ currentUser }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [logFilter, setLogFilter] = useState('all');
   const [logSearch, setLogSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [users, setUsers] = useState([]);
   const [donors, setDonors] = useState([]);
   const [recipients, setRecipients] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [activities, setActivities] = useState([]);
   const [actionLogs, setActionLogs] = useState([]);
+  const [auditImmutable, setAuditImmutable] = useState(true);
+  const [securityAlerts, setSecurityAlerts] = useState([]);
   const [appeals, setAppeals] = useState([]);
 
   useEffect(() => {
     const load = async () => {
-      const [u, d, r, m, a, logs, apls] = await Promise.all([
+      const [u, d, r, m, a, audit, alerts, apls] = await Promise.all([
         getAllUsers(), getDonors(), getRecipients(), getVerificationMetrics(), getRecentActivities(50),
-        getActionLogs(), getAppeals(),
+        getAuditLogs({ limit: 300 }), getSecurityAlerts(), getAppeals(),
       ]);
       setUsers(u);
       setDonors(d);
       setRecipients(r);
       setMetrics(m);
       setActivities(a);
-      setActionLogs(logs);
+      setActionLogs(audit.logs);
+      setAuditImmutable(audit.immutable);
+      setSecurityAlerts(alerts);
       setAppeals(apls);
     };
     load();
   }, []);
 
-  const filteredLogs = useMemo(() => {
-    let logs = actionLogs;
-    if (logFilter !== 'all') logs = logs.filter(l => (l.action_type || l.actionType) === logFilter);
-    if (logSearch) {
-      const s = logSearch.toLowerCase();
-      logs = logs.filter(l =>
-        (l.reason || '').toLowerCase().includes(s) ||
-        (l.action_type || l.actionType || '').toLowerCase().includes(s) ||
-        String(l.user_id || l.userId || '').toLowerCase().includes(s)
-      );
-    }
-    return logs.sort((a, b) => new Date(b.created_at || b.timestamp) - new Date(a.created_at || a.timestamp));
-  }, [actionLogs, logFilter, logSearch]);
+  // Server-side search / action-type / date filtering (debounced).
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const audit = await getAuditLogs({
+        q: logSearch,
+        action_type: logFilter === 'all' ? '' : logFilter,
+        date_from: dateFrom,
+        date_to: dateTo,
+        limit: 300,
+      });
+      setActionLogs(audit.logs);
+      setAuditImmutable(audit.immutable);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [logSearch, logFilter, dateFrom, dateTo]);
+
+  // Real-time security alerts — poll every 20s and on tab focus.
+  useEffect(() => {
+    const refresh = async () => setSecurityAlerts(await getSecurityAlerts());
+    const id = setInterval(refresh, 20000);
+    window.addEventListener('focus', refresh);
+    return () => { clearInterval(id); window.removeEventListener('focus', refresh); };
+  }, []);
+
+  // Filtering now happens server-side (scoped + search + date range); just sort.
+  const filteredLogs = useMemo(() =>
+    [...actionLogs].sort((a, b) => new Date(b.created_at || b.timestamp) - new Date(a.created_at || a.timestamp)),
+  [actionLogs]);
 
   const logTypes = useMemo(() => {
     const types = new Set(actionLogs.map(l => l.action_type || l.actionType).filter(Boolean));
@@ -119,6 +140,7 @@ const AuditorDashboard = ({ currentUser }) => {
         {[
           { id: 'overview', label: 'Overview' },
           { id: 'logs', label: `Audit Logs (${actionLogs.length})` },
+          { id: 'security', label: `🔒 Security${securityAlerts.length ? ` (${securityAlerts.length})` : ''}` },
           { id: 'users', label: `Users (${users.filter(u => !u.deleted).length})` },
           { id: 'appeals', label: `Appeals (${appeals.length})` },
         ].map(t => (
@@ -178,44 +200,137 @@ const AuditorDashboard = ({ currentUser }) => {
       {/* AUDIT LOGS TAB */}
       {activeTab === 'logs' && (
         <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          {/* Immutability notice */}
+          {auditImmutable && (
+            <div style={{ padding: '10px 16px', background: 'var(--accent-light)', color: 'var(--accent)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border)' }}>
+              🔐 Immutable audit log — entries can never be edited or deleted, by anyone. The daily feed purge never touches this trail.
+            </div>
+          )}
           {/* Toolbar */}
-          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <input className="form-input" placeholder="Search logs..." value={logSearch} onChange={e => setLogSearch(e.target.value)} style={{ flex: 1, minWidth: '180px' }} />
-            <select className="form-input" value={logFilter} onChange={e => setLogFilter(e.target.value)} style={{ width: '200px' }}>
+          <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input className="form-input" placeholder="Search action, reason, user, IP, device…" value={logSearch} onChange={e => setLogSearch(e.target.value)} style={{ flex: 1, minWidth: '200px' }} />
+            <select className="form-input" value={logFilter} onChange={e => setLogFilter(e.target.value)} style={{ width: '190px' }}>
               <option value="all">All Actions</option>
               {logTypes.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
             </select>
+            <label style={{ fontSize: '11px', color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              From <input type="date" className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: '150px' }} />
+            </label>
+            <label style={{ fontSize: '11px', color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              To <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: '150px' }} />
+            </label>
+            {(dateFrom || dateTo || logSearch || logFilter !== 'all') && (
+              <button className="btn btn-xs btn-ghost" onClick={() => { setDateFrom(''); setDateTo(''); setLogSearch(''); setLogFilter('all'); }}>Clear</button>
+            )}
           </div>
 
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
-                {['Time', 'Action', 'User', 'Reason', 'Admin'].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{h}</th>
+                {['Time', 'Action', 'User', 'Reason', 'IP Address', 'Browser / Device', 'Admin'].map(h => (
+                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filteredLogs.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No logs found.</td></tr>
+                <tr><td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>No logs found.</td></tr>
               )}
-              {filteredLogs.slice(0, 50).map((log, i) => (
-                <tr key={log.id || i} style={{ borderBottom: '1px solid var(--border)' }}>
+              {filteredLogs.slice(0, 100).map((log, i) => {
+                const at = log.action_type || log.actionType || '';
+                return (
+                <tr key={log.id || i} style={{ borderBottom: '1px solid var(--border)', background: log.suspicious ? 'var(--danger-light)' : 'transparent' }}>
                   <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{new Date(log.created_at || log.timestamp).toLocaleString()}</td>
                   <td style={{ padding: '10px 16px' }}>
-                    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: getActionColor(log.action_type || log.actionType) + '18', color: getActionColor(log.action_type || log.actionType) }}>
-                      {(log.action_type || log.actionType || '').replace(/_/g, ' ')}
+                    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: getActionColor(at) + '18', color: getActionColor(at) }}>
+                      {log.suspicious && '⚠️ '}{at.replace(/_/g, ' ')}
                     </span>
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text1)', fontWeight: '500' }}>{getUserName(log.user_id || log.userId)}</td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', maxWidth: '300px' }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.reason}</div>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text1)', fontWeight: '500' }}>
+                    {log.user?.name || getUserName(log.user_id || log.userId)}
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{(log.admin_id || log.adminId) ? getUserName(log.admin_id || log.adminId) : '—'}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', maxWidth: '280px' }}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.reason}>{log.reason}</div>
+                  </td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{log.ip_address || '—'}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{log.device || '—'}</td>
+                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{(log.admin_id || log.adminId) ? (log.admin?.name || getUserName(log.admin_id || log.adminId)) : '—'}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          </div>
+        </div>
+      )}
+
+      {/* SECURITY TAB — real-time suspicious-login alerts + permission hierarchy */}
+      {activeTab === 'security' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text1)', margin: 0 }}>🚨 Real-time Security Alerts</h4>
+                <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Suspicious logins (new IP / new device) in the last 7 days · auto-refreshes every 20s</div>
+              </div>
+              <span className={`badge ${securityAlerts.length ? 'badge-red' : 'badge-green'}`}>
+                {securityAlerts.length ? `${securityAlerts.length} alert${securityAlerts.length > 1 ? 's' : ''}` : 'All clear'}
+              </span>
+            </div>
+            <div style={{ maxHeight: '380px', overflowY: 'auto' }}>
+              {securityAlerts.length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text3)' }}>
+                  <div style={{ fontSize: '34px', marginBottom: '8px' }}>✅</div>
+                  No suspicious logins detected.
+                </div>
+              ) : securityAlerts.map((a, i) => (
+                <div key={a.id || i} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: '18px' }}>⚠️</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--danger)' }}>
+                      {a.user?.name || getUserName(a.user_id)} <span style={{ color: 'var(--text3)', fontWeight: '400' }}>({a.user?.email})</span>
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text2)' }}>{a.reason}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '2px' }}>
+                      IP <span style={{ fontFamily: 'monospace' }}>{a.ip_address || '—'}</span> · {a.device || '—'}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{timeAgo(a.created_at)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Permission hierarchy reference */}
+          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', padding: '20px' }}>
+            <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text1)', marginBottom: '4px' }}>Audit Log Permission Hierarchy</h4>
+            <div style={{ fontSize: '12px', color: 'var(--text3)', marginBottom: '14px' }}>Enforced server-side on every audit request.</div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--border)' }}>
+                  {['Role', 'Can See Own Logs', "Can See Others' Logs"].map(h => (
+                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['Donor', 'Yes', 'No'],
+                  ['Recipient', 'Yes', 'No'],
+                  ['Employee', 'Yes', 'Limited'],
+                  ['Hospital Admin', 'Yes', 'Hospital Staff Only'],
+                  ['Super Admin', 'Yes', 'Everything'],
+                ].map(([role, own, others], i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', color: 'var(--primary)' }}>{role}</td>
+                    <td style={{ padding: '10px 12px', fontSize: '13px', color: 'var(--accent)' }}>{own}</td>
+                    <td style={{ padding: '10px 12px', fontSize: '13px', color: others === 'No' ? 'var(--text3)' : others === 'Everything' ? 'var(--danger)' : 'var(--warning)' }}>{others}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

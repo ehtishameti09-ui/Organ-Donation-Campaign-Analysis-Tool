@@ -247,7 +247,7 @@ class AuthController extends Controller
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        ActivityLogger::logAction($user->id, 'login_success', 'User logged in');
+        \App\Services\SecurityLogger::recordLogin($user, $request);
 
         return response()->json([
             'user' => $this->userResource($user->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile', 'documents'])),
@@ -393,6 +393,16 @@ class AuthController extends Controller
             }
         }
 
+        // The recipient/donor's chosen transplant centre (the hospital their case
+        // was submitted to). Used on the registration report's "Assigned Hospital".
+        if ($user->preferred_hospital_id) {
+            $pref = User::with('hospitalProfile')->find($user->preferred_hospital_id);
+            if ($pref) {
+                $data['preferredHospitalName'] = $pref->hospitalProfile->hospital_name
+                    ?? $pref->name;
+            }
+        }
+
         if ($user->donorProfile) {
             $data = array_merge($data, [
                 'bloodType' => $user->donorProfile->blood_type,
@@ -428,6 +438,12 @@ class AuthController extends Controller
                 'hospitalReviewNotes' => $user->recipientProfile->rejection_reason,
                 'hospitalReviewDate' => optional($user->recipientProfile->rejected_at)->toIso8601String(),
                 'rejectedBy' => $user->recipientProfile->rejected_by,
+                'accountType' => $user->recipientProfile->account_type ?? 'personal',
+                'patientName' => $user->recipientProfile->patient_name,
+                'guardianName' => $user->recipientProfile->guardian_name,
+                'guardianRelationship' => $user->recipientProfile->guardian_relationship,
+                'guardianCnic' => $user->recipientProfile->guardian_cnic,
+                'guardianPhone' => $user->recipientProfile->guardian_phone,
             ]);
         }
 

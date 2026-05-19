@@ -47,19 +47,75 @@ export const validateName = (name) => {
   return { ok: true };
 };
 
-// Utility: Calculate age from date of birth
+// Capitalize the first letter of every word in a name as the user types.
+// "haris" -> "Haris", "haris khan" -> "Haris Khan", "mary-jane o'brien" -> "Mary-Jane O'Brien".
+// Only forces the first letter of each word up; the rest is left as typed so
+// intentional capitals (e.g. "McDonald") are preserved.
+export const capitalizeName = (value) => {
+  if (!value) return value;
+  return value.replace(/(^|[\s\-'])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+};
+
+// Utility: Calculate age from date of birth.
+// Returns '' when the date is incomplete/invalid/future (e.g. a half-typed year
+// like "202" from a date input mid-edit). A genuine newborn returns 0.
 export const calculateAgeFromDOB = (dobString) => {
   if (!dobString) return '';
   try {
     // Parse as local date parts (YYYY-MM-DD) to avoid UTC midnight shift
-    const [y, mo, d] = dobString.split('-').map(Number);
+    const parts = String(dobString).split('-');
+    if (parts.length !== 3) return '';
+    const [y, mo, d] = parts.map(Number);
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return '';
+
     const today = new Date();
-    let age = today.getFullYear() - y;
+    const currentYear = today.getFullYear();
+
+    // Reject implausible / mid-typing years (date inputs fire onChange on every
+    // keystroke, so the year can momentarily be 2, 20, 202, …). A valid DOB year
+    // is 4 digits, not in the future, and within a sane human lifespan.
+    if (y < 1900 || y > currentYear) return '';
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return '';
+
+    const dob = new Date(y, mo - 1, d);
+    if (dob.getFullYear() !== y || dob.getMonth() !== mo - 1 || dob.getDate() !== d) return '';
+    if (dob > today) return ''; // future date of birth is invalid
+
+    let age = currentYear - y;
     const monthDiff = (today.getMonth() + 1) - mo;
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < d)) age--;
-    return age >= 0 ? age : '';
+
+    if (age < 0 || age > 130) return '';
+    return age; // 0 is valid (newborn)
   } catch {
     return '';
+  }
+};
+
+// Human-friendly age label from DOB. Infants under one year are shown in
+// months (e.g. "7 months"), otherwise in years ("3 years"). Returns '' for
+// an invalid/incomplete/future date so the UI shows nothing rather than junk.
+export const ageLabelFromDOB = (dobString) => {
+  const years = calculateAgeFromDOB(dobString);
+  if (years === '') return '';
+  if (years >= 1) return `${years} year${years === 1 ? '' : 's'}`;
+
+  // Under 1 year — express in completed months (and days for a newborn).
+  try {
+    const [y, mo, d] = String(dobString).split('-').map(Number);
+    const today = new Date();
+    let months = (today.getFullYear() - y) * 12 + (today.getMonth() + 1 - mo);
+    if (today.getDate() < d) months--;          // not a full month yet
+    months = Math.max(0, months);
+    if (months >= 1) return `${months} month${months === 1 ? '' : 's'}`;
+
+    // Less than a month old — show days.
+    const dob = new Date(y, mo - 1, d);
+    const days = Math.max(0, Math.floor((today - dob) / 86400000));
+    if (days <= 0) return 'Newborn';
+    return `${days} day${days === 1 ? '' : 's'}`;
+  } catch {
+    return '0 months';
   }
 };
 
@@ -286,6 +342,22 @@ export const getUserActionLogs = async (userId) => {
   return await getActionLogs();
 };
 
+// Scoped audit trail with search/date filters. Returns { logs, scope, immutable }.
+export const getAuditLogs = async (params = {}) => {
+  try {
+    const response = await API.getAuditLogsViaAPI(params);
+    return { logs: response.logs || [], scope: response.scope || 'none', immutable: response.immutable !== false };
+  } catch { return { logs: [], scope: 'none', immutable: true }; }
+};
+
+// Recent suspicious logins for the real-time security panel.
+export const getSecurityAlerts = async () => {
+  try {
+    const response = await API.getSecurityAlertsViaAPI();
+    return response.alerts || [];
+  } catch { return []; }
+};
+
 // Ban a user (with structured reason and categories)
 export const banUser = async (userId, category, detailedReason, banType = 'temporary', duration = 30, adminId) => {
   if (!category || !Object.keys(BAN_CATEGORIES).includes(category)) {
@@ -420,13 +492,15 @@ export const canRecoverDeletedAccount = (userId) => {
   return user?.isDeleted && user?.recoveryDeadline && new Date(user.recoveryDeadline) > new Date();
 };
 
-// Restore a soft-deleted account (API)
-export const restoreDeletedAccount = async (userId) => {
-  const result = await API.restoreSelfViaAPI();
+// Restore a self-deleted account from the login screen. The user is not
+// authenticated (deleted users can't log in), so credentials are re-verified
+// by the public endpoint, which signs them back in on success.
+export const restoreDeletedAccount = async (email, password) => {
+  const result = await API.restoreSelfPublicViaAPI(email, password);
   if (result.user) {
     localStorage.setItem('odcat_current', JSON.stringify(result.user));
   }
-  return result;
+  return result.user;
 };
 
 // Admin action: unban a user
@@ -771,6 +845,7 @@ export const completeDonorRecipientRegistration = async (userId, payload) => {
       next_of_kin:      payload.nextOfKin      || payload.next_of_kin     || null,
     });
   } else {
+    const accountType = payload.accountType || payload.account_type || 'personal';
     result = await API.completeRecipientRegistrationViaAPI({
       ...common,
       organ_needed:     payload.organNeeded    || payload.organ_needed,
@@ -779,6 +854,12 @@ export const completeDonorRecipientRegistration = async (userId, payload) => {
       comorbidity:      payload.comorbidity                               ?? null,
       treating_doctor:  payload.treatingDoctor || payload.treating_doctor || null,
       current_hospital: payload.currentHospital || payload.current_hospital || null,
+      account_type:     accountType,
+      patient_name:          accountType === 'guardian' ? (payload.patientName || null) : null,
+      guardian_name:         accountType === 'guardian' ? (payload.guardianName || null) : null,
+      guardian_relationship: accountType === 'guardian' ? (payload.guardianRelationship || null) : null,
+      guardian_cnic:         accountType === 'guardian' ? (payload.guardianCnic || null) : null,
+      guardian_phone:        accountType === 'guardian' ? (payload.guardianPhone || null) : null,
     });
   }
 
