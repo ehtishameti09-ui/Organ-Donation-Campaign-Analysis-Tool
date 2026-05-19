@@ -22,6 +22,7 @@ use App\Http\Controllers\AdminRequestController;
 Route::post('/register', [AuthController::class, 'register'])->name('register');
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/password-reset/send-link', [PasswordResetController::class, 'sendResetLink'])->name('password.send-link');
+Route::post('/password-reset/verify-code', [PasswordResetController::class, 'verifyCode'])->name('password.verify-code');
 Route::post('/password-reset/reset', [PasswordResetController::class, 'reset'])->name('password.reset');
 Route::post('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
 Route::get('/oauth/google/status',   [GoogleAuthController::class, 'status'])->name('oauth.google.status');
@@ -37,6 +38,10 @@ Route::post('/2fa/email/resend', [TwoFactorController::class, 'resendLoginCode']
 // the login modal. Server-side validation ensures only actually banned/deleted users
 // can create appeals, and duplicate-pending checks prevent spam.
 Route::post('/appeals/public', [\App\Http\Controllers\AppealController::class, 'store'])->name('appeals.public.store');
+
+// Public self-restore — a self-deleted user has no token, so they re-verify
+// email + password from the login modal to recover their account.
+Route::post('/users/restore-self-public', [\App\Http\Controllers\UserController::class, 'restoreSelfPublic'])->name('users.restore-self-public');
 
 // Public marketing stats — used on the login page splash. Cached briefly.
 Route::get('/stats/public', function () {
@@ -115,6 +120,11 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     // Activity logs (authenticated users)
     Route::get('/activities', [ActivityController::class, 'index'])->name('activities.index');
     Route::get('/me/action-logs', [ActivityController::class, 'myLogs'])->name('action-logs.mine');
+    // Audit trail + real-time security alerts. The controller enforces the
+    // permission hierarchy (super_admin/auditor: all; hospital/hospital-admin:
+    // own hospital; others: 403), so no role middleware here.
+    Route::get('/audit-logs', [ActivityController::class, 'auditLogs'])->name('audit-logs.index');
+    Route::get('/security/alerts', [ActivityController::class, 'securityAlerts'])->name('security.alerts');
 
     // Dashboard metrics — accessible to all authenticated users (controller handles role scoping)
     Route::get('/dashboard/metrics', [DashboardController::class, 'metrics'])->name('dashboard.metrics');
@@ -131,7 +141,6 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     // Admin-only routes
     Route::middleware(['role:super_admin|admin'])->group(function () {
         Route::post('/users/create-admin', [UserController::class, 'createAdmin'])->name('users.create-admin');
-        Route::get('/audit-logs', [ActivityController::class, 'auditLogs'])->name('audit-logs.index');
 
         // Hospital management
         Route::post('/hospitals/{hospital}/approve', [HospitalController::class, 'approve'])->name('hospitals.approve');

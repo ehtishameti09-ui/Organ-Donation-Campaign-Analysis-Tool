@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -45,6 +46,17 @@ class DocumentController extends Controller
             }
         }
 
+        // A document type is single-slot: re-uploading a "Healthcare License"
+        // replaces the previous one rather than stacking duplicates. Remove the
+        // old files (storage + rows) for this user/type before saving the new set.
+        $previous = Document::where('user_id', $targetUserId)
+            ->where('document_type', $data['document_type'])
+            ->get();
+        foreach ($previous as $old) {
+            Storage::disk('local')->delete($old->file_path);
+            $old->delete();
+        }
+
         $saved = [];
         foreach ($data['files'] as $file) {
             $path = $file->store('documents/'.$targetUserId, 'local'); // private disk
@@ -64,6 +76,14 @@ class DocumentController extends Controller
             'document_type' => $data['document_type'],
             'count' => count($saved),
         ]);
+
+        // If a hospital (re)uploaded its registration documents, invalidate the
+        // cached hospitals overview so the super admin sees the new files at once
+        // (otherwise they stay hidden for up to the 30s cache TTL).
+        $targetUser = $targetUserId === $authUser->id ? $authUser : User::find($targetUserId);
+        if ($targetUser && $targetUser->role === 'hospital') {
+            Cache::forget('hospitals:overview:v1');
+        }
 
         return response()->json([
             'message' => count($saved).' document(s) uploaded.',

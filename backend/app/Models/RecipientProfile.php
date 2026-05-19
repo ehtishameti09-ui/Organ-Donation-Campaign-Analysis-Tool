@@ -20,6 +20,8 @@ class RecipientProfile extends Model
         'travel_ready', 'notify_on_match', 'preferred_hospital_notes',
         'document_statuses', 'documents_resubmitted', 'resubmission_date',
         'rejected_by', 'rejection_reason', 'rejected_at',
+        'account_type', 'patient_name', 'guardian_name',
+        'guardian_relationship', 'guardian_cnic', 'guardian_phone',
     ];
 
     protected function casts(): array

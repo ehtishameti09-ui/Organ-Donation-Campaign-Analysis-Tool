@@ -539,6 +539,55 @@ class UserController extends Controller
         return response()->json(['message' => 'Account restored.', 'user' => app(AuthController::class)->userResource($user)]);
     }
 
+    /** POST /api/users/restore-self-public — restore a self-deleted account from the login
+     *  screen. A deleted user has no auth token, so this endpoint re-verifies the user's
+     *  email + password instead, then restores the account (if within the recovery window)
+     *  and signs them straight back in. */
+    public function restoreSelfPublic(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email'    => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ]);
+
+        $user = User::where('email', $data['email'])->first();
+        if (!$user || !$user->password || !\Illuminate\Support\Facades\Hash::check($data['password'], $user->password)) {
+            return response()->json(['message' => 'Incorrect email or password.'], 401);
+        }
+        if (!$user->is_deleted) {
+            return response()->json(['message' => 'This account is not marked for deletion.'], 422);
+        }
+        // Only the user's OWN self-deletion can be reversed here. Admin deletions go
+        // through the appeal flow (a different admin must review).
+        $isSelfDelete = !empty(optional($user->deletion_details)['is_self_delete'])
+            || (optional($user->deletion_details)['admin_id'] ?? null) === $user->id;
+        if (!$isSelfDelete) {
+            return response()->json(['message' => 'This account was deleted by an administrator and cannot be self-restored. Please submit an appeal.'], 403);
+        }
+        if ($user->recovery_deadline && $user->recovery_deadline->isPast()) {
+            return response()->json(['message' => 'The 30-day recovery window has expired. This account can no longer be restored.'], 410);
+        }
+
+        $user->update([
+            'is_deleted'        => false,
+            'status'            => 'approved',
+            'deletion_details'  => null,
+            'recovery_deadline' => null,
+        ]);
+        ActivityLogger::logAction($user->id, 'account_restored', 'User restored their self-deleted account from login');
+
+        $token = $user->createToken('auth_token')->plainTextToken;
+
+        return response()->json([
+            'message'    => 'Account restored. Welcome back!',
+            'token'      => $token,
+            'token_type' => 'Bearer',
+            'user'       => app(AuthController::class)->userResource(
+                $user->fresh()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile'])
+            ),
+        ]);
+    }
+
     /** POST /api/users/me/delete — self-delete with 30-day recovery */
     public function deleteSelf(Request $request): JsonResponse
     {

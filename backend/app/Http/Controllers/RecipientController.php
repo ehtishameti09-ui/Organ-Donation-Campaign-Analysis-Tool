@@ -63,10 +63,36 @@ class RecipientController extends Controller
             'emergency_contact_phone' => ['nullable', 'string', 'max:30'],
             'emergency_contact_relation' => ['nullable', 'string', 'max:50'],
             'preferred_hospital_id' => ['required', 'integer', Rule::exists('users', 'id')->where('role', 'hospital')->where('status', 'approved')],
+
+            // Account type: 'personal' (adult patient manages own account) or
+            // 'guardian' (a parent/legal guardian manages the account for a child patient).
+            'account_type' => ['nullable', Rule::in(['personal', 'guardian'])],
+            'patient_name' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:120'],
+            'guardian_name' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:120'],
+            'guardian_relationship' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:40'],
+            'guardian_cnic' => ['required_if:account_type,guardian', 'nullable', 'regex:/^\d{5}-\d{7}-\d$/'],
+            'guardian_phone' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:30'],
+        ], [
+            'patient_name.required_if' => "The patient's (child's) full name is required for a guardian account.",
+            'guardian_name.required_if' => "The guardian's full name is required.",
+            'guardian_relationship.required_if' => 'Please state your relationship to the patient.',
+            'guardian_cnic.required_if' => "The guardian's CNIC is required.",
+            'guardian_cnic.regex' => "Guardian CNIC must be in the format XXXXX-XXXXXXX-X.",
+            'guardian_phone.required_if' => "The guardian's phone number is required.",
         ]);
+
+        $accountType = $data['account_type'] ?? 'personal';
 
         $dobDate = \Illuminate\Support\Carbon::createFromFormat('Y-m-d', $data['dob'])->startOfDay();
         $age = (int) $dobDate->diffInYears(\Illuminate\Support\Carbon::today());
+
+        // A PERSONAL recipient account holder must be an adult (≥18). A child
+        // patient must be registered through a Parent/Guardian account instead.
+        if ($accountType === 'personal' && $age < 18) {
+            return response()->json([
+                'message' => 'A personal account holder must be at least 18 years old. To register a child, use a Parent/Guardian account.',
+            ], 422);
+        }
 
         // Auto-calculate survival estimate (basic formula based on urgency and comorbidity)
         $urgency = (float) ($data['urgency_score'] ?? 5);
@@ -94,7 +120,7 @@ class RecipientController extends Controller
         RecipientProfile::updateOrCreate(['user_id' => $user->id], [
             'blood_type' => $data['blood_type'],
             'organ_needed' => $data['organ_needed'],
-            'diagnosis' => $data['diagnosis'],
+            'diagnosis' => $data['diagnosis'] ?? null,
             'urgency_score' => $urgency,
             'comorbidity' => $comorb,
             'survival_estimate' => $survivalEstimate,
@@ -103,6 +129,12 @@ class RecipientController extends Controller
             'verification_status' => 'submitted',
             'case_status' => 'submitted',
             'submission_date' => now(),
+            'account_type' => $accountType,
+            'patient_name' => $accountType === 'guardian' ? ($data['patient_name'] ?? null) : null,
+            'guardian_name' => $accountType === 'guardian' ? ($data['guardian_name'] ?? null) : null,
+            'guardian_relationship' => $accountType === 'guardian' ? ($data['guardian_relationship'] ?? null) : null,
+            'guardian_cnic' => $accountType === 'guardian' ? ($data['guardian_cnic'] ?? null) : null,
+            'guardian_phone' => $accountType === 'guardian' ? ($data['guardian_phone'] ?? null) : null,
         ]);
 
         ActivityLogger::logActivity('recipient_submitted', 'Recipient submitted case', $user->name.' submitted recipient registration', [

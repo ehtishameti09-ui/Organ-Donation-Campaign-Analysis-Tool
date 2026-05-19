@@ -4,9 +4,11 @@ import {
   resubmitCaseInfo,
   getApprovedHospitals,
   calculateAgeFromDOB,
+  ageLabelFromDOB,
+  capitalizeName,
 } from '../utils/auth';
 import { toast } from '../utils/toast';
-import { generateRegistrationPDF } from '../utils/pdfReport';
+import { generateRegistrationPDF, generateConsentDeclarationPDF } from '../utils/pdfReport';
 import { ORGANS } from '../utils/organs';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -76,91 +78,97 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
     onAccept({ signature, cnic });
   };
 
+  const isDonor = userType === 'donor';
+
   return (
     <div style={{ background: '#fff', borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: '1px solid var(--border)' }}>
       <div style={{ background: 'linear-gradient(135deg, #014421 0%, #0c6b3a 100%)', color: '#fff', padding: '20px 24px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
           <div style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,.8)', letterSpacing: '1px' }}>
-            ISLAMIC REPUBLIC OF PAKISTAN
+            ODCAT · ORGAN DONATION CAMPAIGN ANALYSIS TOOL
           </div>
           <div style={{ background: 'rgba(255,255,255,.15)', padding: '4px 10px', borderRadius: '999px', fontSize: '10px', fontWeight: '700' }}>
-            OFFICIAL DOCUMENT
+            PRE-REGISTRATION
           </div>
         </div>
         <h3 style={{ color: '#fff', margin: 0, fontSize: '18px' }}>
-          {userType === 'donor' ? 'Organ & Tissue Donation Pledge Form' : 'Transplant Recipient Registration Form'}
+          {isDonor ? 'Organ & Tissue Donation — Declaration of Intent' : 'Transplant Recipient — Pre-Registration & Declaration of Intent'}
         </h3>
         <div style={{ fontSize: '12px', color: 'rgba(255,255,255,.85)', marginTop: '4px' }}>
-          Under Transplantation of Human Organs &amp; Tissues Act (THOTA) 2010 — Government of Pakistan
+          Framework reference: Transplantation of Human Organs &amp; Tissues Act (THOTA) 2010
         </div>
       </div>
 
-      <div style={{ padding: '12px 24px', background: '#fef3e0', borderBottom: '1px solid #fbd38d', fontSize: '12px', color: '#7c4a03' }}>
-        ⚠️ <strong>Please scroll through and read the entire form carefully.</strong> This is a legally binding declaration under Pakistani law.
+      {/* Honest disclaimer — replaces the misleading "legally binding" banner */}
+      <div style={{ padding: '14px 24px', background: '#fef3e0', borderBottom: '1px solid #fbd38d', fontSize: '12px', color: '#7c4a03', lineHeight: '1.6' }}>
+        ℹ️ <strong>This is a declaration of intent for platform pre-registration — not a legal consent instrument.</strong>{' '}
+        Legally binding organ-donation/recipient consent under THOTA 2010 is executed <strong>in person at a HOTA-authorized
+        hospital</strong>, before witnesses and the hospital Evaluation Committee. ODCAT is an academic platform and is{' '}
+        <strong>not affiliated with, or endorsed by, HOTA or the Government of Pakistan</strong>.
       </div>
 
       <div onScroll={handleScroll} style={{ padding: '24px', maxHeight: '460px', overflowY: 'auto', fontSize: '13px', lineHeight: '1.85', color: '#333' }}>
         <div style={{ background: '#f8f9fb', padding: '14px 16px', borderRadius: '8px', borderLeft: '4px solid #014421', marginBottom: '20px' }}>
           <div style={{ fontSize: '11px', fontWeight: '700', color: '#014421', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: '6px' }}>
-            Form Reference
+            Reference
           </div>
           <div style={{ fontSize: '12px', color: '#555' }}>
-            <strong>Document No:</strong> Organ Donation Campaign Analysis Tool/{userType.toUpperCase()}/{Date.now().toString().slice(-8)}<br />
+            <strong>Reference No:</strong> ODCAT/{userType.toUpperCase()}/{Date.now().toString().slice(-8)}<br />
             <strong>Date:</strong> {new Date().toLocaleDateString('en-PK', { day: '2-digit', month: 'long', year: 'numeric' })}<br />
-            <strong>Issuing Authority:</strong> Human Organ Transplant Authority (HOTA), Pakistan<br />
-            <strong>Platform:</strong> Organ Donation Campaign Analysis Tool
+            <strong>Legal framework cited:</strong> THOTA 2010 (administered by the Human Organ Transplant Authority, HOTA)<br />
+            <strong>Platform:</strong> ODCAT — academic / non-governmental
           </div>
         </div>
 
         <h4 style={{ color: '#014421', marginBottom: '8px' }}>SECTION 1 — Declaration of Identity</h4>
         <p>
-          I, the undersigned <strong>{name}</strong>, a citizen of the Islamic Republic of Pakistan,
-          do hereby make this voluntary declaration of my own free will, in sound state of mind, and without
-          any coercion, fraud, misrepresentation or undue influence whatsoever.
+          I, <strong>{name}</strong>, make this voluntary declaration of my own free will, in a sound state of
+          mind, and without any coercion, fraud, misrepresentation or undue influence, for the purpose of
+          pre-registering my intent on the ODCAT platform.
         </p>
 
         <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>
-          SECTION 2 — {userType === 'donor' ? 'Pledge to Donate' : 'Registration as Recipient'}
+          SECTION 2 — {isDonor ? 'Intent to Donate' : 'Intent to Register as Recipient'}
         </h4>
 
-        {userType === 'donor' ? (
+        {isDonor ? (
           <>
             <p>
-              In accordance with the provisions of the <strong>Transplantation of Human Organs and Tissues Act, 2010
-              (THOTA)</strong>, and Section 3 thereof, I hereby pledge and consent to donate my organs and/or tissues
-              for the purpose of medical transplantation to save the lives of other human beings.
+              Consistent with the principles of the <strong>Transplantation of Human Organs and Tissues Act, 2010
+              (THOTA)</strong>, I express my <strong>intent</strong> to donate my organs and/or tissues for medical
+              transplantation to help save human lives. I understand that legally effective consent will only be
+              given later, in person, at a HOTA-authorized hospital.
             </p>
-            <p>I further consent to:</p>
+            <p>By pre-registering, I indicate my willingness to:</p>
             <ol>
-              <li>The retrieval of my organs/tissues by authorized medical practitioners after my death (deceased donation),
-                or during my lifetime where medically appropriate (living donation).</li>
-              <li>The medical examination, blood tests, tissue typing, HLA cross-matching, and other clinical
-                assessments required to establish suitability for donation.</li>
-              <li>The use of my donated organs solely for therapeutic purposes and not for commercial sale or trade,
-                as expressly prohibited under Section 6 of THOTA 2010.</li>
-              <li>The disclosure of my anonymized medical information to authorized transplant coordinators,
-                hospitals registered with HOTA, and Organ Donation Campaign Analysis Tool platform staff.</li>
-              <li>The Organ Donation Campaign Analysis Tool platform contacting my family / next of kin in the event of a successful match.</li>
+              <li>Be contacted to begin the formal, in-person donation process through an authorized hospital.</li>
+              <li>Undergo the medical examination, blood tests, tissue typing and HLA cross-matching required
+                to establish suitability — carried out by authorized medical practitioners.</li>
+              <li>Donate only for therapeutic purposes and never for commercial sale or trade, which is an
+                offence under Section 6 of THOTA 2010.</li>
+              <li>Allow my anonymized medical information to be shared with authorized transplant coordinators
+                and HOTA-registered hospitals for matching.</li>
+              <li>Have my family / next of kin involved in the formal donation decision as required by law.</li>
             </ol>
           </>
         ) : (
           <>
             <p>
-              In accordance with the provisions of the <strong>Transplantation of Human Organs and Tissues Act, 2010
-              (THOTA)</strong>, I hereby register myself as a transplant recipient on the Organ Donation Campaign Analysis Tool platform and consent
-              to be placed on the National Organ Waiting List under the supervision of the Human Organ Transplant Authority (HOTA).
+              Consistent with the principles of the <strong>Transplantation of Human Organs and Tissues Act, 2010
+              (THOTA)</strong>, I express my <strong>intent</strong> to be pre-registered as a prospective transplant
+              recipient on the ODCAT platform. I understand that formal placement on any official waiting list, and
+              legally effective consent, occur only through a HOTA-authorized hospital.
             </p>
-            <p>I further consent to:</p>
+            <p>By pre-registering, I indicate my willingness to:</p>
             <ol>
-              <li>Providing accurate, complete, and truthful medical information for the purpose of case
-                evaluation and matching.</li>
-              <li>Undergoing required medical evaluations including blood tests, tissue typing, organ function
-                assessments, and psychological evaluations.</li>
-              <li>Being matched with a compatible donor based on medical urgency, compatibility, waiting time,
-                and geographic factors — and not on financial, social, ethnic, religious, or political grounds.</li>
-              <li>Receiving the organ/tissue from a registered donor through legal means only, and never through
-                commercial purchase, which is a punishable offence under THOTA Section 6.</li>
-              <li>Following all post-transplant medical instructions and reporting outcomes to the treating hospital.</li>
+              <li>Provide accurate, complete and truthful medical information for case evaluation and matching.</li>
+              <li>Undergo required medical evaluations (blood tests, tissue typing, organ-function and
+                psychological assessments) through an authorized hospital.</li>
+              <li>Be matched on medical grounds — urgency, compatibility, waiting time and geography — and
+                never on financial, social, ethnic, religious or political grounds.</li>
+              <li>Receive an organ only through lawful means and never through commercial purchase, which is
+                an offence under Section 6 of THOTA 2010.</li>
+              <li>Follow all post-transplant medical instructions and report outcomes to the treating hospital.</li>
             </ol>
           </>
         )}
@@ -168,63 +176,60 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
         <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>SECTION 3 — Rights and Withdrawal</h4>
         <p>I understand and acknowledge that:</p>
         <ul>
-          <li>I have the absolute right to withdraw this consent at any time, without giving any reason, by submitting
-            a written withdrawal request through the Organ Donation Campaign Analysis Tool platform or the registered hospital.</li>
-          <li>Withdrawal of consent shall not affect any other medical treatment I may receive.</li>
-          <li>My personal and medical information will be handled in accordance with the Personal Data Protection
-            Bill of Pakistan and shall not be disclosed without my consent except as required by law.</li>
-          <li>{userType === 'donor'
-            ? 'My family/next of kin will be informed of my pledge and their wishes considered at the time of donation.'
-            : 'My placement on the waiting list does not guarantee that an organ will become available.'}</li>
-          <li>Any false declaration may result in disqualification from the program and may attract legal consequences
-            under Section 9 of THOTA 2010.</li>
+          <li>I may withdraw this pre-registration at any time, without giving a reason, through the ODCAT
+            platform or the hospital handling my case.</li>
+          <li>Withdrawal will not affect any other medical treatment I may receive.</li>
+          <li>My personal and medical information will be handled in line with applicable Pakistani data-protection
+            law and not disclosed without my consent except where required by law.</li>
+          <li>{isDonor
+            ? 'My family / next of kin will be informed and involved in the formal, in-person donation decision.'
+            : 'Pre-registration does not place me on any official waiting list and does not guarantee an organ will become available.'}</li>
+          <li>Providing false information may result in removal from the platform and may have legal
+            consequences under THOTA 2010.</li>
         </ul>
 
-        <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>SECTION 4 — Religious &amp; Ethical Affirmation</h4>
+        <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>SECTION 4 — Religious &amp; Ethical Note</h4>
         <p>
-          I affirm that I have considered the religious, cultural, and ethical implications of this declaration.
-          The Council of Islamic Ideology (CII) of Pakistan, in its 2010 ruling, declared organ donation
-          and transplantation as <em>permissible (mubah)</em> under Islamic Sharia where it is required to save
-          a human life and where no commercial transaction is involved.
+          The Council of Islamic Ideology (CII) of Pakistan has held organ donation and transplantation to be
+          <em> permissible (mubah)</em> under Islamic Sharia where it is needed to save a human life and where no
+          commercial transaction is involved. This note is provided for awareness and is not religious or legal advice.
         </p>
 
-        <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>SECTION 5 — Legal Framework</h4>
-        <p>
-          This declaration is made under and shall be governed by:
-        </p>
+        <h4 style={{ color: '#014421', marginTop: '20px', marginBottom: '8px' }}>SECTION 5 — Legal Framework (for reference)</h4>
+        <p>The formal, in-person process is governed by:</p>
         <ul>
           <li>Transplantation of Human Organs and Tissues Act, 2010 (THOTA)</li>
           <li>Human Organ Transplant Authority (HOTA) Rules &amp; Regulations</li>
           <li>Pakistan Medical &amp; Dental Council (PMDC) ethical guidelines</li>
-          <li>Provincial Health Care Commission Acts (where applicable)</li>
+          <li>Applicable provincial healthcare-commission laws</li>
         </ul>
         <p style={{ background: '#fff5f5', border: '1px solid #fbd5d5', padding: '12px', borderRadius: '6px', fontSize: '12px', color: '#9b2c2c' }}>
-          <strong>⚠️ NOTICE:</strong> Any commercial dealing in human organs is a punishable offence under
-          Section 6 of THOTA 2010, with imprisonment up to ten (10) years and a fine of up to one (1) million Pakistani Rupees.
-          Organ Donation Campaign Analysis Tool does not tolerate or facilitate any such activity.
+          <strong>⚠️ Notice:</strong> Commercial dealing in human organs is a punishable offence under
+          Section 6 of THOTA 2010 (imprisonment up to ten years and a fine up to one million Pakistani Rupees).
+          ODCAT does not tolerate or facilitate any such activity.
         </p>
 
         <p style={{ marginTop: '20px', textAlign: 'center', fontSize: '11px', color: '#888', borderTop: '1px dashed #ccc', paddingTop: '14px' }}>
-          — END OF OFFICIAL CONSENT FORM —
+          — END OF PRE-REGISTRATION DECLARATION —
         </p>
       </div>
 
       {!readToBottom && (
         <div style={{ padding: '10px 24px', background: '#fff8e1', borderTop: '1px solid #f6e58d', fontSize: '12px', color: '#7c4a03', textAlign: 'center', fontWeight: '600' }}>
-          ↓ Scroll to the bottom to enable signing
+          ↓ Scroll to the bottom to continue
         </div>
       )}
 
-      {/* Signature Section */}
+      {/* Acknowledgement Section */}
       <div style={{ padding: '20px 24px', borderTop: '2px solid #014421', background: '#f8f9fb' }}>
         <div style={{ fontSize: '13px', fontWeight: '700', color: '#014421', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '.5px' }}>
-          Section 6 — Signature &amp; Identity Verification
+          Section 6 — Acknowledgement &amp; Identity
         </div>
 
         <div className="grid2">
           <div className="form-group">
             <label className="form-label" style={{ fontSize: '11px' }}>Full Name (as per CNIC) *</label>
-            <input className="form-input" value={signature} onChange={e => setSignature(e.target.value)}
+            <input className="form-input" value={signature} onChange={e => setSignature(capitalizeName(e.target.value))}
               placeholder="Type your full legal name" disabled={!readToBottom} />
           </div>
           <div className="form-group">
@@ -238,26 +243,38 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: readToBottom ? 'pointer' : 'not-allowed', opacity: readToBottom ? 1 : 0.5, marginBottom: '10px' }}>
           <input type="checkbox" checked={agreed} onChange={e => readToBottom && setAgreed(e.target.checked)} disabled={!readToBottom} style={{ marginTop: '3px' }} />
           <span style={{ fontSize: '12px', color: 'var(--text1)', lineHeight: '1.5' }}>
-            I have read, understood, and voluntarily agree to all sections of this consent form.
-            I confirm that all information I am providing is accurate and truthful, and I am of sound mind.
+            I have read and understood this declaration. I understand it is a pre-registration of intent on the
+            ODCAT platform and <strong>not</strong> a legally binding consent. The information I have provided is
+            accurate and truthful.
           </span>
         </label>
 
         <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: readToBottom ? 'pointer' : 'not-allowed', opacity: readToBottom ? 1 : 0.5 }}>
           <input type="checkbox" checked={witnessed} onChange={e => readToBottom && setWitnessed(e.target.checked)} disabled={!readToBottom} style={{ marginTop: '3px' }} />
           <span style={{ fontSize: '12px', color: 'var(--text1)', lineHeight: '1.5' }}>
-            I declare that this consent is given of my own free will, without any coercion, fraud, or
-            commercial inducement, and I understand the legal consequences of providing false information.
+            I acknowledge that legally effective consent under THOTA 2010 must be given in person at a
+            HOTA-authorized hospital, and that this declaration is made of my own free will without any
+            coercion or commercial inducement.
           </span>
         </label>
       </div>
 
-      <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-        <button className="btn btn-ghost" onClick={onDecline}>Decline</button>
-        <button className="btn btn-primary" onClick={handleAccept} disabled={!canSign}
-          style={{ opacity: canSign ? 1 : 0.5 }}>
-          ✍️ Sign &amp; Agree
+      <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: '10px', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button
+          className="btn btn-ghost"
+          onClick={() => generateConsentDeclarationPDF({ userType, name: signature || name, cnic })}
+          title="Open a printable copy you can sign by hand and take to a HOTA-authorized hospital"
+          style={{ color: '#014421', fontWeight: 600 }}
+        >
+          ⬇ Download to sign offline
         </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="btn btn-ghost" onClick={onDecline}>Decline</button>
+          <button className="btn btn-primary" onClick={handleAccept} disabled={!canSign}
+            style={{ opacity: canSign ? 1 : 0.5 }}>
+            ✍️ Acknowledge &amp; Continue
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -437,16 +454,6 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const isDonor = user.role === 'donor';
 
-  // Use local date parts — toISOString() converts to UTC which shifts the date in UTC+5
-  const maxDOB = (() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 18);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  })();
-
   // Consent data
   const [consentData, setConsentData] = useState(null);
 
@@ -475,7 +482,31 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
     urgencyScore: user.urgencyScore || 5,
     treatingDoctor: user.treatingDoctor || '',
     currentHospital: user.currentHospital || '',
+    // Recipient account type: 'personal' (adult patient) or 'guardian' (parent/guardian of a child patient)
+    accountType: user.accountType || 'personal',
+    patientName: user.patientName || '',
+    guardianName: user.guardianName || '',
+    guardianRelationship: user.guardianRelationship || '',
+    guardianCnic: user.guardianCnic || '',
+    guardianPhone: user.guardianPhone || '',
   });
+
+  const isGuardian = !isDonor && clinical.accountType === 'guardian';
+
+  // Adult (≥18) is required for living donors AND for recipients registering a
+  // PERSONAL account. Only a parent/guardian account (registering a child) has
+  // no minimum age. Recomputed each render so toggling Personal/Guardian
+  // immediately re-applies the correct DOB limit.
+  const requiresAdult = !isGuardian;
+  // Use local date parts — toISOString() shifts the date in UTC+5.
+  const maxDOB = (() => {
+    const d = new Date();
+    if (requiresAdult) d.setFullYear(d.getFullYear() - 18);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  })();
 
   const [documents, setDocuments] = useState({});
   const [preferredHospitalId, setPreferredHospitalId] = useState(user.preferredHospitalId || '');
@@ -490,23 +521,27 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
   // Total steps: 1=Consent, 2=Clinical, 3=Documents, 4=Hospital & Submit
   const totalSteps = 4;
 
-  // Auto-calculate age from DOB
+  // Auto-calculate age from DOB. calculateAgeFromDOB returns '' for an
+  // invalid/incomplete/future date and 0 for a newborn — both must be applied
+  // (so a stale wrong age is cleared and infants correctly show 0).
   useEffect(() => {
-    if (clinical.dob) {
-      const calculatedAge = calculateAgeFromDOB(clinical.dob);
-      if (calculatedAge && calculatedAge !== clinical.age) {
-        setClinical(prev => ({ ...prev, age: calculatedAge }));
-      }
+    const calculatedAge = clinical.dob ? calculateAgeFromDOB(clinical.dob) : '';
+    if (calculatedAge !== clinical.age) {
+      setClinical(prev => ({ ...prev, age: calculatedAge }));
     }
   }, [clinical.dob]);
 
   const handleClinicalChange = (e) => {
     const { name, value, type, checked } = e.target;
     if (name === 'dob' && value) {
-      // Clamp typed year: if the entered date is after maxDOB, reset to maxDOB
+      // Clamp typed date: if it's after maxDOB, reset to maxDOB.
+      // requiresAdult: maxDOB enforces the 18+ rule (donor / personal recipient).
+      // guardian (child): maxDOB is today, so this only blocks future dates.
       if (value > maxDOB) {
         setClinical(prev => ({ ...prev, dob: maxDOB }));
-        toast('You must be at least 18 years old.', 'warning');
+        toast(requiresAdult
+          ? (isDonor ? 'Donors must be at least 18 years old.' : 'A personal account holder must be at least 18 years old.')
+          : 'Date of birth cannot be in the future.', 'warning');
         return;
       }
     }
@@ -536,14 +571,32 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   // ===== STEP VALIDATION =====
   const validateClinical = () => {
+    if (isGuardian) {
+      if (!clinical.patientName.trim()) { toast("Please enter the patient's (child's) full name.", 'error'); return false; }
+      if (!clinical.guardianName.trim()) { toast("Please enter the guardian's full name.", 'error'); return false; }
+      if (!clinical.guardianRelationship) { toast('Please select your relationship to the patient.', 'error'); return false; }
+      if (!clinical.guardianCnic || clinical.guardianCnic.replace(/\D/g, '').length < 13) {
+        toast("Please enter the guardian's valid 13-digit CNIC.", 'error'); return false;
+      }
+      if (!clinical.guardianPhone || clinical.guardianPhone.replace(/\D/g, '').length < 10) {
+        toast("Please enter the guardian's valid phone number.", 'error'); return false;
+      }
+    }
     if (!clinical.cnic || clinical.cnic.replace(/\D/g, '').length < 13) {
-      toast('Please enter a valid 13-digit CNIC.', 'error'); return false;
+      toast(isGuardian ? "Please enter the child's valid 13-digit CNIC / B-Form number." : 'Please enter a valid 13-digit CNIC.', 'error'); return false;
     }
-    if (!clinical.dob || !clinical.gender || !clinical.bloodType || !clinical.age) {
-      toast('Please fill all basic identity fields.', 'error'); return false;
+    // age can legitimately be 0 (newborn), so check for empty string, not falsiness
+    const ageMissing = clinical.age === '' || clinical.age === null || clinical.age === undefined;
+    if (!clinical.dob || !clinical.gender || !clinical.bloodType || ageMissing) {
+      toast('Please enter a valid date of birth and fill all basic identity fields.', 'error'); return false;
     }
-    if (parseInt(clinical.age) < 18) {
-      toast('You must be at least 18 years old to register.', 'error'); return false;
+    // Adult required for donors and PERSONAL recipient accounts.
+    // Guardian (child) accounts have no minimum age.
+    if (requiresAdult && parseInt(clinical.age) < 18) {
+      toast(isDonor
+        ? 'Donors must be at least 18 years old to register.'
+        : 'A personal account holder must be at least 18 years old. To register a child, choose "Parent / Guardian account".',
+        'error'); return false;
     }
     if (!clinical.phone || !clinical.address) {
       toast('Phone and address are required.', 'error'); return false;
@@ -711,11 +764,109 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
             Please provide accurate information. All required fields are marked with *.
           </p>
 
+          {/* Account type — recipients only. Children can receive transplants, so a parent/
+              guardian can manage the account on the patient's behalf. */}
+          {!isDonor && (
+            <div style={{ marginBottom: '24px' }}>
+              <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '12px' }}>Who is this account for?</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                {[
+                  { v: 'personal', icon: '🧑', t: 'Personal account', d: 'I am the patient and I am registering for myself (adult).' },
+                  { v: 'guardian', icon: '👨‍👩‍👧', t: 'Parent / Guardian account', d: "I am registering on behalf of a child or dependent who needs a transplant." },
+                ].map(opt => {
+                  const active = clinical.accountType === opt.v;
+                  return (
+                    <button
+                      key={opt.v}
+                      type="button"
+                      onClick={() => setClinical(p => {
+                        if (opt.v === 'guardian') {
+                          // The signer of the consent form (Section 6) IS the
+                          // guardian, so pre-fill the guardian's name + CNIC from
+                          // it. The child's CNIC/B-Form is a separate field and
+                          // must be entered fresh, so clear it.
+                          return {
+                            ...p,
+                            accountType: 'guardian',
+                            cnic: '',
+                            guardianName: p.guardianName || consentData?.signature || user.name || '',
+                            guardianCnic: p.guardianCnic || consentData?.cnic || '',
+                          };
+                        }
+                        // Personal: signer = patient, restore their own CNIC.
+                        return { ...p, accountType: 'personal', cnic: consentData?.cnic || p.cnic };
+                      })}
+                      style={{
+                        textAlign: 'left', padding: '16px', borderRadius: 'var(--radius)', cursor: 'pointer',
+                        border: `2px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                        background: active ? 'var(--primary-light)' : 'var(--surface)',
+                        transition: 'all .15s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '20px' }}>{opt.icon}</span>
+                        <span style={{ fontWeight: '700', fontSize: '14px', color: active ? 'var(--primary)' : 'var(--text1)' }}>{opt.t}</span>
+                        {active && <span style={{ marginLeft: 'auto', color: 'var(--primary)', fontWeight: '700' }}>✓</span>}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text2)', lineHeight: '1.5' }}>{opt.d}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Guardian & patient details — only when a parent/guardian is registering */}
+          {isGuardian && (
+            <div style={{ marginBottom: '24px', padding: '16px', background: 'var(--primary-light)', border: '1px solid rgba(26,92,158,.2)', borderRadius: 'var(--radius)' }}>
+              <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '4px' }}>👨‍👩‍👧 Guardian &amp; Patient</h4>
+              <p style={{ fontSize: '12px', color: 'var(--text2)', marginBottom: '14px' }}>
+                You (the guardian) manage this account. The medical details below are for the <strong>child / patient</strong>.
+              </p>
+              <div className="grid2">
+                <div className="form-group">
+                  <label className="form-label">Patient's (Child's) Full Name *</label>
+                  <input className="form-input" value={clinical.patientName}
+                    onChange={e => setClinical(p => ({ ...p, patientName: capitalizeName(e.target.value) }))}
+                    placeholder="Child's full name" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Your Name (Guardian) *</label>
+                  <input className="form-input" value={clinical.guardianName}
+                    onChange={e => setClinical(p => ({ ...p, guardianName: capitalizeName(e.target.value) }))}
+                    placeholder="Your full legal name" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Relationship to Patient *</label>
+                  <select className="form-select" value={clinical.guardianRelationship}
+                    onChange={e => setClinical(p => ({ ...p, guardianRelationship: e.target.value }))} required>
+                    <option value="">Select</option>
+                    {['Father', 'Mother', 'Legal Guardian', 'Grandparent', 'Sibling', 'Other'].map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Your CNIC (Guardian) *</label>
+                  <input className="form-input" value={clinical.guardianCnic}
+                    onChange={e => setClinical(p => ({ ...p, guardianCnic: formatCNIC(e.target.value) }))}
+                    placeholder="XXXXX-XXXXXXX-X" required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Your Phone (Guardian) *</label>
+                  <input className="form-input" type="tel" value={clinical.guardianPhone}
+                    onChange={e => setClinical(p => ({ ...p, guardianPhone: formatPKPhone(e.target.value) }))}
+                    placeholder="03XX-XXXXXXX" required />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{ marginBottom: '20px' }}>
-            <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '12px' }}>Identity</h4>
+            <h4 style={{ fontSize: '13px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '12px' }}>
+              {isGuardian ? "Patient (Child) Identity" : 'Identity'}
+            </h4>
             <div className="grid2">
               <div className="form-group">
-                <label className="form-label">CNIC Number *</label>
+                <label className="form-label">{isGuardian ? "Child's CNIC / B-Form No. *" : 'CNIC Number *'}</label>
                 <input className="form-input" name="cnic" value={clinical.cnic}
                   onChange={e => setClinical(p => ({ ...p, cnic: formatCNIC(e.target.value) }))}
                   placeholder="XXXXX-XXXXXXX-X" required />
@@ -733,7 +884,10 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               </div>
               <div className="form-group">
                 <label className="form-label">Age *</label>
-                <input className="form-input" name="age" type="number" value={clinical.age} readOnly
+                <input className="form-input" name="age" type="text"
+                  value={clinical.dob ? (ageLabelFromDOB(clinical.dob) || '—') : ''}
+                  readOnly
+                  placeholder="Auto-calculated from date of birth"
                   style={{ background: 'var(--surface2)', cursor: 'not-allowed' }}
                   tabIndex={-1} />
               </div>

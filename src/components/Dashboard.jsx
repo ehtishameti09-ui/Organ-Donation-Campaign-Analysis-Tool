@@ -304,28 +304,72 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
             </div>
 
             <div style={{ padding: '20px 24px', maxHeight: '60vh', overflowY: 'auto' }}>
-              {/* Patient Info */}
-              <div style={{ marginBottom: '20px' }}>
-                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '10px' }}>Patient Information</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
-                  {[
-                    ['Name', selectedCase.name],
-                    ['Email', selectedCase.email],
-                    ['Phone', selectedCase.phone],
-                    ['CNIC', selectedCase.cnic],
-                    ['Age', selectedCase.age],
-                    ['Gender', selectedCase.gender],
-                    ['Blood Type', selectedCase.bloodType],
-                    ['DOB', selectedCase.dob],
-                    ['Address', selectedCase.address],
-                  ].filter(([, v]) => v).map(([label, val]) => (
-                    <div key={label} style={{ background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
-                      <div style={{ fontSize: '10px', color: 'var(--text3)', textTransform: 'uppercase', fontWeight: '600' }}>{label}</div>
-                      <div style={{ fontSize: '13px', fontWeight: '600' }}>{val}</div>
+              {(() => {
+                const isGuardianCase = selectedCase.role === 'recipient' && selectedCase.accountType === 'guardian';
+                // For a guardian case the account holder is the parent; the clinical
+                // record (CNIC/DOB/gender/blood/address) belongs to the CHILD patient.
+                const patientDisplayName = isGuardianCase
+                  ? (selectedCase.patientName || '—')
+                  : selectedCase.name;
+                return (
+                  <>
+                    {isGuardianCase && (
+                      <div style={{
+                        marginBottom: '16px', padding: '8px 12px', borderRadius: 'var(--radius)',
+                        background: 'var(--primary-light)', border: '1px solid rgba(26,92,158,.2)',
+                        fontSize: '12px', color: 'var(--primary)', fontWeight: '600',
+                      }}>
+                        👨‍👩‍👧 Parent / Guardian account — the patient is a minor managed by a guardian.
+                      </div>
+                    )}
+
+                    {/* Patient (the child, for guardian cases) */}
+                    <div style={{ marginBottom: '20px' }}>
+                      <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '10px' }}>
+                        {isGuardianCase ? 'Patient (Child) Information' : 'Patient Information'}
+                      </h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                        {[
+                          [isGuardianCase ? 'Patient Name (Child)' : 'Name', patientDisplayName],
+                          [isGuardianCase ? "Child's CNIC / B-Form" : 'CNIC', selectedCase.cnic],
+                          ['Age', selectedCase.age],
+                          ['Gender', selectedCase.gender],
+                          ['Blood Type', selectedCase.bloodType],
+                          ['DOB', selectedCase.dob],
+                          ['Address', selectedCase.address],
+                          ...(isGuardianCase ? [] : [['Email', selectedCase.email], ['Phone', selectedCase.phone]]),
+                        ].filter(([, v]) => v).map(([label, val]) => (
+                          <div key={label} style={{ background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+                            <div style={{ fontSize: '10px', color: 'var(--text3)', textTransform: 'uppercase', fontWeight: '600' }}>{label}</div>
+                            <div style={{ fontSize: '13px', fontWeight: '600' }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    {/* Guardian (account holder) — only for guardian cases */}
+                    {isGuardianCase && (
+                      <div style={{ marginBottom: '20px' }}>
+                        <h4 style={{ fontSize: '12px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', marginBottom: '10px' }}>Guardian (Account Holder)</h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                          {[
+                            ['Guardian Name', selectedCase.guardianName || selectedCase.name],
+                            ['Relationship to Patient', selectedCase.guardianRelationship],
+                            ['Guardian CNIC', selectedCase.guardianCnic],
+                            ['Guardian Phone', selectedCase.guardianPhone || selectedCase.phone],
+                            ['Account Email', selectedCase.email],
+                          ].filter(([, v]) => v).map(([label, val]) => (
+                            <div key={label} style={{ background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius)' }}>
+                              <div style={{ fontSize: '10px', color: 'var(--text3)', textTransform: 'uppercase', fontWeight: '600' }}>{label}</div>
+                              <div style={{ fontSize: '13px', fontWeight: '600' }}>{val}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Emergency Contact */}
               {selectedCase.emergencyContactName && (
@@ -647,7 +691,7 @@ const CriticalFieldsPanel = ({ user }) => {
         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '16px' }}>🔒</span> System Generated Scores
         </div>
-        <div className="card-sub">Future Allocation Engine — Read Only</div>
+        <div className="card-sub">Calculated by the system from your clinical data — read only</div>
       </div>
       <div className="grid3">
         {[
@@ -1194,10 +1238,11 @@ const Dashboard = ({ user, onNavigate }) => {
           <StatCard value={new Date(user.registrationDate).getFullYear()} label="Member Since" color="purple" change="Active member" direction="up"
             icon={<><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginBottom: '20px' }}>
           <div className="card">
             <div className="card-header">
               <div className="card-title">Performance Trends</div>
+              <div className="card-sub">Your hospital's monthly cases &amp; donor registrations</div>
             </div>
             <div className="chart-wrap" style={{ height: '200px' }}>
               <canvas ref={trendsChartRef}></canvas>
@@ -1205,17 +1250,33 @@ const Dashboard = ({ user, onNavigate }) => {
           </div>
           <div className="card">
             <div className="card-header">
-              <div className="card-title">Recent Activity</div>
+              <div className="card-title">Organ Distribution</div>
+              <div className="card-sub">Pledged organs at your hospital</div>
             </div>
-            <div className="scroll-list-sm">
-              {activities.length === 0 ? (
-                <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>No recent activity</div>
-              ) : (
-                activities.map((act, i) => (
-                  <ActivityItem key={i} icon={act.icon} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
-                ))
-              )}
+            <div className="chart-wrap" style={{ height: '180px' }}>
+              <canvas ref={organsChartRef}></canvas>
             </div>
+            <div className="chart-legend">
+              {[{ label: 'Kidney', color: '#1a5c9e' }, { label: 'Liver', color: '#0eb07a' }, { label: 'Heart', color: '#e8900a' }, { label: 'Lung', color: '#7c5cbf' }, { label: 'Others', color: '#d63e3e' }].map((it, i) => (
+                <div className="legend-item" key={i}>
+                  <div className="legend-dot" style={{ background: it.color }}></div>{it.label}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title">Recent Activity</div>
+          </div>
+          <div className="scroll-list-sm">
+            {activities.length === 0 ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text3)', fontSize: '13px' }}>No recent activity</div>
+            ) : (
+              activities.map((act, i) => (
+                <ActivityItem key={i} icon={act.icon} action={act.title} user={act.description} time={timeAgo(act.timestamp)} />
+              ))
+            )}
           </div>
         </div>
       </div>

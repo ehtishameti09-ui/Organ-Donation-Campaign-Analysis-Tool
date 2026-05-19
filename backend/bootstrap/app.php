@@ -36,6 +36,10 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Increased throttle: dashboards make 8+ simultaneous calls per page load
         $middleware->throttleApi(300);
+
+        // Self-triggering daily cleanup of the activity/notification feeds
+        // (runs in terminate(), throttled to once per hour — no cron required).
+        $middleware->appendToGroup('api', \App\Http\Middleware\AutoPurgeFeeds::class);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         // Always return JSON for API errors

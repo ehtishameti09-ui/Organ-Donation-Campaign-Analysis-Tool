@@ -6,7 +6,7 @@ import {
   rejectAdminRequestViaAPI,
   cancelAdminRequestViaAPI,
 } from '../utils/api';
-import { validateEmail, validateName, getAllUsers, banUser, softDeleteUser, unbanUser, restoreUser, BAN_CATEGORIES } from '../utils/auth';
+import { validateEmail, validateName, getAllUsers, banUser, softDeleteUser, unbanUser, restoreUser, BAN_CATEGORIES, capitalizeName } from '../utils/auth';
 import { toast } from '../utils/toast';
 import Pagination, { usePagination } from './Pagination';
 
@@ -494,7 +494,7 @@ const HospitalRequestForm = ({ onSubmitted }) => {
               <label className="form-label">Admin Full Name *</label>
               <input className="form-input" placeholder="Dr Sara Malik"
                 value={data.requested_admin_name}
-                onChange={e => setData({ ...data, requested_admin_name: e.target.value })} />
+                onChange={e => setData({ ...data, requested_admin_name: capitalizeName(e.target.value) })} />
             </div>
             <div>
               <label className="form-label">Admin Email *</label>
