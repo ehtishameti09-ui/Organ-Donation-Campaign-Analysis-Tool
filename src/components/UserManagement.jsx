@@ -477,6 +477,7 @@ const UserManagement = ({ currentUser }) => {
                       <RegistrationRow
                         key={reg.id}
                         registration={reg}
+                        onView={() => handleRegistrationAction(reg, 'view')}
                         onApprove={() => handleRegistrationAction(reg, 'approve')}
                         onReject={() => handleRegistrationAction(reg, 'reject')}
                         onRequestInfo={() => handleRegistrationAction(reg, 'info')}
@@ -1914,7 +1915,7 @@ const UserRow = ({ user, isSelf, currentUser, onBan, onDelete }) => {
 };
 
 // Registration Row Component (for pending hospitals)
-const RegistrationRow = ({ registration, onApprove, onReject, onRequestInfo }) => {
+const RegistrationRow = ({ registration, onView, onApprove, onReject, onRequestInfo }) => {
   return (
     <tr>
       <td>
@@ -1940,6 +1941,13 @@ const RegistrationRow = ({ registration, onApprove, onReject, onRequestInfo }) =
         }
       </td>
       <td style={{ textAlign: 'right' }}>
+        <button
+          className="btn btn-sm btn-outline"
+          onClick={onView}
+          style={{ marginRight: '4px' }}
+        >
+          👁 View
+        </button>
         <button
           className="btn btn-sm btn-outline"
           onClick={onApprove}
