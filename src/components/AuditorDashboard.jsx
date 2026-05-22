@@ -100,12 +100,19 @@ const AuditorDashboard = ({ currentUser }) => {
 
   const getActionColor = (type) => {
     if (!type) return 'var(--text2)';
-    if (type.includes('ban') || type.includes('delete')) return 'var(--danger)';
-    if (type.includes('approve') || type.includes('restore')) return 'var(--accent)';
-    if (type.includes('appeal')) return 'var(--warning)';
-    if (type.includes('reset') || type.includes('update')) return 'var(--primary)';
+    if (type.includes('ban') || type.includes('delete') || type.includes('reject')) return 'var(--danger)';
+    if (type.includes('approve') || type.includes('restore') || type.includes('success')) return 'var(--accent)';
+    if (type.includes('appeal') || type.includes('suspicious') || type.includes('info')) return 'var(--warning)';
+    if (type.includes('reset') || type.includes('update') || type.includes('login')) return 'var(--primary)';
     return 'var(--text2)';
   };
+
+  // Map a user role to a shared .badge class so role chips look the same site-wide.
+  const roleBadgeClass = (role) => ({
+    super_admin: 'badge-red', admin: 'badge-amber', hospital: 'badge-purple',
+    doctor: 'badge-blue', auditor: 'badge-teal', recipient: 'badge-green',
+    donor: 'badge-red', data_entry: 'badge-gray',
+  }[role] || 'badge-gray');
 
   return (
     <div>
@@ -123,12 +130,12 @@ const AuditorDashboard = ({ currentUser }) => {
       {/* Stats Grid */}
       <div className="grid4" style={{ marginBottom: '24px' }}>
         {[
-          { label: 'Total Users', value: stats.totalUsers, color: 'var(--primary)', bg: 'var(--primary-light)' },
-          { label: 'Active Donors', value: stats.totalDonors, color: 'var(--danger)', bg: 'var(--danger-light)' },
-          { label: 'Active Recipients', value: stats.totalRecipients, color: 'var(--accent)', bg: 'var(--accent-light)' },
-          { label: 'Pending Appeals', value: stats.pendingAppeals, color: 'var(--warning)', bg: 'var(--warning-light)' },
+          { label: 'Total Users', value: stats.totalUsers, color: 'var(--primary)' },
+          { label: 'Active Donors', value: stats.totalDonors, color: 'var(--danger)' },
+          { label: 'Active Recipients', value: stats.totalRecipients, color: 'var(--accent)' },
+          { label: 'Pending Appeals', value: stats.pendingAppeals, color: 'var(--warning)' },
         ].map((s, i) => (
-          <div key={i} style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
+          <div key={i} className="stat-card">
             <div style={{ fontSize: '12px', color: 'var(--text3)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: '8px' }}>{s.label}</div>
             <div style={{ fontSize: '28px', fontWeight: '700', color: s.color }}>{s.value}</div>
           </div>
@@ -136,7 +143,7 @@ const AuditorDashboard = ({ currentUser }) => {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0', marginBottom: '16px', background: 'var(--surface3)', borderRadius: 'var(--radius)', padding: '3px' }}>
+      <div className="tab-bar" style={{ marginBottom: '16px' }}>
         {[
           { id: 'overview', label: 'Overview' },
           { id: 'logs', label: `Audit Logs (${actionLogs.length})` },
@@ -144,9 +151,7 @@ const AuditorDashboard = ({ currentUser }) => {
           { id: 'users', label: `Users (${users.filter(u => !u.deleted).length})` },
           { id: 'appeals', label: `Appeals (${appeals.length})` },
         ].map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            style={{ flex: 1, padding: '10px 16px', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: '13px', fontWeight: '600', transition: 'all .2s',
-              background: activeTab === t.id ? 'var(--surface)' : 'transparent', color: activeTab === t.id ? 'var(--primary)' : 'var(--text3)', boxShadow: activeTab === t.id ? 'var(--shadow-sm)' : 'none' }}>
+          <button key={t.id} className={`tab-btn ${activeTab === t.id ? 'active' : ''}`} style={{ flex: 1 }} onClick={() => setActiveTab(t.id)}>
             {t.label}
           </button>
         ))}
@@ -156,8 +161,8 @@ const AuditorDashboard = ({ currentUser }) => {
       {activeTab === 'overview' && (
         <div className="grid2">
           {/* System Health */}
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
-            <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)', marginBottom: '16px' }}>System Summary</h4>
+          <div className="card">
+            <div className="card-header"><div className="card-title">System Summary</div></div>
             {[
               { label: 'Hospitals', value: stats.hospitals, sub: `${stats.pendingHospitals} pending` },
               { label: 'Donor Verification', value: `${stats.approvedDonors} approved`, sub: `${stats.rejectedDonors} rejected` },
@@ -176,8 +181,8 @@ const AuditorDashboard = ({ currentUser }) => {
           </div>
 
           {/* Recent Activity */}
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
-            <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)', marginBottom: '16px' }}>Recent Activity</h4>
+          <div className="card">
+            <div className="card-header"><div className="card-title">Recent Activity</div></div>
             <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
               {activities.length === 0 && <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text3)' }}>No recent activity.</div>}
               {activities.slice(0, 15).map((act, i) => (
@@ -199,7 +204,7 @@ const AuditorDashboard = ({ currentUser }) => {
 
       {/* AUDIT LOGS TAB */}
       {activeTab === 'logs' && (
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           {/* Immutability notice */}
           {auditImmutable && (
             <div style={{ padding: '10px 16px', background: 'var(--accent-light)', color: 'var(--accent)', fontSize: '12px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border)' }}>
@@ -224,12 +229,12 @@ const AuditorDashboard = ({ currentUser }) => {
             )}
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="table-wrap" style={{ border: 'none', borderRadius: 0 }}>
+          <table>
             <thead>
-              <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
+              <tr>
                 {['Time', 'Action', 'User', 'Reason', 'IP Address', 'Browser / Device', 'Admin'].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px', whiteSpace: 'nowrap' }}>{h}</th>
+                  <th key={h} style={{ whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -240,22 +245,22 @@ const AuditorDashboard = ({ currentUser }) => {
               {filteredLogs.slice(0, 100).map((log, i) => {
                 const at = log.action_type || log.actionType || '';
                 return (
-                <tr key={log.id || i} style={{ borderBottom: '1px solid var(--border)', background: log.suspicious ? 'var(--danger-light)' : 'transparent' }}>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{new Date(log.created_at || log.timestamp).toLocaleString()}</td>
-                  <td style={{ padding: '10px 16px' }}>
+                <tr key={log.id || i} style={{ background: log.suspicious ? 'var(--danger-light)' : 'transparent' }}>
+                  <td style={{ fontSize: '12px', color: 'var(--text3)', whiteSpace: 'nowrap' }}>{new Date(log.created_at || log.timestamp).toLocaleString()}</td>
+                  <td>
                     <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600', background: getActionColor(at) + '18', color: getActionColor(at) }}>
                       {log.suspicious && '⚠️ '}{at.replace(/_/g, ' ')}
                     </span>
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text1)', fontWeight: '500' }}>
+                  <td style={{ fontWeight: '500' }}>
                     {log.user?.name || getUserName(log.user_id || log.userId)}
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', maxWidth: '280px' }}>
+                  <td style={{ color: 'var(--text2)', maxWidth: '280px' }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.reason}>{log.reason}</div>
                   </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{log.ip_address || '—'}</td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)', whiteSpace: 'nowrap' }}>{log.device || '—'}</td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{(log.admin_id || log.adminId) ? (log.admin?.name || getUserName(log.admin_id || log.adminId)) : '—'}</td>
+                  <td style={{ color: 'var(--text2)', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{log.ip_address || '—'}</td>
+                  <td style={{ color: 'var(--text2)', whiteSpace: 'nowrap' }}>{log.device || '—'}</td>
+                  <td style={{ color: 'var(--text3)' }}>{(log.admin_id || log.adminId) ? (log.admin?.name || getUserName(log.admin_id || log.adminId)) : '—'}</td>
                 </tr>
                 );
               })}
@@ -268,11 +273,11 @@ const AuditorDashboard = ({ currentUser }) => {
       {/* SECURITY TAB — real-time suspicious-login alerts + permission hierarchy */}
       {activeTab === 'security' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text1)', margin: 0 }}>🚨 Real-time Security Alerts</h4>
-                <div style={{ fontSize: '12px', color: 'var(--text3)' }}>Suspicious logins (new IP / new device) in the last 7 days · auto-refreshes every 20s</div>
+                <div className="card-title">🚨 Real-time Security Alerts</div>
+                <div className="card-sub">Suspicious logins (new IP / new device) in the last 7 days · auto-refreshes every 20s</div>
               </div>
               <span className={`badge ${securityAlerts.length ? 'badge-red' : 'badge-green'}`}>
                 {securityAlerts.length ? `${securityAlerts.length} alert${securityAlerts.length > 1 ? 's' : ''}` : 'All clear'}
@@ -303,29 +308,65 @@ const AuditorDashboard = ({ currentUser }) => {
           </div>
 
           {/* Permission hierarchy reference */}
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', padding: '20px' }}>
-            <h4 style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text1)', marginBottom: '4px' }}>Audit Log Permission Hierarchy</h4>
-            <div style={{ fontSize: '12px', color: 'var(--text3)', marginBottom: '14px' }}>Enforced server-side on every audit request.</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title">Audit Log Permission Hierarchy</div>
+              <div className="card-sub">Enforced server-side on every audit request.</div>
+            </div>
+            <div className="table-wrap" style={{ maxHeight: 'none' }}>
+              <table>
+                <thead>
+                  <tr>
+                    {['Role', 'Can See Own Logs', "Can See Others' Logs"].map(h => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ['Donor', 'Yes', 'No'],
+                    ['Recipient', 'Yes', 'No'],
+                    ['Employee', 'Yes', 'Limited'],
+                    ['Hospital Admin', 'Yes', 'Hospital Staff Only'],
+                    ['Super Admin', 'Yes', 'Everything'],
+                  ].map(([role, own, others], i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: '600', color: 'var(--primary)' }}>{role}</td>
+                      <td style={{ color: 'var(--accent)' }}>{own}</td>
+                      <td style={{ color: others === 'No' ? 'var(--text3)' : others === 'Everything' ? 'var(--danger)' : 'var(--warning)' }}>{others}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* USERS TAB */}
+      {activeTab === 'users' && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="table-wrap" style={{ border: 'none', borderRadius: 0 }}>
+            <table>
               <thead>
-                <tr style={{ borderBottom: '2px solid var(--border)' }}>
-                  {['Role', 'Can See Own Logs', "Can See Others' Logs"].map(h => (
-                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{h}</th>
+                <tr>
+                  {['Name', 'Email', 'Role', 'Status', 'Registered'].map(h => (
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {[
-                  ['Donor', 'Yes', 'No'],
-                  ['Recipient', 'Yes', 'No'],
-                  ['Employee', 'Yes', 'Limited'],
-                  ['Hospital Admin', 'Yes', 'Hospital Staff Only'],
-                  ['Super Admin', 'Yes', 'Everything'],
-                ].map(([role, own, others], i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '10px 12px', fontSize: '13px', fontWeight: '600', color: 'var(--primary)' }}>{role}</td>
-                    <td style={{ padding: '10px 12px', fontSize: '13px', color: 'var(--accent)' }}>{own}</td>
-                    <td style={{ padding: '10px 12px', fontSize: '13px', color: others === 'No' ? 'var(--text3)' : others === 'Everything' ? 'var(--danger)' : 'var(--warning)' }}>{others}</td>
+                {users.filter(u => !u.deleted).map(u => (
+                  <tr key={u.id}>
+                    <td style={{ fontWeight: '600' }}>{u.name}</td>
+                    <td style={{ color: 'var(--text2)' }}>{u.email}</td>
+                    <td>
+                      <span className={`badge ${roleBadgeClass(u.role)}`}>{u.role.replace('_', ' ')}</span>
+                    </td>
+                    <td>
+                      <span className={`badge ${u.status === 'approved' ? 'badge-green' : u.status === 'pending' ? 'badge-amber' : u.status === 'banned' ? 'badge-red' : 'badge-gray'}`}>{u.status}</span>
+                    </td>
+                    <td style={{ color: 'var(--text3)' }}>{u.registrationDate ? new Date(u.registrationDate).toLocaleDateString() : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -334,52 +375,18 @@ const AuditorDashboard = ({ currentUser }) => {
         </div>
       )}
 
-      {/* USERS TAB */}
-      {activeTab === 'users' && (
-        <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)', overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
-                {['Name', 'Email', 'Role', 'Status', 'Registered'].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '.5px' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {users.filter(u => !u.deleted).map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '10px 16px', fontSize: '13px', fontWeight: '600', color: 'var(--text1)' }}>{u.name}</td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text2)' }}>{u.email}</td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: '600',
-                      background: u.role === 'super_admin' ? 'var(--danger-light)' : u.role === 'admin' ? 'var(--warning-light)' : u.role === 'hospital' ? '#f3f0ff' : u.role === 'donor' ? 'var(--danger-light)' : u.role === 'doctor' ? 'var(--primary-light)' : u.role === 'auditor' ? 'var(--warning-light)' : 'var(--accent-light)',
-                      color: u.role === 'super_admin' ? 'var(--danger)' : u.role === 'admin' ? 'var(--warning)' : u.role === 'hospital' ? '#7c5cbf' : u.role === 'donor' ? 'var(--danger)' : u.role === 'doctor' ? 'var(--primary)' : u.role === 'auditor' ? 'var(--warning)' : 'var(--accent)' }}>
-                      {u.role.replace('_', ' ')}
-                    </span>
-                  </td>
-                  <td style={{ padding: '10px 16px' }}>
-                    <span className={`badge ${u.status === 'approved' ? 'badge-green' : u.status === 'pending' ? 'badge-amber' : u.status === 'banned' ? 'badge-red' : 'badge-gray'}`}>{u.status}</span>
-                  </td>
-                  <td style={{ padding: '10px 16px', fontSize: '12px', color: 'var(--text3)' }}>{u.registrationDate ? new Date(u.registrationDate).toLocaleDateString() : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
       {/* APPEALS TAB */}
       {activeTab === 'appeals' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {appeals.length === 0 && (
-            <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '60px 20px', textAlign: 'center', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '40px', marginBottom: '12px' }}>📋</div>
-              <div style={{ fontSize: '15px', fontWeight: '600', color: 'var(--text1)' }}>No Appeals</div>
-              <div style={{ fontSize: '13px', color: 'var(--text3)' }}>No appeals have been submitted yet.</div>
+            <div className="card empty-state">
+              <div className="empty-state-icon">📋</div>
+              <h3>No Appeals</h3>
+              <p>No appeals have been submitted yet.</p>
             </div>
           )}
           {appeals.map(appeal => (
-            <div key={appeal.id} style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '20px', boxShadow: 'var(--shadow-sm)', border: '1px solid var(--border)' }}>
+            <div key={appeal.id} className="card" style={{ marginBottom: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                 <div>
                   <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text1)' }}>Appeal from {getUserName(appeal.user_id || appeal.userId)}</div>

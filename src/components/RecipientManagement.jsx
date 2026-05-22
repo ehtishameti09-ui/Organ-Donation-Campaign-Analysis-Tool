@@ -7,6 +7,7 @@ import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
 import { ORGANS_LOWER as ORGANS } from '../utils/organs';
 import Pagination, { usePagination } from './Pagination';
+import DocumentViewer from './DocumentViewer';
 
 // Document Lightbox Modal
 const DocumentLightboxModal = ({ doc, onClose }) => {
@@ -621,7 +622,7 @@ const RecipientManagement = ({ currentUser }) => {
       )}
 
       {/* Document Lightbox */}
-      {lightboxDoc && <DocumentLightboxModal doc={lightboxDoc} onClose={() => setLightboxDoc(null)} />}
+      {lightboxDoc && <DocumentViewer doc={lightboxDoc} onClose={() => setLightboxDoc(null)} />}
     </div>
   );
 };

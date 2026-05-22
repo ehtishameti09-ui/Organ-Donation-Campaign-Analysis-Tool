@@ -306,9 +306,8 @@ const EmployeeManagement = ({ currentUser }) => {
 
       {/* Add/Edit Modal */}
       {showAddModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={() => { setShowAddModal(false); resetForm(); }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '28px', width: '520px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}
+        <div className="modal-overlay show" onClick={() => { setShowAddModal(false); resetForm(); }}>
+          <div className="modal" style={{ width: '520px', maxWidth: '95vw', padding: '28px', overflowY: 'auto' }}
             onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px', color: 'var(--text1)' }}>
               {editingEmployee ? 'Edit Employee' : 'Add New Employee'}

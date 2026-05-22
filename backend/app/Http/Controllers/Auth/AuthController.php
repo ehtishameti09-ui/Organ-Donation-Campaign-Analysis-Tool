@@ -51,7 +51,10 @@ class AuthController extends Controller
             'role' => $data['role'],
             'status' => $data['role'] === 'hospital' ? 'pending' : 'registered',
             'registration_type' => $data['role'] === 'hospital' ? 'hospital_request' : 'user_self',
-            'registration_complete' => false,
+            // Hospitals submit all their details at registration (name, reg#, license,
+            // address are required here), so their registration is complete immediately.
+            // Donors/recipients still complete a separate wizard afterwards.
+            'registration_complete' => $data['role'] === 'hospital',
             // Auto-verify email in local development so protected routes work immediately
             'email_verified_at' => app()->environment('local') ? now() : null,
         ]);

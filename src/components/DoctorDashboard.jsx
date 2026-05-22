@@ -221,9 +221,8 @@ const DoctorDashboard = ({ currentUser }) => {
 
       {/* Review Modal */}
       {reviewModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={() => setReviewModal(null)}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '28px', width: '480px', maxWidth: '95vw', boxShadow: 'var(--shadow-lg)' }}
+        <div className="modal-overlay show" onClick={() => setReviewModal(null)}>
+          <div className="modal" style={{ width: '480px', maxWidth: '95vw', padding: '28px' }}
             onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>
               {reviewAction === 'approve' ? '✅ Approve Case' : reviewAction === 'reject' ? '❌ Reject Case' : '📋 Request More Info'}

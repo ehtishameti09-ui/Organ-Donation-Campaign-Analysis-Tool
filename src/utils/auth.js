@@ -228,6 +228,29 @@ export const registerUser = async (registrationData) => {
       extraData
     );
     localStorage.setItem('odcat_current', JSON.stringify(response.user));
+
+    // Upload the documents the user attached during registration. registerViaAPI
+    // stores an auth token, so the just-created hospital can immediately upload
+    // its own files. Without this the documents were silently dropped and kept
+    // showing as "Required" afterwards.
+    if (
+      registrationData.type === 'hospital' &&
+      Array.isArray(registrationData.uploadedDocuments) &&
+      registrationData.uploadedDocuments.length > 0 &&
+      response.user?.id
+    ) {
+      await uploadAdditionalHospitalDocuments(response.user.id, registrationData.uploadedDocuments);
+      // Refresh so the returned/stored user includes the just-uploaded documents
+      // (otherwise the dashboard & Account Settings would still see none).
+      try {
+        const me = await API.getMeViaAPI();
+        const freshUser = me.user || me;
+        localStorage.setItem('odcat_current', JSON.stringify(freshUser));
+        localStorage.setItem('odcat_user', JSON.stringify(freshUser));
+        return freshUser;
+      } catch { /* fall back to the original user object if refresh fails */ }
+    }
+
     return response.user;
   } catch (error) {
     console.error('Registration failed:', error);

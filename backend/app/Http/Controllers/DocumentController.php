@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Document;
+use App\Models\Notification;
 use App\Models\User;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
@@ -33,17 +34,6 @@ class DocumentController extends Controller
         // Permission check: can only upload for self or if admin/hospital
         if ($targetUserId !== $authUser->id && !$authUser->isAdmin() && !$authUser->isHospital()) {
             return response()->json(['message' => 'Cannot upload documents for another user.'], 403);
-        }
-
-        // Hospitals can only (re)upload their own registration docs while status is
-        // pending (initial submission) or info_requested (super admin asked for more).
-        // Once approved or rejected, the documents are locked.
-        if ($authUser->isHospital() && $targetUserId === $authUser->id) {
-            if (!in_array($authUser->status, ['pending', 'info_requested'], true)) {
-                return response()->json([
-                    'message' => 'Documents are locked. You can only re-upload after the super admin requests additional information.',
-                ], 403);
-            }
         }
 
         // A document type is single-slot: re-uploading a "Healthcare License"
@@ -152,6 +142,34 @@ class DocumentController extends Controller
             'reviewed_at' => now(),
             'review_notes' => $data['notes'] ?? null,
         ]);
+
+        // Notify the document owner of the review outcome so they can act on it.
+        $label = ucwords(trim(preg_replace('/(?<!^)[A-Z]/', ' $0', (string) $document->document_type)));
+        $label = $label !== '' ? $label : 'document';
+        if ($data['status'] === 'rejected') {
+            Notification::create([
+                'user_id' => $document->user_id,
+                'type' => 'warning',
+                'title' => 'Document rejected: '.$label,
+                'message' => 'Your "'.$label.'" was rejected'
+                    .(!empty($data['notes']) ? ' — '.$data['notes'] : '')
+                    .'. Please upload a corrected copy from Account Settings → Documents for re-review.',
+                'data' => ['document_id' => $document->id, 'document_type' => $document->document_type, 'reason' => $data['notes'] ?? null],
+            ]);
+            ActivityLogger::logAction($document->user_id, 'document_rejected', 'Document rejected: '.$label, ['document_id' => $document->id, 'reason' => $data['notes'] ?? null], $authUser->id);
+        } else {
+            Notification::create([
+                'user_id' => $document->user_id,
+                'type' => 'info',
+                'title' => 'Document approved: '.$label,
+                'message' => 'Your "'.$label.'" was approved.',
+                'data' => ['document_id' => $document->id, 'document_type' => $document->document_type],
+            ]);
+        }
+
+        // Owner's overview/dashboard caches may show document status — refresh them.
+        Cache::forget('hospitals:overview:v1');
+
         return response()->json(['message' => 'Document '.$data['status'].'.']);
     }
 

@@ -8,8 +8,10 @@ import {
   getUserAppeals, submitAppeal
 } from '../utils/auth';
 import { toast } from '../utils/toast';
+import { reviewDocumentViaAPI } from '../utils/api';
 import { generateRegistrationPDF } from '../utils/pdfReport';
 import Pagination, { usePagination } from './Pagination';
+import DocumentViewer from './DocumentViewer';
 
 Chart.register(...registerables);
 
@@ -154,6 +156,7 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
   const [reviewAction, setReviewAction] = useState(null); // 'approve' | 'reject' | 'request_info'
   const [reviewNotes, setReviewNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [viewerDoc, setViewerDoc] = useState(null);
 
   const loadCases = async () => {
     const data = await getHospitalAssignedCases(hospitalId);
@@ -176,6 +179,47 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
 
   // Switching tabs (filter) snaps back to page 1 so the user doesn't land on an empty page
   useEffect(() => { casesPg.setPage(1); }, [filter]);
+
+  // Resolve a document to a viewable blob URL — handles legacy inline base64
+  // (doc.data) and the secure API URL (doc.url, fetched with the auth token).
+  const fetchDocBlob = async (doc) => {
+    if (doc.data) return doc.data;
+    if (!doc.url) throw new Error('Document has no source');
+    const token = localStorage.getItem('odcat_token');
+    const r = await fetch(doc.url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!r.ok) throw new Error(`Could not load document (${r.status})`);
+    return URL.createObjectURL(await r.blob());
+  };
+  const viewDoc = (doc) => setViewerDoc(doc);
+  const downloadDoc = async (doc) => {
+    try {
+      const url = await fetchDocBlob(doc);
+      const a = document.createElement('a');
+      a.href = url; a.download = doc.name || 'document'; a.click();
+      if (!doc.data) setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { toast(e.message || 'Could not download document.', 'error'); }
+  };
+  const [docBusy, setDocBusy] = useState('');
+  const reviewDoc = async (doc, status) => {
+    let notes = '';
+    if (status === 'rejected') {
+      notes = window.prompt('Reason for rejecting this document (the user will see this and can re-upload):', '');
+      if (notes === null) return;            // cancelled
+      if (!notes.trim()) { toast('A reason is required to reject a document.', 'error'); return; }
+    }
+    setDocBusy(doc.id);
+    try {
+      await reviewDocumentViaAPI(doc.id, status, notes);
+      toast(`Document ${status === 'approved' ? 'approved' : 'rejected'}.`, 'success');
+      const fresh = await getHospitalAssignedCases(hospitalId);
+      setCases(fresh);
+      setSelectedCase(prev => prev ? (fresh.find(c => c.id === prev.id) || prev) : prev);
+    } catch (e) {
+      toast(e.message || 'Document review failed.', 'error');
+    } finally {
+      setDocBusy('');
+    }
+  };
 
   const handleReviewSubmit = async () => {
     if (!selectedCase || !reviewAction) return;
@@ -467,21 +511,47 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
                 {(selectedCase.uploadedDocuments || []).length === 0 ? (
                   <div style={{ fontSize: '12px', color: 'var(--text3)' }}>No documents uploaded.</div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {(selectedCase.uploadedDocuments || []).map((doc, i) => (
-                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 12px', background: 'var(--surface2)', borderRadius: 'var(--radius)' }}>
-                        <span style={{ fontSize: '16px' }}>📄</span>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '12px', fontWeight: '600' }}>{doc.name || doc.documentType}</div>
-                          <div style={{ fontSize: '10px', color: 'var(--text3)' }}>
-                            {doc.documentType} • {doc.size ? (doc.size / 1024).toFixed(1) + ' KB' : ''}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {(selectedCase.uploadedDocuments || []).map((doc, i) => {
+                      const status = doc.status || 'pending';
+                      const busy = docBusy === doc.id;
+                      return (
+                      <div key={doc.id || i} style={{ padding: '10px 12px', background: status === 'rejected' ? 'var(--danger-light)' : 'var(--surface2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '16px' }}>📄</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={doc.name}>{doc.name || doc.documentType}</div>
+                            <div style={{ fontSize: '10px', color: 'var(--text3)' }}>
+                              {doc.documentType} • {doc.size ? (doc.size / 1024).toFixed(1) + ' KB' : ''}
+                            </div>
                           </div>
+                          <span className={`badge ${status === 'approved' ? 'badge-green' : status === 'rejected' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: '10px', flexShrink: 0 }}>
+                            {status === 'approved' ? '✓ Approved' : status === 'rejected' ? '✗ Rejected' : 'Pending'}
+                          </span>
                         </div>
-                        {doc.data && (
-                          <a href={doc.data} download={doc.name} className="btn btn-xs btn-outline">View</a>
+                        <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
+                          <button type="button" className="btn btn-xs btn-ghost" onClick={() => viewDoc(doc)}>👁 View</button>
+                          <button type="button" className="btn btn-xs btn-outline" onClick={() => downloadDoc(doc)}>⬇ Download</button>
+                          <div style={{ flex: 1 }} />
+                          {status !== 'approved' && (
+                            <button type="button" className="btn btn-xs btn-success" disabled={busy} onClick={() => reviewDoc(doc, 'approved')}>
+                              {busy ? '…' : '✓ Approve'}
+                            </button>
+                          )}
+                          {status !== 'rejected' && (
+                            <button type="button" className="btn btn-xs btn-danger" disabled={busy} onClick={() => reviewDoc(doc, 'rejected')}>
+                              {busy ? '…' : '✗ Reject'}
+                            </button>
+                          )}
+                        </div>
+                        {status === 'rejected' && doc.reviewNotes && (
+                          <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--danger)' }}>
+                            <strong>Reason:</strong> {doc.reviewNotes}
+                          </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -502,17 +572,17 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
                   </h4>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '12px' }}>
                     {[
-                      { id: 'approve', label: '✅ Approve', color: '#0eb07a' },
-                      { id: 'request_info', label: '📋 Request Info', color: '#e8900a' },
-                      { id: 'reject', label: '❌ Reject', color: '#d63e3e' },
+                      { id: 'approve', label: '✓ Approve', color: 'var(--accent)' },
+                      { id: 'request_info', label: '📋 Request Info', color: 'var(--warning)' },
+                      { id: 'reject', label: '✗ Reject', color: 'var(--danger)' },
                     ].map(a => (
-                      <button key={a.id} onClick={() => setReviewAction(a.id)}
+                      <button key={a.id} type="button" onClick={() => setReviewAction(a.id)}
                         style={{
-                          padding: '12px', borderRadius: 'var(--radius)',
+                          padding: '12px', borderRadius: 'var(--radius)', cursor: 'pointer',
                           border: `2px solid ${reviewAction === a.id ? a.color : 'var(--border)'}`,
                           background: reviewAction === a.id ? a.color : 'var(--surface)',
                           color: reviewAction === a.id ? '#fff' : a.color,
-                          fontSize: '13px', fontWeight: '600', cursor: 'pointer'
+                          fontSize: '13px', fontWeight: '600',
                         }}>
                         {a.label}
                       </button>
@@ -548,6 +618,8 @@ const HospitalCasesPanel = ({ hospitalId, hospitalUser }) => {
           </div>
         </div>
       )}
+
+      {viewerDoc && <DocumentViewer doc={viewerDoc} onClose={() => setViewerDoc(null)} />}
     </div>
   );
 };
@@ -641,9 +713,8 @@ const RejectedWithAppeal = ({ user, onNavigate }) => {
 
       {/* Appeal Form Modal */}
       {showAppealForm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={() => setShowAppealForm(false)}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '28px', width: '520px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}
+        <div className="modal-overlay show" onClick={() => setShowAppealForm(false)}>
+          <div className="modal" style={{ width: '520px', maxWidth: '95vw', padding: '28px', overflowY: 'auto' }}
             onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>Appeal Rejection</h3>
             <p style={{ fontSize: '13px', color: 'var(--text3)', marginBottom: '16px' }}>
@@ -1162,7 +1233,7 @@ const Dashboard = ({ user, onNavigate }) => {
               <div className="card-title">System Alerts</div>
               <div className="card-sub">Requires attention</div>
             </div>
-            {pendingHospitals > 0 && (
+            {showPendingHospitalsCard && pendingHospitals > 0 && (
               <div className="alert alert-warning">
                 <span className="alert-icon">⚠️</span>
                 <div className="alert-content">

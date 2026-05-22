@@ -54,6 +54,17 @@ Route::get('/stats/public', function () {
     });
 })->name('stats.public');
 
+// Documents — authenticated but NOT email-gated. A hospital (and donors/
+// recipients) must be able to submit registration documents before verifying
+// their email. The controller still enforces ownership, role and status rules.
+Route::middleware(['auth:sanctum', 'not.banned', 'audit'])->group(function () {
+    Route::post('/documents/upload', [DocumentController::class, 'upload'])->name('documents.upload');
+    Route::get('/documents', [DocumentController::class, 'index'])->name('documents.index');
+    Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
+    Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+    Route::post('/documents/{document}/review', [DocumentController::class, 'review'])->name('documents.review');
+});
+
 // Authenticated routes
 Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->group(function () {
     // Auth routes
@@ -93,13 +104,6 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::get('/recipients', [RecipientController::class, 'index'])->name('recipients.index');
     Route::post('/recipients/complete-registration', [RecipientController::class, 'completeRegistration'])->name('recipients.complete-registration');
     Route::post('/recipients/{recipient}/verify', [RecipientController::class, 'verify'])->name('recipients.verify');
-
-    // Documents
-    Route::post('/documents/upload', [DocumentController::class, 'upload'])->name('documents.upload');
-    Route::get('/documents', [DocumentController::class, 'index'])->name('documents.index');
-    Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
-    Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
-    Route::post('/documents/{document}/review', [DocumentController::class, 'review'])->name('documents.review');
 
     // Notifications
     Route::get('/notifications', [NotificationController::class, 'index'])->name('notifications.index');

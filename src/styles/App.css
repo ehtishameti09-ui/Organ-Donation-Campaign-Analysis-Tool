@@ -218,6 +218,14 @@ html, body, #root { height: 100%; font-family: var(--font); color: var(--text1);
 .btn-ghost:hover { background: var(--surface3); }
 .btn-danger { background: var(--danger); color: #fff; }
 .btn-danger:hover { background: #b03030; }
+.btn-danger:disabled { background: var(--border2); cursor: not-allowed; }
+/* Action-based semantic buttons: success = approve/positive, warning = request-info/caution */
+.btn-success { background: var(--accent); color: #fff; }
+.btn-success:hover { filter: brightness(.93); }
+.btn-success:disabled { background: var(--border2); cursor: not-allowed; filter: none; }
+.btn-warning { background: var(--warning); color: #fff; }
+.btn-warning:hover { filter: brightness(.93); }
+.btn-warning:disabled { background: var(--border2); cursor: not-allowed; filter: none; }
 .btn-sm { height: 32px; padding: 0 12px; font-size: 12px; }
 .btn-xs { height: 26px; padding: 0 10px; font-size: 11px; border-radius: 6px; }
 .btn-full { width: 100%; }

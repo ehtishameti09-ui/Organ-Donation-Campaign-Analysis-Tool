@@ -8,6 +8,7 @@ import { generateRegistrationPDF } from '../utils/pdfReport';
 import { toast } from '../utils/toast';
 import { ORGANS_LOWER as ORGANS } from '../utils/organs';
 import Pagination, { usePagination } from './Pagination';
+import DocumentViewer from './DocumentViewer';
 
 // Friendly labels for document type keys uploaded by the donor wizard
 const DOC_TYPE_LABELS = {
@@ -242,7 +243,7 @@ const DonorManagement = ({ currentUser }) => {
   const openDocViewer = async (doc) => {
     try {
       const { url, type } = await getDocumentBlob(doc.id);
-      setLightboxDoc({ name: doc.name, data: url, type: type || doc.mimeType });
+      setLightboxDoc({ name: doc.name, data: url, type: type || doc.mimeType, size: doc.size });
     } catch {
       toast('Could not open document.', 'error');
     }
@@ -729,8 +730,8 @@ const DonorManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Document Lightbox */}
-      {lightboxDoc && <DocumentLightboxModal doc={lightboxDoc} onClose={() => {
+      {/* Document Viewer (shared, with minimize / restore / fullscreen / close) */}
+      {lightboxDoc && <DocumentViewer doc={lightboxDoc} onClose={() => {
         if (lightboxDoc.data?.startsWith('blob:')) URL.revokeObjectURL(lightboxDoc.data);
         setLightboxDoc(null);
       }} />}
