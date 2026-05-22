@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejectedHospitals, getHospitalAdmins, approveRegistrationWithActivity, rejectRegistrationWithActivity, requestAdditionalInfoWithActivity, banUser, softDeleteUser, unbanUser, restoreUser, getAppeals, getPendingAppeals, getOverdueAppeals, submitAppeal, reviewAppeal, getUserActionLogs, BAN_CATEGORIES, BAN_DURATIONS, getNotifications, validateEmail, validateName, addActivity, updateUserStatus, capitalizeName } from '../utils/auth';
-import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI } from '../utils/api';
+import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI, reviewDocumentViaAPI } from '../utils/api';
 import Pagination, { usePagination } from './Pagination';
+import DocumentViewer from './DocumentViewer';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
@@ -20,6 +21,7 @@ const UserManagement = ({ currentUser }) => {
   const [showDocumentPreview, setShowDocumentPreview] = useState(false);
   const [previewDocument, setPreviewDocument] = useState(null);
   const [previewMode, setPreviewMode] = useState('normal'); // 'normal' | 'fullscreen' | 'minimized'
+  const [docReviewBusy, setDocReviewBusy] = useState('');
   const [showBanModal, setShowBanModal] = useState(false);
   const [banModalData, setBanModalData] = useState({ userId: null, userName: null, category: '', detailedReason: '', banType: 'temporary', banDuration: 30 });
   const [appeals, setAppeals] = useState([]);
@@ -275,6 +277,34 @@ const UserManagement = ({ currentUser }) => {
     }
   };
 
+  // Super admin approves/rejects an individual hospital document. On reject the
+  // hospital is notified and can re-upload it from Account Settings.
+  const reviewHospitalDoc = async (doc, status) => {
+    let notes = '';
+    if (status === 'rejected') {
+      notes = window.prompt('Reason for rejecting this document (the hospital will see this and can re-upload):', '');
+      if (notes === null) return;
+      if (!notes.trim()) { toast('A reason is required to reject a document.', 'error'); return; }
+    }
+    setDocReviewBusy(doc.id);
+    try {
+      await reviewDocumentViaAPI(doc.id, status, notes);
+      toast(`Document ${status === 'approved' ? 'approved' : 'rejected'}.`, 'success');
+      // Refresh the hospital lists and the open modal so statuses update.
+      const overview = await getHospitalsOverviewViaAPI();
+      setApprovedHospitals(overview.approved || []);
+      setPendingRegistrations(overview.pending || []);
+      setRejectedHospitals(overview.rejected || []);
+      setAdminUsers(overview.admins || []);
+      const all = [...(overview.pending || []), ...(overview.approved || []), ...(overview.rejected || [])];
+      setSelectedRegistration(prev => (prev ? (all.find(h => h.id === prev.id) || prev) : prev));
+    } catch (e) {
+      toast(e.message || 'Document review failed.', 'error');
+    } finally {
+      setDocReviewBusy('');
+    }
+  };
+
   const handleAddAdmin = async () => {
     const { name, email, password, linkedHospitalId, linkedHospitalName } = newAdmin;
 
@@ -477,10 +507,7 @@ const UserManagement = ({ currentUser }) => {
                       <RegistrationRow
                         key={reg.id}
                         registration={reg}
-                        onView={() => handleRegistrationAction(reg, 'view')}
-                        onApprove={() => handleRegistrationAction(reg, 'approve')}
-                        onReject={() => handleRegistrationAction(reg, 'reject')}
-                        onRequestInfo={() => handleRegistrationAction(reg, 'info')}
+                        onReview={() => handleRegistrationAction(reg, 'review')}
                       />
                     ))
                   ) : (
@@ -591,6 +618,7 @@ const UserManagement = ({ currentUser }) => {
                     <th>Registration #</th>
                     <th>Rejection Reason</th>
                     <th>Rejected</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -601,11 +629,16 @@ const UserManagement = ({ currentUser }) => {
                         <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.registrationNumber}</td>
                         <td style={{ fontSize: '12px', color: 'var(--text2)' }}>{hospital.rejectionReason || 'No reason provided'}</td>
                         <td style={{ fontSize: '12px', color: 'var(--danger)' }}>✗ Rejected</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button className="btn btn-sm btn-outline" onClick={() => handleRegistrationAction(hospital, 'view')} style={{ whiteSpace: 'nowrap' }}>
+                            👁 View Details
+                          </button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan="4" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
+                      <td colSpan="5" style={{ textAlign: 'center', padding: '20px', color: 'var(--text3)' }}>
                         No rejected hospitals
                       </td>
                     </tr>
@@ -1035,13 +1068,10 @@ const UserManagement = ({ currentUser }) => {
       {/* Registration Action Modal */}
       {showRegistrationModal && selectedRegistration && (
         <div className="modal-overlay show">
-          <div className="modal" style={{ maxWidth: '450px' }}>
+          <div className="modal" style={{ maxWidth: '560px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
               <h3>
-                {modalAction === 'approve' && '✓ Approve Hospital'}
-                {modalAction === 'reject' && '✗ Reject Application'}
-                {modalAction === 'info' && 'ℹ️ Request Additional Info'}
-                {modalAction === 'view' && '🏥 Hospital Details'}
+                {modalAction === 'view' ? '🏥 Hospital Details' : modalAction === 'approve' ? '✓ Approve Hospital' : modalAction === 'reject' ? '✗ Reject Application' : modalAction === 'info' ? 'ℹ️ Request Additional Info' : '🔍 Review Hospital Registration'}
               </h3>
               <button className="modal-close" onClick={() => setShowRegistrationModal(false)}>
                 ×
@@ -1118,7 +1148,15 @@ const UserManagement = ({ currentUser }) => {
                   }
                 });
                 const docs = Object.values(latestByType);
-                if (docs.length === 0) return null;
+                if (docs.length === 0) return (
+                  <div style={{
+                    background: 'var(--surface2)', padding: '14px', borderRadius: 'var(--radius)',
+                    marginBottom: '16px', fontSize: '12px', color: 'var(--text3)',
+                    display: 'flex', alignItems: 'center', gap: '8px'
+                  }}>
+                    <span>📭</span> This hospital has not submitted any documents.
+                  </div>
+                );
                 return (
                   <div style={{
                     background: 'var(--surface2)',
@@ -1153,20 +1191,38 @@ const UserManagement = ({ currentUser }) => {
                             <div style={{ fontSize: '10px', color: 'var(--text3)', marginTop: '2px' }}>
                               {((doc.size || 0) / 1024 / 1024).toFixed(2)} MB
                               {doc.uploadedAt && ` • ${new Date(doc.uploadedAt).toLocaleDateString()}`}
-                              {doc.status && doc.status !== 'pending' && (
-                                <span className={`badge ${doc.status === 'approved' ? 'badge-green' : 'badge-red'}`} style={{ marginLeft: '6px', fontSize: '9px' }}>
-                                  {doc.status}
-                                </span>
-                              )}
                             </div>
+                            {doc.status === 'rejected' && doc.reviewNotes && (
+                              <div style={{ fontSize: '10px', color: 'var(--danger)', marginTop: '2px' }}>
+                                Reason: {doc.reviewNotes}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                            <button type="button" className="btn btn-xs btn-ghost" onClick={() => previewDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
+                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' }}>
+                            {(() => {
+                              const st = doc.status || 'pending';
+                              return (
+                                <span className={`badge ${st === 'approved' ? 'badge-green' : st === 'rejected' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: '10px' }}>
+                                  {st === 'approved' ? 'Approved' : st === 'rejected' ? 'Rejected' : 'Pending'}
+                                </span>
+                              );
+                            })()}
+                            <button type="button" className="btn btn-xs btn-outline" onClick={() => previewDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
                               👁 View
                             </button>
                             <button type="button" className="btn btn-xs btn-outline" onClick={() => downloadDoc(doc)} style={{ whiteSpace: 'nowrap' }}>
                               ⬇ Download
                             </button>
+                            {doc.status !== 'approved' && (
+                              <button type="button" className="btn btn-xs btn-success" disabled={docReviewBusy === doc.id} onClick={() => reviewHospitalDoc(doc, 'approved')} style={{ whiteSpace: 'nowrap' }}>
+                                {docReviewBusy === doc.id ? '…' : '✓ OK'}
+                              </button>
+                            )}
+                            {doc.status !== 'rejected' && (
+                              <button type="button" className="btn btn-xs btn-danger" disabled={docReviewBusy === doc.id} onClick={() => reviewHospitalDoc(doc, 'rejected')} style={{ whiteSpace: 'nowrap' }}>
+                                {docReviewBusy === doc.id ? '…' : '✗ Reject'}
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -1174,6 +1230,34 @@ const UserManagement = ({ currentUser }) => {
                   </div>
                 );
               })()}
+
+              {/* Select Action — shown for the review flow (not the read-only view) */}
+              {modalAction !== 'view' && (
+                <div style={{ marginBottom: '4px' }}>
+                  <div style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--primary)', letterSpacing: '.5px', fontWeight: '700', marginBottom: '10px' }}>
+                    Select Action
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '14px' }}>
+                    {[
+                      { id: 'approve', label: '✓ Approve', color: 'var(--accent)' },
+                      { id: 'info', label: '📋 Request Info', color: 'var(--warning)' },
+                      { id: 'reject', label: '✗ Reject', color: 'var(--danger)' },
+                    ].map(a => (
+                      <button key={a.id} type="button"
+                        onClick={() => { setModalAction(a.id); setModalMessage(''); }}
+                        style={{
+                          padding: '12px', borderRadius: 'var(--radius)', cursor: 'pointer',
+                          border: `2px solid ${modalAction === a.id ? a.color : 'var(--border)'}`,
+                          background: modalAction === a.id ? a.color : 'var(--surface)',
+                          color: modalAction === a.id ? '#fff' : a.color,
+                          fontSize: '13px', fontWeight: '600',
+                        }}>
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {modalAction === 'approve' && (
                 <>
@@ -1251,9 +1335,9 @@ const UserManagement = ({ currentUser }) => {
             </div>
             <div className="modal-footer">
               <button className="btn btn-ghost" onClick={() => setShowRegistrationModal(false)}>
-                {modalAction === 'view' ? 'Close' : 'Cancel'}
+                {(modalAction === 'view' || modalAction === 'review') ? 'Close' : 'Cancel'}
               </button>
-              {modalAction !== 'view' && (
+              {['approve', 'reject', 'info'].includes(modalAction) && (
                 <button
                   className={`btn ${modalAction === 'reject' ? 'btn-danger' : 'btn-primary'}`}
                   onClick={submitRegistrationAction}
@@ -1568,158 +1652,12 @@ const UserManagement = ({ currentUser }) => {
         </div>
       )}
 
-      {/* Document Preview Modal */}
-      {showDocumentPreview && previewDocument && previewMode === 'minimized' && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: '20px',
-            right: '20px',
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
-            padding: '10px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            maxWidth: '320px',
-            zIndex: 9999,
-          }}
-        >
-          <span style={{ fontSize: '18px' }}>📄</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '12px', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {previewDocument.name}
-            </div>
-            <div style={{ fontSize: '10px', color: 'var(--text3)' }}>Document Preview · minimized</div>
-          </div>
-          <button
-            type="button"
-            className="btn btn-xs btn-ghost"
-            title="Restore"
-            onClick={() => setPreviewMode('normal')}
-            style={{ padding: '4px 8px' }}
-          >
-            ▢
-          </button>
-          <button
-            type="button"
-            className="btn btn-xs btn-ghost"
-            title="Close"
-            onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
-            style={{ padding: '4px 8px' }}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {showDocumentPreview && previewDocument && previewMode !== 'minimized' && (
-        <div className="modal-overlay show">
-          <div
-            className="modal"
-            style={
-              previewMode === 'fullscreen'
-                ? { maxWidth: '100vw', maxHeight: '100vh', width: '100vw', height: '100vh', borderRadius: 0 }
-                : { maxWidth: '800px', maxHeight: '85vh' }
-            }
-          >
-            <div className="modal-header">
-              <h3>Document Preview</h3>
-              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                <button
-                  className="modal-close"
-                  title="Minimize"
-                  onClick={() => setPreviewMode('minimized')}
-                  style={{ fontSize: '18px' }}
-                >
-                  −
-                </button>
-                <button
-                  className="modal-close"
-                  title={previewMode === 'fullscreen' ? 'Exit fullscreen' : 'Fullscreen'}
-                  onClick={() => setPreviewMode(previewMode === 'fullscreen' ? 'normal' : 'fullscreen')}
-                  style={{ fontSize: '14px' }}
-                >
-                  {previewMode === 'fullscreen' ? '🗗' : '⛶'}
-                </button>
-                <button
-                  className="modal-close"
-                  title="Close"
-                  onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            <div className="modal-body" style={{ padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-              <div style={{
-                background: 'var(--surface2)',
-                padding: '12px 16px',
-                borderBottom: '1px solid var(--border)',
-                fontSize: '12px'
-              }}>
-                <div style={{ fontWeight: '600', marginBottom: '2px' }}>{previewDocument.name}</div>
-                <div style={{ fontSize: '11px', color: 'var(--text3)' }}>
-                  {((previewDocument.size || 0) / 1024 / 1024).toFixed(2)} MB • {previewDocument.mimeType || previewDocument.type || 'unknown'}
-                </div>
-              </div>
-
-              <div style={{
-                flex: 1,
-                overflow: 'auto',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: 'var(--surface3)',
-                minHeight: previewMode === 'fullscreen' ? '0' : '400px'
-              }}>
-                {(() => {
-                  const src = previewDocument._resolvedUrl || previewDocument.data;
-                  const mime = previewDocument.mimeType || previewDocument.type || '';
-                  if (mime.startsWith('image/')) {
-                    return <img src={src} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />;
-                  }
-                  if (mime === 'application/pdf') {
-                    return <iframe src={src} style={{ width: '100%', height: '100%', border: 'none' }} title="PDF Preview" />;
-                  }
-                  return (
-                    <div style={{ textAlign: 'center', color: 'var(--text3)' }}>
-                      <div style={{ fontSize: '32px', marginBottom: '12px' }}>📄</div>
-                      <div>Preview not available for this file type</div>
-                      <div style={{ fontSize: '12px', marginTop: '8px' }}>Please download to view</div>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              <div style={{
-                background: 'var(--surface2)',
-                padding: '12px 16px',
-                borderTop: '1px solid var(--border)',
-                display: 'flex',
-                gap: '8px',
-                justifyContent: 'flex-end'
-              }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => downloadDoc(previewDocument)}
-                >
-                  ⬇ Download
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Document Preview — shared viewer (zoom, pan, draggable, minimize/restore/close) */}
+      {showDocumentPreview && previewDocument && (
+        <DocumentViewer
+          doc={previewDocument}
+          onClose={() => { setShowDocumentPreview(false); setPreviewDocument(null); setPreviewMode('normal'); }}
+        />
       )}
 
       {/* Category Selection Modal */}
@@ -1915,7 +1853,7 @@ const UserRow = ({ user, isSelf, currentUser, onBan, onDelete }) => {
 };
 
 // Registration Row Component (for pending hospitals)
-const RegistrationRow = ({ registration, onView, onApprove, onReject, onRequestInfo }) => {
+const RegistrationRow = ({ registration, onReview }) => {
   return (
     <tr>
       <td>
@@ -1941,32 +1879,8 @@ const RegistrationRow = ({ registration, onView, onApprove, onReject, onRequestI
         }
       </td>
       <td style={{ textAlign: 'right' }}>
-        <button
-          className="btn btn-sm btn-outline"
-          onClick={onView}
-          style={{ marginRight: '4px' }}
-        >
-          👁 View
-        </button>
-        <button
-          className="btn btn-sm btn-outline"
-          onClick={onApprove}
-          style={{ marginRight: '4px' }}
-        >
-          Approve
-        </button>
-        <button
-          className="btn btn-sm btn-ghost"
-          onClick={onRequestInfo}
-          style={{ marginRight: '4px' }}
-        >
-          Info?
-        </button>
-        <button
-          className="btn btn-sm btn-danger"
-          onClick={onReject}
-        >
-          Reject
+        <button className="btn btn-sm btn-primary" onClick={onReview}>
+          🔍 Review
         </button>
       </td>
     </tr>

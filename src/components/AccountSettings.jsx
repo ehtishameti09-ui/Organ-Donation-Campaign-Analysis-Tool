@@ -8,6 +8,7 @@ import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, conf
 import { toast } from '../utils/toast';
 import { ORGANS as ORGANS_LIST } from '../utils/organs';
 import Pagination, { usePagination } from './Pagination';
+import DocumentViewer from './DocumentViewer';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -202,6 +203,7 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   const [userNotifs, setUserNotifs] = useState([]);
   const [actionLogs, setActionLogs] = useState([]);
   const [showActivityLog, setShowActivityLog] = useState(false);
+  const [viewerDoc, setViewerDoc] = useState(null);
   const logsPg = usePagination(actionLogs, 15);
   const [appeals, setAppeals] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -212,14 +214,10 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   // Document re-upload state
   const [uploadedDocs, setUploadedDocs] = useState({});
   const [reuploadSubmitting, setReuploadSubmitting] = useState(false);
-  // If nothing has been submitted yet, uploading must always be allowed —
-  // the lock only governs RE-uploads after documents are already on file.
-  // Donors/recipients may also re-upload while pending, when info is requested,
-  // OR after a case rejection (so they can fix and re-submit flagged documents).
-  const hasNoDocuments = (user.uploadedDocuments || []).length === 0;
-  const canReupload = hasNoDocuments
-    || ['pending', 'info_requested'].includes(user.status)
-    || (user.status === 'rejected' && (user.role === 'donor' || user.role === 'recipient'));
+  // Document re-uploads are always allowed — users can view, replace, and
+  // resubmit their documents at any time (the old "Documents Locked" gate was
+  // removed). The backend still enforces ownership/role rules.
+  const canReupload = true;
 
   // Two-factor authentication state
   const [twoFAEnabled, setTwoFAEnabled] = useState(!!user.twoFactorEnabled);
@@ -250,6 +248,15 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
       setUserNotifs(notifs);
       setActionLogs(logs);
       setAppeals(userAppeals);
+
+      // Pull the freshest user from the server so documents uploaded at
+      // registration (or elsewhere) show as submitted, not "Required".
+      try {
+        const fresh = await getMeViaAPI();
+        if (fresh && (fresh.uploadedDocuments || []).length !== (user.uploadedDocuments || []).length) {
+          onUpdate && onUpdate(fresh);
+        }
+      } catch { /* keep current user if refresh fails */ }
     })();
   }, [user.id]);
 
@@ -492,6 +499,10 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
         : [...p.pledgedOrgans, organ],
     }));
   };
+
+  // Open an already-submitted document in the shared windowed viewer
+  // (minimize / restore / fullscreen / close).
+  const viewDocument = (doc) => setViewerDoc(doc);
 
   const handleDocFile = (docKey, file) => {
     if (!file) return;
@@ -1056,23 +1067,7 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
             )}
           </div>
 
-          {/* Upload locked notice — shown when re-uploads are not allowed */}
-          {!canReupload && (
-            <div className="card" style={{ background: 'var(--surface2)', border: '1px dashed var(--border)' }}>
-              <div style={{ padding: '20px', display: 'flex', gap: '14px', alignItems: 'flex-start' }}>
-                <span style={{ fontSize: '24px' }}>🔒</span>
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: '700', marginBottom: '4px' }}>Documents Locked</div>
-                  <div style={{ fontSize: '13px', color: 'var(--text2)', lineHeight: '1.6' }}>
-                    Your submitted documents are under review. You can only re-upload documents if the super admin requests additional information.
-                    {user.status === 'rejected' && ' Your registration was rejected — please contact support if you believe this was in error.'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Upload New / Additional Documents — only when status allows it */}
+          {/* Upload New / Additional Documents */}
           {canReupload && (
           <div className="card">
             <div className="card-header">
@@ -1114,13 +1109,20 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                           </div>
                         )}
                       </div>
-                      <label style={{ cursor: 'pointer', flexShrink: 0 }}>
-                        <input type="file" style={{ display: 'none' }} accept="image/*,.pdf"
-                          onChange={e => handleDocFile(key, e.target.files[0])} />
-                        <span className={`btn btn-sm ${existing || newDoc ? 'btn-ghost' : 'btn-outline'}`} style={{ cursor: 'pointer' }}>
-                          {newDoc ? 'Change' : existing ? 'Replace' : 'Upload'}
-                        </span>
-                      </label>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+                        {existing && (
+                          <button type="button" className="btn btn-sm btn-outline" onClick={() => viewDocument(existing)} style={{ whiteSpace: 'nowrap' }}>
+                            👁 View
+                          </button>
+                        )}
+                        <label style={{ cursor: 'pointer' }}>
+                          <input type="file" style={{ display: 'none' }} accept="image/*,.pdf"
+                            onChange={e => handleDocFile(key, e.target.files[0])} />
+                          <span className={`btn btn-sm ${existing || newDoc ? 'btn-ghost' : 'btn-outline'}`} style={{ cursor: 'pointer' }}>
+                            {newDoc ? 'Change' : existing ? 'Replace' : 'Upload'}
+                          </span>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1133,9 +1135,14 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                   {Object.keys(uploadedDocs).length} document{Object.keys(uploadedDocs).length > 1 ? 's' : ''} ready to submit.
                   {user.status === 'info_requested' && ' Submitting will change your status back to "Pending Review".'}
                 </div>
-                <button className="btn btn-primary" onClick={handleReuploadSubmit} disabled={reuploadSubmitting}>
-                  {reuploadSubmitting ? 'Submitting...' : 'Submit Documents for Review'}
-                </button>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <button className="btn btn-primary" onClick={handleReuploadSubmit} disabled={reuploadSubmitting}>
+                    {reuploadSubmitting ? 'Submitting...' : 'Submit Documents for Review'}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => setUploadedDocs({})} disabled={reuploadSubmitting}>
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1203,6 +1210,11 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
                         )}
                       </div>
                       <span className={`badge ${badge[0]}`}>{badge[1]}</span>
+                      {doc && (doc.url || doc.data) && (
+                        <button type="button" className="btn btn-sm btn-outline" onClick={() => viewDocument(doc)} style={{ whiteSpace: 'nowrap' }}>
+                          👁 View
+                        </button>
+                      )}
                       <label className="btn btn-sm btn-outline" style={{ cursor: busy ? 'wait' : 'pointer', margin: 0 }}>
                         {busy ? 'Uploading...' : (status === 'rejected' ? 'Re-upload' : doc ? 'Replace' : 'Upload')}
                         <input type="file" accept="image/*,application/pdf" style={{ display: 'none' }}
@@ -1813,6 +1825,8 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
           </div>
         </div>
       )}
+
+      {viewerDoc && <DocumentViewer doc={viewerDoc} onClose={() => setViewerDoc(null)} />}
     </div>
   );
 };

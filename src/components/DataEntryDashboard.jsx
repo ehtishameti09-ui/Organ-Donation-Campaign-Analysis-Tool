@@ -224,9 +224,8 @@ const DataEntryDashboard = ({ currentUser }) => {
 
       {/* Add/Edit Form Modal */}
       {showForm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-          onClick={() => { setShowForm(null); resetForm(); }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--radius-lg)', padding: '28px', width: '580px', maxWidth: '95vw', maxHeight: '90vh', overflowY: 'auto', boxShadow: 'var(--shadow-lg)' }}
+        <div className="modal-overlay show" onClick={() => { setShowForm(null); resetForm(); }}>
+          <div className="modal" style={{ width: '580px', maxWidth: '95vw', padding: '28px', overflowY: 'auto' }}
             onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '4px' }}>
               {editingRecord ? `Edit ${showForm === 'donor' ? 'Donor' : 'Recipient'}` : `Add New ${showForm === 'donor' ? 'Donor' : 'Recipient'}`}
