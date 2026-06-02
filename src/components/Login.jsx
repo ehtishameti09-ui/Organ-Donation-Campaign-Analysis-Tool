@@ -363,11 +363,11 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
       const msg = error.message || 'Login failed. Please check your credentials.';
       if (msg.includes('verified') || msg.includes('verification')) {
         toast('Please verify your email before logging in.', 'error');
-      } else if (msg.includes('credentials') || msg.includes('password') || msg.includes('401')) {
-        toast('Incorrect email or password. Please try again.', 'error');
       } else if (msg.includes('network') || msg.includes('fetch') || msg.includes('CORS') || msg.includes('Failed to fetch')) {
         toast('Cannot connect to server. Make sure the backend is running.', 'error');
       } else {
+        // Show the backend's specific message (e.g. "You don't have an
+        // account with this email..." vs "Incorrect password...").
         toast(msg, 'error');
       }
       setLoading(false);

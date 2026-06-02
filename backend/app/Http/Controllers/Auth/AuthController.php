@@ -138,12 +138,23 @@ class AuthController extends Controller
 
         $user = User::where('email', $credentials['email'])->first();
 
-        if (!$user || !$user->password || !Hash::check($credentials['password'], $user->password)) {
+        // NOTE: distinguishing "no account" from "wrong password" trades a small
+        // amount of security (allows email enumeration) for clearer UX, as
+        // requested for this project.
+        if (!$user || !$user->password) {
             RateLimiter::hit($key, 60);
-            ActivityLogger::logAction($user?->id ?? 0, 'login_failed', 'Invalid credentials', ['email' => $credentials['email']]);
-            throw ValidationException::withMessages([
-                'email' => ['Invalid email or password.'],
-            ]);
+            // No user row to attach an action_log to (the FK would fail). The
+            // attempt is still rate-limited above.
+            return response()->json([
+                'message' => "You don't have an account with this email. Please create an account first.",
+            ], 401);
+        }
+        if (!Hash::check($credentials['password'], $user->password)) {
+            RateLimiter::hit($key, 60);
+            ActivityLogger::logAction($user->id, 'login_failed', 'Incorrect password', ['email' => $credentials['email']]);
+            return response()->json([
+                'message' => 'Incorrect password. Please try again.',
+            ], 401);
         }
 
         // Banned check — auto-lift expired temporary bans before deciding
