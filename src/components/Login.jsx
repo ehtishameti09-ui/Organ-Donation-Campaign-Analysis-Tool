@@ -11,10 +11,6 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleConfigured, setGoogleConfigured] = useState(false);
-  const [googlePending, setGooglePending] = useState(null); // { token, name, email } when new Google user
-  const [pickedRole, setPickedRole] = useState(null);
-  const [hospitalName, setHospitalName] = useState('');
-  const [completing, setCompleting] = useState(false);
   // 2FA challenge state
   const [twoFA, setTwoFA] = useState(null); // { challengeToken, maskedEmail } when challenge is active
   const [otpCode, setOtpCode] = useState('');
@@ -53,19 +49,6 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
       .catch(() => setGoogleConfigured(false));
   }, []);
 
-  // Pick up a pending Google registration (set by App.jsx after OAuth callback)
-  useEffect(() => {
-    const pull = () => {
-      if (window.__googlePending) {
-        setGooglePending(window.__googlePending);
-        setHospitalName(window.__googlePending.name || '');
-      }
-    };
-    pull();
-    window.addEventListener('google:role-picker-open', pull);
-    return () => window.removeEventListener('google:role-picker-open', pull);
-  }, []);
-
   // Pick up a Google 2FA challenge (set by App.jsx after OAuth callback when user has 2FA enabled)
   useEffect(() => {
     const open2FA = () => {
@@ -85,38 +68,6 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
     return () => window.removeEventListener('google:2fa-open', open2FA);
   }, []);
 
-  const completeGoogleSignup = async () => {
-    if (!googlePending || !pickedRole) return;
-    if (pickedRole === 'hospital' && !hospitalName.trim()) {
-      toast('Hospital name is required.', 'error');
-      return;
-    }
-    setCompleting(true);
-    try {
-      const r = await fetch('http://localhost:8000/api/oauth/google/complete-registration', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({
-          pending_token: googlePending.token,
-          role: pickedRole,
-          hospital_name: pickedRole === 'hospital' ? hospitalName.trim() : null,
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || 'Registration failed');
-      // Persist token + user, log in
-      localStorage.setItem('odcat_token', data.token);
-      localStorage.setItem('odcat_user', JSON.stringify(data.user));
-      localStorage.setItem('odcat_current', JSON.stringify(data.user));
-      window.__googlePending = null;
-      toast(`Welcome, ${data.user.name?.split(' ')[0] || 'User'}!`, 'success');
-      onLoginSuccess && onLoginSuccess(data.user);
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      setCompleting(false);
-    }
-  };
   const [showBannedModal, setShowBannedModal] = useState(false);
   const [bannedUserInfo, setBannedUserInfo] = useState(null);
   const [showDeletedRecoveryModal, setShowDeletedRecoveryModal] = useState(false);
@@ -435,88 +386,6 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
 
   return (
     <div className="auth-wrapper">
-      {/* Google role-picker modal — appears after a brand-new Google user comes back from OAuth */}
-      {googlePending && (
-        <div className="modal-overlay show" style={{ zIndex: 9999 }}>
-          <div className="modal" style={{ maxWidth: '560px', width: '95%' }}>
-            <header className="modal-header">
-              <h3>Welcome, {(googlePending.name || googlePending.email).split(' ')[0]}! 👋</h3>
-            </header>
-            <div className="modal-body">
-              <p style={{ fontSize: '13px', color: 'var(--text2)', marginBottom: '16px' }}>
-                Your Google account <strong>{googlePending.email}</strong> isn't registered yet. Choose how you'd like to use ODCAT:
-              </p>
-              <div style={{ display: 'grid', gap: '10px' }}>
-                {[
-                  { id: 'donor',     icon: '❤️', title: 'Donor',     desc: 'Pledge to donate organs/tissue. Complete a short clinical wizard after signing up.' },
-                  { id: 'recipient', icon: '🏥', title: 'Recipient', desc: 'Register for the transplant waitlist with your medical case details.' },
-                  { id: 'hospital',  icon: '🏨', title: 'Hospital',  desc: 'Register your hospital. Goes through admin review before approval.' },
-                ].map(opt => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setPickedRole(opt.id)}
-                    style={{
-                      textAlign: 'left',
-                      padding: '14px',
-                      border: pickedRole === opt.id ? '2px solid var(--primary)' : '1.5px solid var(--border)',
-                      borderRadius: 'var(--radius)',
-                      background: pickedRole === opt.id ? 'var(--primary-light)' : 'var(--surface)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      gap: '12px',
-                      alignItems: 'flex-start',
-                      transition: 'all .15s',
-                    }}
-                  >
-                    <span style={{ fontSize: '22px' }}>{opt.icon}</span>
-                    <div>
-                      <div style={{ fontWeight: '700', fontSize: '14px', color: pickedRole === opt.id ? 'var(--primary)' : 'var(--text)' }}>{opt.title}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text2)', marginTop: '3px' }}>{opt.desc}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {pickedRole === 'hospital' && (
-                <div style={{ marginTop: '14px' }}>
-                  <label className="form-label">Hospital Name *</label>
-                  <input
-                    className="form-input"
-                    value={hospitalName}
-                    onChange={e => setHospitalName(e.target.value)}
-                    placeholder="e.g. Aga Khan University Hospital"
-                  />
-                  <div style={{ fontSize: '11px', color: 'var(--text3)', marginTop: '4px' }}>
-                    You'll need to complete a registration form with documents before your hospital is approved.
-                  </div>
-                </div>
-              )}
-            </div>
-            <footer className="modal-footer" style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  setGooglePending(null);
-                  setPickedRole(null);
-                  window.__googlePending = null;
-                  toast('Sign-up cancelled. You can try again anytime.', 'info');
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                disabled={!pickedRole || completing || (pickedRole === 'hospital' && !hospitalName.trim())}
-                onClick={completeGoogleSignup}
-              >
-                {completing ? 'Creating account…' : `Continue as ${pickedRole ? pickedRole.charAt(0).toUpperCase() + pickedRole.slice(1) : '...'}`}
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
-
       {/* Left Panel */}
       <div className="auth-left">
         <div className="auth-brand">

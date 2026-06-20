@@ -29,7 +29,6 @@ Route::post('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
 Route::get('/oauth/google/status',   [GoogleAuthController::class, 'status'])->name('oauth.google.status');
 Route::get('/oauth/google/redirect', [GoogleAuthController::class, 'redirect'])->name('oauth.google.redirect');
 Route::get('/oauth/google/callback', [GoogleAuthController::class, 'callback'])->name('oauth.google.callback');
-Route::post('/oauth/google/complete-registration', [GoogleAuthController::class, 'completeRegistration'])->name('oauth.google.complete');
 
 // Public 2FA endpoints (used during the login challenge)
 Route::post('/2fa/email/verify', [TwoFactorController::class, 'verifyLoginCode'])->name('2fa.email.verify');

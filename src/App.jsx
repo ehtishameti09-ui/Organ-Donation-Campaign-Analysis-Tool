@@ -174,20 +174,27 @@ function App() {
   useEffect(() => {
     initSuperAdmin();
 
-    // Handle Google OAuth callbacks — four URL shapes from the backend:
+    // Handle Google OAuth callbacks — URL shapes from the backend:
     //   ?error=...                                  → friendly error toast
+    //   ?error=...&register=1                       → unregistered email; toast + jump to Create account
     //   ?token=...&user_id=...                      → existing user signed in, finalize session
-    //   ?google_pending=...&name=...&email=…        → new user, show role picker
     //   ?google_2fa=...&masked_email=...            → 2FA challenge, show OTP modal
     const params = new URLSearchParams(window.location.search);
     const oauthToken = params.get('token');
     const oauthError = params.get('error');
-    const googlePending = params.get('google_pending');
     const google2FA = params.get('google_2fa');
 
     if (oauthError) {
       toast(decodeURIComponent(oauthError), 'error');
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
+      // Clean the OAuth params out of the URL, leaving a Login-shaped entry beneath.
+      window.history.replaceState(
+        { page: 'dashboard', settingsTab: null, showRegister: false },
+        '', window.location.pathname + '#dashboard'
+      );
+      // `register=1` → unregistered Google email: send them straight to Create account.
+      if (params.get('register') === '1') {
+        goToRegisterScreen();
+      }
       return;
     }
 
@@ -199,19 +206,6 @@ function App() {
       };
       window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       window.dispatchEvent(new CustomEvent('google:2fa-open'));
-      return;
-    }
-
-    if (googlePending) {
-      // Stash on window so Login.jsx can read it and show the role picker. Clean URL too.
-      window.__googlePending = {
-        token: googlePending,
-        name:  params.get('name') || '',
-        email: params.get('email') || '',
-      };
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
-      // Force re-render of Login to pick up the pending state
-      window.dispatchEvent(new CustomEvent('google:role-picker-open'));
       return;
     }
 
