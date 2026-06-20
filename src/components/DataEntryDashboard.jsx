@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
-import { getDonors, getRecipients, addDonorRecord, addRecipientRecord, addActivity, calculateSurvivalEstimate, calculateAgeFromDOB } from '../utils/auth';
+import { getDonors, getRecipients, addDonorRecord, addRecipientRecord, addActivity, calculateSurvivalEstimate, calculateAgeFromDOB, capitalizeName, validateName, validateEmail } from '../utils/auth';
 import { updateUserViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 import { ORGANS } from '../utils/organs';
+import { useEmailField, EmailFieldError } from './EmailField';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
@@ -20,6 +21,7 @@ const DataEntryDashboard = ({ currentUser }) => {
     address: '', medicalHistory: '', pledgedOrgans: [], organNeeded: '',
     diagnosis: '', urgencyScore: '', comorbidityScore: '',
   });
+  const dataEntryEmailCheck = useEmailField(formData.email);
 
   useEffect(() => {
     const load = async () => {
@@ -70,7 +72,13 @@ const DataEntryDashboard = ({ currentUser }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name.trim()) { toast('Name is required.', 'error'); return; }
+    const nameCheck = validateName(formData.name);
+    if (!nameCheck.ok) { toast(nameCheck.error, 'error'); return; }
+    // Email is optional when editing (field is disabled); validate only when supplied.
+    if (formData.email && formData.email.trim() !== '') {
+      const emailCheck = validateEmail(formData.email);
+      if (!emailCheck.ok) { toast(emailCheck.error, 'error'); return; }
+    }
 
     try {
       if (editingRecord) {
@@ -239,12 +247,15 @@ const DataEntryDashboard = ({ currentUser }) => {
                 <div className="form-group">
                   <label className="form-label">Full Name *</label>
                   <input className="form-input" value={formData.name}
-                    onChange={e => setFormData(p => ({ ...p, name: e.target.value }))} placeholder="Full name" required />
+                    onChange={e => setFormData(p => ({ ...p, name: capitalizeName(e.target.value.slice(0, 60)) }))}
+                    placeholder="e.g. Ali Hassan" maxLength={60} required />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Email</label>
                   <input className="form-input" type="email" value={formData.email} disabled={!!editingRecord}
-                    onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="email@example.com" />
+                    onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="email@example.com"
+                    style={editingRecord ? {} : dataEntryEmailCheck.borderStyle} />
+                  {!editingRecord && <EmailFieldError check={dataEntryEmailCheck} onAccept={v => setFormData(p => ({ ...p, email: v }))} />}
                 </div>
               </div>
               <div className="grid3">

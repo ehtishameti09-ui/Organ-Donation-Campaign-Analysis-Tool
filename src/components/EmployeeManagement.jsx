@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
-import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals, capitalizeName } from '../utils/auth';
+import { getEmployees, addEmployee, updateEmployee, toggleEmployeeStatus, getApprovedHospitals, capitalizeName, validateName, validateEmail, validatePhone } from '../utils/auth';
 import { toast } from '../utils/toast';
 import Pagination, { usePagination } from './Pagination';
+import { useEmailField, EmailFieldError } from './EmailField';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -35,6 +36,7 @@ const EmployeeManagement = ({ currentUser }) => {
     name: '', email: '', role: 'doctor', department: '', phone: '', specialization: '', password: '',
     hospitalId: '', hospitalName: '',
   });
+  const employeeEmailCheck = useEmailField(formData.email);
 
   useEffect(() => {
     refresh();
@@ -92,14 +94,17 @@ const EmployeeManagement = ({ currentUser }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.name.trim() || !formData.email.trim()) {
-      toast('Name and email are required.', 'error'); return;
+    const nameCheck = validateName(formData.name);
+    if (!nameCheck.ok) { toast(nameCheck.error, 'error'); return; }
+    if (!editingEmployee) {
+      const emailCheck = validateEmail(formData.email);
+      if (!emailCheck.ok) { toast(emailCheck.error, 'error'); return; }
+    } else if (!formData.email.trim()) {
+      toast('Email is required.', 'error'); return;
     }
-    if (!formData.phone.trim()) {
-      toast('Phone number is required.', 'error'); return;
-    }
-    if (formData.phone.replace(/\D/g, '').length < 10) {
-      toast('Please enter a valid phone number (e.g. 0302-5191070).', 'error'); return;
+    {
+      const c = validatePhone(formData.phone);
+      if (!c.ok) { toast(c.error, 'error'); return; }
     }
 
     try {
@@ -325,7 +330,9 @@ const EmployeeManagement = ({ currentUser }) => {
               <div className="form-group">
                 <label className="form-label">Email *</label>
                 <input className="form-input" type="email" value={formData.email} disabled={!!editingEmployee}
-                  onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="employee@email.com" required />
+                  onChange={e => setFormData(p => ({ ...p, email: e.target.value }))} placeholder="employee@email.com" required
+                  style={editingEmployee ? {} : employeeEmailCheck.borderStyle} />
+                {!editingEmployee && <EmailFieldError check={employeeEmailCheck} onAccept={v => setFormData(p => ({ ...p, email: v }))} />}
               </div>
               <div className="grid2">
                 <div className="form-group">

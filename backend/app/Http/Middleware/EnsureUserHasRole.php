@@ -21,7 +21,9 @@ class EnsureUserHasRole
             $allowedRoles = array_merge($allowedRoles, explode('|', $role));
         }
 
-        if (!in_array($user->role, $allowedRoles, true)) {
+        // Multi-role: match either primary role or secondary_role.
+        $userRoles = array_filter([$user->role, $user->secondary_role]);
+        if (empty(array_intersect($userRoles, $allowedRoles))) {
             return response()->json([
                 'message' => 'Access denied. Required role: '.implode(' or ', $allowedRoles),
             ], 403);

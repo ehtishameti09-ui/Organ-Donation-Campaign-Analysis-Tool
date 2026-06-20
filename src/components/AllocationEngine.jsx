@@ -72,8 +72,12 @@ const AllocationEngine = ({ currentUser }) => {
     loadAll();
   }, []);
 
-  const loadAll = async () => {
-    setLoading(true);
+  // `silent` keeps the current UI on screen and just refreshes data in the
+  // background. Used after a Confirm / Override / Reject / run-complete so the
+  // user doesn't see the whole engine flicker through "Loading…" between
+  // actions. The full-screen placeholder is reserved for the very first mount.
+  const loadAll = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [p, d, r] = await Promise.all([
         getAllocationPoliciesViaAPI(),
@@ -86,9 +90,11 @@ const AllocationEngine = ({ currentUser }) => {
     } catch (e) {
       toast(e.message || 'Failed to load allocation data', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  const refreshAll = () => loadAll({ silent: true });
 
   const activePolicy = policies.find(p => p.is_active);
 
@@ -141,9 +147,9 @@ const AllocationEngine = ({ currentUser }) => {
         ))}
       </div>
 
-      {tab === 'auto'     && <AutoMatchTab onAction={loadAll} />}
-      {tab === 'run'      && <RunTab donors={donors} policies={policies} onRunComplete={loadAll} />}
-      {tab === 'policies' && <PoliciesTab policies={policies} onChange={loadAll} />}
+      {tab === 'auto'     && <AutoMatchTab onAction={refreshAll} />}
+      {tab === 'run'      && <RunTab donors={donors} policies={policies} onRunComplete={refreshAll} />}
+      {tab === 'policies' && <PoliciesTab policies={policies} onChange={refreshAll} />}
       {tab === 'simulate' && <SimulationTab runs={runs} />}
       {tab === 'history'  && <HistoryTab runs={runs} />}
     </div>
@@ -927,12 +933,14 @@ const AutoMatchTab = ({ onAction }) => {
   const [submitting, setSubmitting] = useState(false);
   const PAGE_SIZE = 10;
 
-  const load = (pg = page) => {
-    setLoading(true);
+  // `silent` keeps the current matches list on screen while refetching, so
+  // post-action refreshes don't flash the "Computing best matches…" placeholder.
+  const load = (pg = page, { silent = false } = {}) => {
+    if (!silent) setLoading(true);
     getPendingAllocationsViaAPI(pg, PAGE_SIZE)
       .then(d => setData(d))
       .catch(e => toast(e.message, 'error'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!silent) setLoading(false); });
   };
 
   useEffect(() => { load(page); }, [page]);
@@ -948,7 +956,7 @@ const AutoMatchTab = ({ onAction }) => {
         decision_type: 'confirmed',
       });
       toast(`Confirmed match — ${recipient.name}`, 'success');
-      load();
+      load(page, { silent: true });
       onAction?.();
     } catch (e) {
       toast(e.message, 'error');
@@ -977,7 +985,7 @@ const AutoMatchTab = ({ onAction }) => {
       toast(mode === 'reject' ? 'Match rejected with reason recorded' : 'Override recorded', 'success');
       setDecisionTarget(null);
       setOverrideReason('');
-      load();
+      load(page, { silent: true });
       onAction?.();
     } catch (e) {
       toast(e.message, 'error');

@@ -150,6 +150,8 @@ class GoogleAuthController extends Controller
             'email_verified_at'     => now(),
             'password'              => null,
             'registration_complete' => false,
+            // Email 2FA off by default; user can opt in from Account Settings.
+            'two_factor_enabled'    => false,
         ]);
         $user->assignRole($data['role']);
 

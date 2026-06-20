@@ -6,6 +6,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
+use App\Http\Controllers\Auth\EmailVerificationController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\HospitalController;
 use App\Http\Controllers\DonorController;
@@ -33,6 +34,16 @@ Route::post('/oauth/google/complete-registration', [GoogleAuthController::class,
 // Public 2FA endpoints (used during the login challenge)
 Route::post('/2fa/email/verify', [TwoFactorController::class, 'verifyLoginCode'])->name('2fa.email.verify');
 Route::post('/2fa/email/resend', [TwoFactorController::class, 'resendLoginCode'])->name('2fa.email.resend');
+
+// Pre-account verification (email link + phone OTP). No DB rows are created
+// here — state lives in the cache; /api/register consumes the tokens.
+// The controller enforces a stricter, user-friendly per-(email+ip) limit
+// (3 free, 30s cooldown, max 5 in 10min); the route throttle is just a
+// per-IP backstop against scripted abuse — keep it generous so the
+// controller's nicer messages are what users actually see.
+Route::post('/auth/email/start',   [EmailVerificationController::class, 'start'])->middleware('throttle:30,10')->name('auth.email.start');
+Route::post('/auth/email/confirm', [EmailVerificationController::class, 'confirm'])->middleware('throttle:30,1')->name('auth.email.confirm');
+Route::get('/auth/email/status',   [EmailVerificationController::class, 'status'])->middleware('throttle:120,1')->name('auth.email.status');
 
 // Public appeals endpoint — banned/deleted users can't log in, so they submit from
 // the login modal. Server-side validation ensures only actually banned/deleted users
@@ -85,6 +96,7 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::post('/users/{user}/unban', [UserController::class, 'unban'])->name('users.unban');
     Route::post('/users/{user}/restore', [UserController::class, 'restore'])->name('users.restore');
     Route::post('/users/restore-self', [UserController::class, 'restoreSelf'])->name('users.restore-self');
+    Route::post('/users/me/add-role',  [UserController::class, 'addRole'])->name('users.add-role');
     Route::post('/users/delete-self', [UserController::class, 'deleteSelf'])->name('users.delete-self');
     Route::delete('/users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
     Route::post('/users/{user}/change-password', [UserController::class, 'changePassword'])->name('users.change-password');
@@ -184,7 +196,13 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     });
 });
 
-// Health check
+// Health check + lightweight public feature flags the frontend uses to
+// hide / show flow steps without redeploying.
 Route::get('/health', function () {
-    return response()->json(['status' => 'ok']);
+    return response()->json([
+        'status' => 'ok',
+        'features' => [
+            'require_email_verification' => (bool) config('auth.require_email_verification'),
+        ],
+    ]);
 });

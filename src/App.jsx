@@ -5,6 +5,7 @@ import { toast } from './utils/toast';
 import Login from './components/Login';
 import Register from './components/Register';
 import Dashboard from './components/Dashboard';
+import ErrorBoundary from './components/ErrorBoundary';
 // Heavy pages — lazy-loaded so they don't bloat the initial bundle
 const UserManagement     = lazy(() => import('./components/UserManagement'));
 const AccountSettings    = lazy(() => import('./components/AccountSettings'));
@@ -20,6 +21,7 @@ const MatchingGovernance = lazy(() => import('./components/MatchingGovernance'))
 const FairnessLab        = lazy(() => import('./components/FairnessLab'));
 const AdminRequests      = lazy(() => import('./components/AdminRequests'));
 const HospitalRegistrationForm = lazy(() => import('./components/HospitalRegistrationForm'));
+const VerifyEmail = lazy(() => import('./components/VerifyEmail'));
 import './styles/App.css';
 
 const PageLoader = () => (
@@ -48,19 +50,87 @@ function App() {
     setVisitedPages(new Set(['dashboard']));
   }, [currentUser?.id]);
 
-  // Sync browser back/forward with app page state
+  // Sync browser back/forward with app page state — including unauthenticated
+  // screens (login / register). Each navigation gets a #hash so the address
+  // bar visibly reflects the page; popstate restores both the page AND the
+  // login/register toggle so back/forward work everywhere.
   useEffect(() => {
     const handlePopState = (e) => {
-      const page = e.state?.page || 'dashboard';
-      const tab = e.state?.settingsTab || null;
+      const fromHash = window.location.hash.replace(/^#/, '');
+      const stateObj = e.state || {};
+      const page = stateObj.page || (fromHash && fromHash !== 'register' ? fromHash : 'dashboard');
+      const tab  = stateObj.settingsTab ?? null;
+      const wantsRegister = stateObj.showRegister === true || fromHash === 'register';
       setCurrentPage(page);
       setSettingsTab(tab);
+      setShowRegister(wantsRegister);
     };
     window.addEventListener('popstate', handlePopState);
-    // Replace the initial history entry so state is set from the start
-    window.history.replaceState({ page: 'dashboard', settingsTab: null }, '');
+
+    // On first load, honour any #hash deep-link (e.g. visiting
+    // http://localhost:3000/#donors or /#register) and replace the current
+    // entry so the browser's back stack starts from a known state.
+    const initialFromHash = window.location.hash.replace(/^#/, '');
+    const initialPage = initialFromHash && initialFromHash !== 'register' ? initialFromHash : 'dashboard';
+    if (initialPage !== 'dashboard') setCurrentPage(initialPage);
+    if (initialFromHash === 'register') setShowRegister(true);
+
+    if (initialFromHash === 'register') {
+      // Landing directly on /#register (typed URL, refresh, deep link) —
+      // synthesize a Login entry BENEATH so the browser Back arrow works:
+      //   1. Replace the current entry with a Login-shaped state at /#dashboard
+      //   2. Push the Register entry back on top at /#register
+      // History stack becomes: [Login, Register], so Back returns to Login
+      // and Forward returns to Register the way the user expects.
+      window.history.replaceState(
+        { page: 'dashboard', settingsTab: null, showRegister: false },
+        '',
+        window.location.pathname + '#dashboard'
+      );
+      window.history.pushState(
+        { page: 'dashboard', settingsTab: null, showRegister: true, regStep: 1, regAccountType: null },
+        '',
+        window.location.pathname + '#register'
+      );
+    } else {
+      window.history.replaceState(
+        { page: initialPage, settingsTab: null, showRegister: false },
+        '',
+        window.location.pathname + (initialFromHash ? `#${initialFromHash}` : '')
+      );
+    }
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Go FORWARD from Login → Register. This is a new navigation, so we PUSH a
+  // history entry — the browser Back arrow then returns to Login naturally.
+  const goToRegisterScreen = () => {
+    window.history.pushState({
+      page: 'dashboard', settingsTab: null,
+      showRegister: true, regStep: 1, regAccountType: null,
+    }, '', window.location.pathname + '#register');
+    setShowRegister(true);
+  };
+
+  // Go BACK from Register → Login. The key fix: this must POP the existing
+  // Login entry (history.back()), NOT push a fresh one. Pushing a duplicate
+  // Login on top of [Login, Register] produced [Login, Register, Login], which
+  // left the Forward arrow dead and the Back arrow phantom-highlighted on the
+  // "first" page. Because we always reach Register from a Login entry (in-app
+  // link, or the synthesized entry when deep-linking to #register), there is
+  // always a Login entry beneath to pop to. We fall back to an in-place swap
+  // only in the unexpected case where there isn't one.
+  const backToLoginScreen = () => {
+    if (window.history.state?.showRegister === true) {
+      window.history.back();
+    } else {
+      window.history.replaceState(
+        { page: 'dashboard', settingsTab: null, showRegister: false },
+        '', window.location.pathname + '#dashboard'
+      );
+      setShowRegister(false);
+    }
+  };
 
   // Global 401 interceptor — when the backend rejects a stale token, log the user out cleanly
   // instead of leaving them on a half-loaded page.
@@ -117,7 +187,7 @@ function App() {
 
     if (oauthError) {
       toast(decodeURIComponent(oauthError), 'error');
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       return;
     }
 
@@ -127,7 +197,7 @@ function App() {
         challengeToken: google2FA,
         maskedEmail: params.get('masked_email') || '',
       };
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       window.dispatchEvent(new CustomEvent('google:2fa-open'));
       return;
     }
@@ -139,7 +209,7 @@ function App() {
         name:  params.get('name') || '',
         email: params.get('email') || '',
       };
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       // Force re-render of Login to pick up the pending state
       window.dispatchEvent(new CustomEvent('google:role-picker-open'));
       return;
@@ -147,7 +217,7 @@ function App() {
 
     if (oauthToken) {
       localStorage.setItem('odcat_token', oauthToken);
-      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname);
+      window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       getMeViaAPI()
         .then(user => {
           localStorage.setItem('odcat_user', JSON.stringify(user));
@@ -213,21 +283,31 @@ function App() {
     }
   };
 
+  // Internal helper: jump to a page AND write the corresponding history entry,
+  // so the browser address bar + back/forward stay in sync. We can't reuse
+  // navigateTo() here because it also calls refreshCurrentUser(), which we
+  // don't want during the login-flow transition.
+  const goToPage = (page) => {
+    window.history.pushState({ page, settingsTab: null }, '', window.location.pathname + '#' + page);
+    setCurrentPage(page);
+    setSettingsTab(null);
+  };
+
   const handleLoginSuccess = (user) => {
     setCurrentUser(user);
     // Brand-new accounts that haven't completed registration yet → take them straight to the role-specific form.
     // `registrationComplete` is set by the wizard / hospital form on completion.
     if (user.registrationComplete === false || user.registration_complete === false) {
       if (user.role === 'donor' || user.role === 'recipient') {
-        setCurrentPage('complete-registration');   // → DonorRecipientWizard
+        goToPage('complete-registration');
         return;
       }
       if (user.role === 'hospital') {
-        setCurrentPage('complete-hospital-registration');  // → HospitalRegistrationForm
+        goToPage('complete-hospital-registration');
         return;
       }
     }
-    setCurrentPage('dashboard');
+    goToPage('dashboard');
   };
 
   const handleLogout = () => {
@@ -235,6 +315,10 @@ function App() {
     // calls from kept-mounted pages — NOT a session expiry.
     window.__odcatLogoutAt = Date.now();
     setCurrentUser(null);
+    // Replace the current history entry so going Back after logout doesn't
+    // land the user on a stale protected page (e.g. /#donors). The
+    // unauthenticated view becomes the only entry of the post-logout stack.
+    window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
     setCurrentPage('dashboard');
     setSettingsTab(null);
     setUnreadCount(0);
@@ -244,7 +328,11 @@ function App() {
 
   const navigateTo = (page, tab = null) => {
     const newTab = page === 'settings' ? tab : null;
-    window.history.pushState({ page, settingsTab: newTab }, '');
+    // Update the URL hash too so the browser address bar reflects the page
+    // and back/forward give visible feedback. Path is preserved so the
+    // /verify-email landing route is unaffected.
+    const url = window.location.pathname + (page ? `#${page}` : '');
+    window.history.pushState({ page, settingsTab: newTab }, '', url);
     setCurrentPage(page);
     setSettingsTab(newTab);
     refreshCurrentUser();
@@ -254,11 +342,19 @@ function App() {
     return (
       <>
         <div id="toast-container" className="toast-container"></div>
+        <ErrorBoundary resetKey="register">
         <Register
           onRegistrationSuccess={async (regData) => {
             try {
               const loginResult = await login(regData.email, regData.password);
               setCurrentUser(loginResult);
+              // Now authenticated — replace the #register entry with a clean
+              // #dashboard one so the browser Back arrow can't return to the
+              // just-submitted registration form.
+              window.history.replaceState(
+                { page: 'dashboard', settingsTab: null, showRegister: false },
+                '', window.location.pathname + '#dashboard'
+              );
               setShowRegister(false);
               if (regData.type === 'hospital') {
                 toast(`Welcome, ${loginResult.name}! Your registration is under review.`, 'success');
@@ -266,12 +362,14 @@ function App() {
                 toast(`Welcome, ${loginResult.name}! Your account is ready.`, 'success');
               }
             } catch {
-              setShowRegister(false);
+              // Auto-login failed — fall back to the Login screen.
+              backToLoginScreen();
               toast('Registration complete! Please sign in.', 'success');
             }
           }}
-          onBackToLogin={() => setShowRegister(false)}
+          onBackToLogin={backToLoginScreen}
         />
+        </ErrorBoundary>
       </>
     );
   }
@@ -280,10 +378,12 @@ function App() {
     return (
       <>
         <div id="toast-container" className="toast-container"></div>
-        <Login
-          onLoginSuccess={handleLoginSuccess}
-          onCreateAccount={() => setShowRegister(true)}
-        />
+        <ErrorBoundary resetKey="login">
+          <Login
+            onLoginSuccess={handleLoginSuccess}
+            onCreateAccount={goToRegisterScreen}
+          />
+        </ErrorBoundary>
       </>
     );
   }
@@ -640,9 +740,11 @@ function App() {
           )}
 
           <div className="content-area">
-            <Suspense fallback={<PageLoader />}>
-              {renderPage()}
-            </Suspense>
+            <ErrorBoundary resetKey={currentPage + ':' + (settingsTab || '')}>
+              <Suspense fallback={<PageLoader />}>
+                {renderPage()}
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </div>
       </div>
@@ -668,4 +770,17 @@ const getNavIcon = (iconName) => {
   return icons[iconName] || null;
 };
 
-export default App;
+// Tiny path router: the email verification link lands on /verify-email; that
+// page must work without mounting the rest of the SPA's session machinery.
+const Root = () => {
+  if (typeof window !== 'undefined' && window.location.pathname === '/verify-email') {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <VerifyEmail />
+      </Suspense>
+    );
+  }
+  return <App />;
+};
+
+export default Root;

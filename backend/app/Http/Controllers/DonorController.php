@@ -50,7 +50,7 @@ class DonorController extends Controller
             'dob' => ['required', 'date', 'before:today'],
             'gender' => ['required', Rule::in(['Male', 'Female', 'Other'])],
             'blood_type' => ['required', Rule::in(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'])],
-            'phone' => ['required', 'string', 'max:30'],
+            'phone' => ['required', 'string', 'max:30', new \App\Rules\ValidPhone],
             'address' => ['required', 'string', 'max:500'],
             'pledged_organs' => ['required', 'array', 'min:1'],
             'donation_type' => ['required', Rule::in(['deceased', 'living', 'both'])],
@@ -59,7 +59,7 @@ class DonorController extends Controller
             'medical_history' => ['nullable', 'string'],
             'current_medications' => ['nullable', 'string'],
             'emergency_contact_name' => ['nullable', 'string', 'max:191'],
-            'emergency_contact_phone' => ['nullable', 'string', 'max:30'],
+            'emergency_contact_phone' => ['nullable', 'string', 'max:30', new \App\Rules\ValidPhone],
             'emergency_contact_relation' => ['nullable', 'string', 'max:50'],
             'preferred_hospital_id' => ['required', 'integer', Rule::exists('users', 'id')->where('role', 'hospital')->where('status', 'approved')],
         ]);

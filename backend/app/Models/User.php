@@ -20,7 +20,7 @@ class User extends Authenticatable implements MustVerifyEmail
 
     protected $fillable = [
         'name', 'email', 'phone', 'password', 'google_id', 'avatar',
-        'role', 'status', 'registration_type', 'registration_complete',
+        'role', 'secondary_role', 'status', 'registration_type', 'registration_complete',
         'unique_id',
         'linked_hospital_id', 'preferred_hospital_id', 'department', 'specialization',
         'banned', 'ban_details', 'is_deleted', 'deletion_details', 'recovery_deadline',
@@ -78,10 +78,20 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->linked_hospital_id ?? $this->preferred_hospital_id;
     }
 
-    public function isHospital(): bool { return $this->role === 'hospital'; }
-    public function isAdmin(): bool { return in_array($this->role, ['admin', 'super_admin'], true); }
-    public function isSuperAdmin(): bool { return $this->role === 'super_admin'; }
-    public function isDonor(): bool { return $this->role === 'donor'; }
-    public function isRecipient(): bool { return $this->role === 'recipient'; }
+    // Multi-role: a single user may hold BOTH donor and recipient. All role
+    // checks go through hasRole() so they transparently include the secondary.
+    public function hasRole(string $role): bool
+    {
+        return $this->role === $role || $this->secondary_role === $role;
+    }
+    public function allRoles(): array
+    {
+        return array_values(array_filter([$this->role, $this->secondary_role]));
+    }
+    public function isHospital(): bool { return $this->hasRole('hospital'); }
+    public function isAdmin(): bool { return $this->hasRole('admin') || $this->hasRole('super_admin'); }
+    public function isSuperAdmin(): bool { return $this->hasRole('super_admin'); }
+    public function isDonor(): bool { return $this->hasRole('donor'); }
+    public function isRecipient(): bool { return $this->hasRole('recipient'); }
     public function isApproved(): bool { return $this->status === 'approved'; }
 }

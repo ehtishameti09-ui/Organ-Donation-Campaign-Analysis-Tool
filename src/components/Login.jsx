@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { login, verifyLoginTwoFactor, canRecoverDeletedAccount, restoreDeletedAccount, cleanupExpiredDeletedAccounts, BAN_CATEGORIES, submitAppeal, validateEmail } from '../utils/auth';
+import { useEmailField, EmailFieldError } from './EmailField';
 import { sendPasswordResetLinkViaAPI, verifyResetCodeViaAPI, resetPasswordViaAPI, resendTwoFactorLoginCode } from '../utils/api';
 import { toast } from '../utils/toast';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [email, setEmail] = useState('');
+  const emailCheck = useEmailField(email);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -20,13 +22,18 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [resendingOtp, setResendingOtp] = useState(false);
   const [otpSecondsLeft, setOtpSecondsLeft] = useState(0); // 40-second countdown; 0 = expired
 
-  // Live public stats shown on the splash panel
+  // Live public stats shown on the splash panel. Polled every 30 s so a new
+  // hospital/donor approved elsewhere shows up without a page reload.
   const [publicStats, setPublicStats] = useState({ transplants: null, activeDonors: null, hospitals: null });
   useEffect(() => {
-    fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setPublicStats(d); })
-      .catch(() => {});
+    const fetchStats = () =>
+      fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setPublicStats(d); })
+        .catch(() => {});
+    fetchStats();
+    const id = setInterval(fetchStats, 30000);
+    return () => clearInterval(id);
   }, []);
 
   // Tick the OTP countdown every second while a challenge is active
@@ -117,9 +124,12 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   // Forgot Password State
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
+  const forgotEmailCheck = useEmailField(forgotEmail);
   const [resetToken, setResetToken] = useState(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [forgotStep, setForgotStep] = useState('request'); // 'request', 'verify', 'reset'
   const [forgotLoading, setForgotLoading] = useState(false);
   const [resetTokenInput, setResetTokenInput] = useState('');
@@ -706,8 +716,10 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   placeholder="you@example.com"
                   required
                   autoComplete="email"
+                  style={emailCheck.borderStyle}
                 />
               </div>
+              <EmailFieldError check={emailCheck} onAccept={setEmail} />
             </div>
 
             <div className="form-group">
@@ -1152,7 +1164,9 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                       placeholder="you@example.com"
                       disabled={forgotLoading}
                       autoFocus
+                      style={forgotEmailCheck.borderStyle}
                     />
+                    <EmailFieldError check={forgotEmailCheck} onAccept={setForgotEmail} />
                   </div>
                 </>
               )}
@@ -1213,16 +1227,39 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   </p>
                   <div className="form-group">
                     <label className="form-label">New password</label>
-                    <input
-                      className="form-input"
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Enter a strong new password"
-                      disabled={forgotLoading}
-                      autoComplete="new-password"
-                      autoFocus
-                    />
+                    <div className="form-input-wrap">
+                      <input
+                        className="form-input"
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Enter a strong new password"
+                        disabled={forgotLoading}
+                        autoComplete="new-password"
+                        autoFocus
+                        style={{ paddingLeft: '12px' }}
+                      />
+                      <button
+                        type="button"
+                        className="form-input-toggle"
+                        onClick={() => setShowNewPassword(s => !s)}
+                        title={showNewPassword ? 'Hide password' : 'Show password'}
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                          {showNewPassword ? (
+                            <>
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                              <line x1="1" y1="1" x2="23" y2="23"/>
+                            </>
+                          ) : (
+                            <>
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                              <circle cx="12" cy="12" r="3"/>
+                            </>
+                          )}
+                        </svg>
+                      </button>
+                    </div>
                     {newPassword && (
                       <div style={{ marginTop: '6px', display: 'flex', gap: '4px' }}>
                         {[newPassword.length >= 8, /[A-Z]/.test(newPassword), /\d/.test(newPassword), /[^A-Za-z0-9]/.test(newPassword)].map((ok, i) => (
@@ -1233,16 +1270,38 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
                   </div>
                   <div className="form-group">
                     <label className="form-label">Confirm password</label>
-                    <input
-                      className="form-input"
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter new password"
-                      disabled={forgotLoading}
-                      autoComplete="new-password"
-                      style={{ borderColor: confirmPassword && newPassword !== confirmPassword ? 'var(--danger)' : undefined }}
-                    />
+                    <div className="form-input-wrap">
+                      <input
+                        className="form-input"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        disabled={forgotLoading}
+                        autoComplete="new-password"
+                        style={{ paddingLeft: '12px', borderColor: confirmPassword && newPassword !== confirmPassword ? 'var(--danger)' : undefined }}
+                      />
+                      <button
+                        type="button"
+                        className="form-input-toggle"
+                        onClick={() => setShowConfirmPassword(s => !s)}
+                        title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
+                          {showConfirmPassword ? (
+                            <>
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                              <line x1="1" y1="1" x2="23" y2="23"/>
+                            </>
+                          ) : (
+                            <>
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                              <circle cx="12" cy="12" r="3"/>
+                            </>
+                          )}
+                        </svg>
+                      </button>
+                    </div>
                     {confirmPassword && (
                       <div style={{ fontSize: '11px', marginTop: '4px', color: newPassword === confirmPassword ? 'var(--accent)' : 'var(--danger)' }}>
                         {newPassword === confirmPassword ? '✓ Passwords match' : '✗ Passwords do not match'}

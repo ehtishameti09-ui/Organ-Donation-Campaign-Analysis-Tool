@@ -11,23 +11,146 @@ const INVALID_EMAIL_DOMAINS = [
 
 // Validate email address
 // Returns { ok: bool, error?: string }
+// Recognized email providers. Used for two things:
+//   1) "Did you mean…?" typo suggestions (close-match correction).
+//   2) Validation: if a typed domain is NOT in this list but looks very close
+//      to one (Levenshtein ≤ 2, or has the provider as a suffix), it's
+//      treated as a typo and rejected. Other unknown domains are accepted —
+//      so legitimate hospital / educational / company emails (e.g.
+//      @aku.edu, @cmh.com.pk, @mycompany.com) work, while @ggmail.com does not.
+export const ALLOWED_EMAIL_DOMAINS = [
+  'gmail.com', 'googlemail.com',
+  'yahoo.com', 'yahoo.co.uk', 'yahoo.in', 'yahoo.fr', 'ymail.com', 'rocketmail.com',
+  'hotmail.com', 'hotmail.co.uk', 'hotmail.fr',
+  'outlook.com', 'outlook.co.uk', 'live.com', 'live.co.uk', 'msn.com',
+  'icloud.com', 'me.com', 'mac.com',
+  'aol.com',
+  'protonmail.com', 'proton.me',
+  'zoho.com', 'yandex.com', 'mail.com', 'gmx.com',
+  'btinternet.com', 'comcast.net', 'verizon.net', 'att.net',
+];
+
+// Iterative Levenshtein edit distance — used for "Did you mean…?" typo detection.
+const _editDistance = (a, b) => {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const dp = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) dp[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+};
+
+/** Suggest a clean replacement when the domain looks like a typo of a known provider. */
+export const suggestEmailFix = (email) => {
+  if (!email || typeof email !== 'string') return null;
+  const e = email.trim();
+  const at = e.lastIndexOf('@');
+  if (at < 0) return null;
+  const local = e.slice(0, at);
+  const domain = e.slice(at + 1).toLowerCase();
+  if (!domain.includes('.')) return null;
+  if (ALLOWED_EMAIL_DOMAINS.includes(domain)) return null;
+
+  // 1) Levenshtein-close (gmial.com → gmail.com)
+  let best = null, bestDist = Infinity;
+  for (const d of ALLOWED_EMAIL_DOMAINS) {
+    const dist = _editDistance(domain, d);
+    if (dist < bestDist) { bestDist = dist; best = d; }
+  }
+  if (best) {
+    const longer = Math.max(domain.length, best.length);
+    if (bestDist === 1 || (bestDist === 2 && longer >= 8)) return local + '@' + best;
+  }
+  // 2) Garbage-stuffed (1234342gmail.com → gmail.com)
+  for (const d of ALLOWED_EMAIL_DOMAINS) {
+    if (domain !== d && domain.length > d.length && domain.endsWith(d)) return local + '@' + d;
+  }
+  return null;
+};
+
+// Google-strict email validation. Same intent as Gmail's signup form:
+//   - exactly one @, total length ≤ 254
+//   - local part 1–64 chars, only A-Z a-z 0-9 . _ % + -, no leading/trailing
+//     dot, no consecutive dots, can't start with - or +
+//   - domain has at least one dot, each label 1–63 chars, only A-Z a-z 0-9 -,
+//     labels can't start or end with -, no consecutive dots, TLD is 2–24
+//     letters only (no digits, no underscores)
+//   - rejects obvious fake/test domains
 export const validateEmail = (email) => {
   if (!email || typeof email !== 'string') return { ok: false, error: 'Email is required.' };
-  const e = email.trim().toLowerCase();
-  if (e.length < 5) return { ok: false, error: 'Email is too short.' };
-  if (e.length > 100) return { ok: false, error: 'Email is too long.' };
+  const e = email.trim();
+  if (e.length < 5)   return { ok: false, error: 'Email is too short.' };
+  if (e.length > 254) return { ok: false, error: 'Email is too long.' };
 
-  const basic = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/i;
-  if (!basic.test(e)) return { ok: false, error: 'Please enter a valid email address.' };
+  // Exactly one @
+  const at = e.split('@');
+  if (at.length !== 2) return { ok: false, error: 'Email must contain exactly one "@".' };
+  const local = at[0];
+  const domain = at[1];
 
-  const [local, domain] = e.split('@');
-  if (!local || !domain) return { ok: false, error: 'Invalid email format.' };
+  // ---- local part ----
+  if (local.length < 1 || local.length > 64) {
+    return { ok: false, error: 'The part before "@" must be 1–64 characters.' };
+  }
+  if (!/^[A-Za-z0-9._%+\-]+$/.test(local)) {
+    return { ok: false, error: 'The part before "@" can only contain letters, numbers, and . _ % + -' };
+  }
   if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) {
-    return { ok: false, error: 'Email username cannot start/end with a dot or contain consecutive dots.' };
+    return { ok: false, error: 'The part before "@" cannot start/end with a dot or contain consecutive dots.' };
+  }
+  if (local.startsWith('-') || local.startsWith('+')) {
+    return { ok: false, error: 'The part before "@" cannot start with - or +' };
   }
 
-  if (INVALID_EMAIL_DOMAINS.includes(domain)) {
+  // ---- domain ----
+  if (domain.length < 3 || domain.length > 253) {
+    return { ok: false, error: 'The domain after "@" has an invalid length.' };
+  }
+  if (!domain.includes('.')) {
+    return { ok: false, error: 'The domain must include a dot (e.g. .com).' };
+  }
+  if (domain.includes('..')) {
+    return { ok: false, error: 'The domain cannot contain consecutive dots.' };
+  }
+  const labels = domain.split('.');
+  for (const lbl of labels) {
+    if (lbl.length < 1 || lbl.length > 63) {
+      return { ok: false, error: 'Each part of the domain must be 1–63 characters.' };
+    }
+    if (!/^[A-Za-z0-9-]+$/.test(lbl)) {
+      return { ok: false, error: 'The domain contains invalid characters.' };
+    }
+    if (lbl.startsWith('-') || lbl.endsWith('-')) {
+      return { ok: false, error: 'Domain parts cannot start or end with a hyphen.' };
+    }
+  }
+  const tld = labels[labels.length - 1];
+  if (!/^[A-Za-z]{2,24}$/.test(tld)) {
+    return { ok: false, error: 'Email must end with a valid top-level domain (e.g. .com, .org, .pk).' };
+  }
+
+  if (INVALID_EMAIL_DOMAINS.includes(domain.toLowerCase())) {
     return { ok: false, error: 'This email domain is not accepted. Please use a real email.' };
+  }
+  // Typo guard: if the domain isn't in the recognized list but looks very
+  // close to one (e.g. @ggmail.com vs @gmail.com), treat it as a typo. Any
+  // domain that isn't close to a recognized provider is accepted — so real
+  // hospital / educational / company emails (e.g. @aku.edu, @cmh.com.pk,
+  // @mycompany.com) work normally.
+  if (!ALLOWED_EMAIL_DOMAINS.includes(domain.toLowerCase())) {
+    const fix = suggestEmailFix(e);
+    if (fix) {
+      return { ok: false, error: 'This looks like a typo of a recognized email provider.' };
+    }
   }
 
   return { ok: true };
@@ -35,15 +158,24 @@ export const validateEmail = (email) => {
 
 // Validate person's name
 // Returns { ok: bool, error?: string }
+// Name validation — also a security check. Rejects digits, control chars,
+// punctuation that's commonly used in injection payloads (<, >, ;, /, \, {, },
+// =, &, $, etc.) and anything that isn't a Unicode letter, space, hyphen,
+// apostrophe, or period (the latter four cover real names like "Mary-Jane",
+// "O'Brien", "Dr. Singh").
 export const validateName = (name) => {
   if (!name || typeof name !== 'string') return { ok: false, error: 'Name is required.' };
   const n = name.trim();
-  if (n.length < 2) return { ok: false, error: 'Name must be at least 2 characters.' };
+  if (n.length < 2)  return { ok: false, error: 'Name must be at least 2 characters.' };
   if (n.length > 60) return { ok: false, error: 'Name must be 60 characters or fewer.' };
-  if (n.replace(/\s/g, '').length < 2) {
+  if (/\d/.test(n))  return { ok: false, error: 'Name cannot contain numbers.' };
+  if (!/^[\p{L}\p{M}\s'.\-]+$/u.test(n)) {
+    return { ok: false, error: 'Name can only contain letters, spaces, hyphens, apostrophes, and periods.' };
+  }
+  // Must contain at least two actual letters (ignore the allowed punctuation).
+  if (n.replace(/[\s'.\-]/g, '').length < 2) {
     return { ok: false, error: 'Please enter a valid name.' };
   }
-
   return { ok: true };
 };
 
@@ -54,6 +186,49 @@ export const validateName = (name) => {
 export const capitalizeName = (value) => {
   if (!value) return value;
   return value.replace(/(^|[\s\-'])(\p{L})/gu, (_m, sep, ch) => sep + ch.toUpperCase());
+};
+
+// Google-grade phone validation, powered by libphonenumber-js (the open-source
+// port of Google's libphonenumber). Accepts both local-format ("03001234567")
+// and international ("+92 300 1234567") and validates against the country's
+// real numbering plan — so a too-long string, an invalid mobile prefix, or
+// an unallocated range gets rejected even though the digit count "looks right".
+//
+// Returns { ok: bool, error?: string, e164?: string, national?: string, country?: string }
+// `e164` is the canonical form ("+923001234567") suitable for storage.
+import { parsePhoneNumberFromString, isValidPhoneNumber } from 'libphonenumber-js/min';
+export const validatePhone = (phone, defaultCountry = 'PK') => {
+  if (!phone || typeof phone !== 'string') return { ok: false, error: 'Phone number is required.' };
+  const raw = phone.trim();
+  if (raw.length < 6)  return { ok: false, error: 'Phone number is too short.' };
+  if (raw.length > 25) return { ok: false, error: 'Phone number is too long.' };
+  // Reject anything other than digits, +, spaces, dashes, dots, parens
+  if (!/^[+\d\s().\-]+$/.test(raw)) {
+    return { ok: false, error: 'Phone number can only contain digits, spaces, +, -, ( and ).' };
+  }
+  // E.164 hard cap: 15 digits max (ITU-T standard).
+  const digitCount = raw.replace(/\D/g, '').length;
+  if (digitCount < 7)  return { ok: false, error: 'Phone number must have at least 7 digits.' };
+  if (digitCount > 15) return { ok: false, error: 'Phone number cannot have more than 15 digits.' };
+
+  try {
+    const parsed = parsePhoneNumberFromString(raw, defaultCountry);
+    if (!parsed || !parsed.isValid()) {
+      return { ok: false, error: 'Please enter a valid phone number (e.g. +92 300 1234567).' };
+    }
+    // Cross-check libphonenumber's own validator too (catches some edge cases).
+    if (!isValidPhoneNumber(raw, defaultCountry)) {
+      return { ok: false, error: 'Please enter a valid phone number for your country.' };
+    }
+    return {
+      ok: true,
+      e164: parsed.number,
+      national: parsed.formatNational(),
+      country: parsed.country || defaultCountry,
+    };
+  } catch {
+    return { ok: false, error: 'Please enter a valid phone number.' };
+  }
 };
 
 // Utility: Calculate age from date of birth.
@@ -218,6 +393,9 @@ export const registerUser = async (registrationData) => {
       extraData.license_number = registrationData.licenseNumber;
       if (registrationData.hospitalAddress) extraData.hospital_address = registrationData.hospitalAddress;
       if (registrationData.contactPerson) extraData.contact_person = registrationData.contactPerson;
+    }
+    if (registrationData.verification_token) {
+      extraData.verification_token = registrationData.verification_token;
     }
     const response = await API.registerViaAPI(
       registrationData.name,
@@ -806,8 +984,8 @@ export const registerUserWithActivity = (registrationData) => {
 // ===== NEW TWO-PHASE REGISTRATION FLOW =====
 
 // Phase 1: Create basic account (just name, email, password, role)
-export const registerBasicAccount = async (name, email, password, role, phone = '') => {
-  return await API.registerViaAPI(name, email, password, role, phone);
+export const registerBasicAccount = async (name, email, password, role, phone = '', verification_token = '') => {
+  return await API.registerViaAPI(name, email, password, role, phone, { verification_token });
 };
 
 // Phase 2: Complete donor/recipient registration (consent + clinical + docs + hospital)

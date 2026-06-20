@@ -7,6 +7,7 @@ import {
   cancelAdminRequestViaAPI,
 } from '../utils/api';
 import { validateEmail, validateName, getAllUsers, banUser, softDeleteUser, unbanUser, restoreUser, BAN_CATEGORIES, capitalizeName } from '../utils/auth';
+import { useEmailField, EmailFieldError } from './EmailField';
 import { toast } from '../utils/toast';
 import Pagination, { usePagination } from './Pagination';
 
@@ -450,6 +451,7 @@ const HospitalManagedAdmins = ({ currentUser, embedded = false }) => {
 const HospitalRequestForm = ({ onSubmitted }) => {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState({ requested_admin_name: '', requested_admin_email: '', justification: '' });
+  const adminEmailCheck = useEmailField(data.requested_admin_email);
   const [busy, setBusy] = useState(false);
 
   const handleSubmit = async () => {
@@ -500,7 +502,9 @@ const HospitalRequestForm = ({ onSubmitted }) => {
               <label className="form-label">Admin Email *</label>
               <input className="form-input" type="email" placeholder="sara.malik@hospital.com"
                 value={data.requested_admin_email}
-                onChange={e => setData({ ...data, requested_admin_email: e.target.value.toLowerCase() })} />
+                onChange={e => setData({ ...data, requested_admin_email: e.target.value.toLowerCase() })}
+                style={adminEmailCheck.borderStyle} />
+              <EmailFieldError check={adminEmailCheck} onAccept={v => setData({ ...data, requested_admin_email: v.toLowerCase() })} />
             </div>
           </div>
           <div style={{ marginTop: '10px' }}>

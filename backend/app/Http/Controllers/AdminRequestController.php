@@ -120,6 +120,8 @@ class AdminRequestController extends Controller
                 'email_verified_at'     => now(),
                 'registration_complete' => true,
                 'linked_hospital_id'    => $hospital->id,
+                // Email 2FA off by default; user can opt in from Account Settings.
+                'two_factor_enabled'    => false,
             ]);
             $admin->assignRole('admin');
 

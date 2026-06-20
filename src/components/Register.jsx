@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName, capitalizeName } from '../utils/auth';
+import { useState, useEffect, useRef } from 'react';
+import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName, capitalizeName, validatePhone } from '../utils/auth';
+import VerifiedCredentialsStep from './VerifiedCredentialsStep';
 import { toast } from '../utils/toast';
 
 // ============================================================
@@ -150,10 +151,16 @@ const DocumentUploadCard = ({ docKey, config, uploadedDoc, onUpload, onRemove })
 // MAIN REGISTER COMPONENT
 // ============================================================
 const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
-  const [accountType, setAccountType] = useState(null);
-  const [step, setStep] = useState(1);
+  // Initialise step/accountType from the browser's current history state, so
+  // that arriving here via the Forward arrow (which remounts this component)
+  // restores the exact step/role the user was on, not always step 1.
+  const histStateInit = (typeof window !== 'undefined' && window.history && window.history.state) || {};
+  const [accountType, setAccountType] = useState(histStateInit.regAccountType ?? null);
+  const [step, setStep] = useState(typeof histStateInit.regStep === 'number' ? histStateInit.regStep : 1);
   const [formData, setFormData] = useState({
     name: '', email: '', password: '', confirmPassword: '', phone: '',
+    // Set by VerifiedCredentialsStep — proves email+phone are verified.
+    verification_token: '',
     // Hospital-only
     hospitalName: '', registrationNumber: '', licenseNumber: '',
     hospitalAddress: '', contactPerson: '',
@@ -163,6 +170,54 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const [submitting, setSubmitting] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [showConfirmPass, setShowConfirmPass] = useState(false);
+
+  // Live public stats shown in the splash panel — same source as the Login
+  // page so both screens show identical real numbers. Polled every 30 s so
+  // a new donor or hospital registering elsewhere is reflected here too.
+  const [publicStats, setPublicStats] = useState({ transplants: null, activeDonors: null, hospitals: null });
+  useEffect(() => {
+    const fetchStats = () =>
+      fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setPublicStats(d); })
+        .catch(() => {});
+    fetchStats();
+    const id = setInterval(fetchStats, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Browser back/forward support for the wizard's internal step + accountType
+  // transitions. Each change pushes a history entry; popstate restores the
+  // matching state so the browser arrows step naturally through the wizard
+  // (Step 2 → back → Step 1 → back → Login).
+  const isPopping = useRef(false);
+  const isMounted = useRef(false);
+  useEffect(() => {
+    const onPop = (e) => {
+      const s = e.state || {};
+      if (s.showRegister === false) return; // App-level popstate will swap back to Login
+      isPopping.current = true;
+      // Always reset to defaults when the popped state doesn't include these
+      // fields — otherwise pressing Back appears to do nothing because the
+      // component keeps its current step/role from before the pop.
+      setStep(typeof s.regStep === 'number' ? s.regStep : 1);
+      setAccountType(s.regAccountType ?? null);
+      // Release the flag after this microtask so the effect below skips this update
+      setTimeout(() => { isPopping.current = false; }, 0);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  useEffect(() => {
+    if (!isMounted.current) { isMounted.current = true; return; }
+    if (isPopping.current) return;
+    window.history.pushState(
+      { page: 'dashboard', settingsTab: null, showRegister: true, regStep: step, regAccountType: accountType },
+      '',
+      window.location.pathname + '#register'
+    );
+  }, [step, accountType]);
 
   const formatPKPhone = (value) => {
     const digits = value.replace(/\D/g, '');
@@ -235,11 +290,9 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
       toast('Passwords do not match.', 'error'); return false;
     }
     if (accountType !== 'hospital') {
-      if (!formData.phone.trim()) {
-        toast('Phone number is required.', 'error'); return false;
-      }
-      if (formData.phone.replace(/\D/g, '').length < 10) {
-        toast('Please enter a valid phone number.', 'error'); return false;
+      const phoneCheck = validatePhone(formData.phone);
+      if (!phoneCheck.ok) {
+        toast(phoneCheck.error, 'error'); return false;
       }
     }
     return true;
@@ -248,6 +301,11 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const validateHospitalInfo = () => {
     if (!formData.hospitalName.trim() || !formData.registrationNumber.trim() || !formData.licenseNumber.trim() || !formData.phone.trim() || !formData.hospitalAddress.trim()) {
       toast('Please fill all hospital information fields.', 'error'); return false;
+    }
+
+    const phoneCheck = validatePhone(formData.phone);
+    if (!phoneCheck.ok) {
+      toast(phoneCheck.error, 'error'); return false;
     }
 
     const regNo = formData.registrationNumber.trim().toUpperCase();
@@ -336,10 +394,39 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
     }
   };
 
+  // Donor/recipient: VerifiedCredentialsStep guarantees email+phone+password
+  // are already verified by the time it calls back, so we can register
+  // immediately and forward to the post-registration flow.
+  const handleDonorRecipientComplete = async ({ name, email, phone, password, verification_token }) => {
+    setSubmitting(true);
+    try {
+      await registerBasicAccount(name, email, password, accountType, phone, verification_token);
+      onRegistrationSuccess({ type: accountType, email, password, name });
+    } catch (err) {
+      toast(err.message || 'Registration failed. Please try again.', 'error');
+      setSubmitting(false);
+    }
+  };
+
+  // Hospital: stash the verified fields, then advance to the hospital-info step.
+  const handleHospitalCredentialsComplete = ({ name, email, phone, password, verification_token }) => {
+    setFormData(prev => ({
+      ...prev,
+      contactPerson: name,
+      email,
+      phone,
+      password,
+      confirmPassword: password,
+      verification_token,
+    }));
+    setStep(3);
+  };
+
   // Hospital: full multi-step registration with documents
   const handleHospitalNext = (e) => {
     if (e) e.preventDefault();
-    if (step === 2 && !validateCredentials()) return;
+    // Step 2 (credentials) is now handled by VerifiedCredentialsStep; this
+    // handler only governs steps 3+.
     if (step === 3 && !validateHospitalInfo()) return;
     setStep(s => s + 1);
   };
@@ -362,6 +449,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
           licenseNumber: formData.licenseNumber,
           hospitalAddress: formData.hospitalAddress,
           uploadedDocuments: Object.values(uploadedDocs),
+          verification_token: formData.verification_token,
         };
         await registerUser(regData);
         addActivity('hospital_registered', '🏥', 'New Hospital Registration', `${formData.hospitalName} submitted a registration request`);
@@ -391,9 +479,18 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
             <div className="auth-subtext">Create your account to become part of a life-saving mission. Every registration matters.</div>
           </div>
           <div className="auth-stats">
-            <div className="auth-stat"><div className="auth-stat-val">1,247+</div><div className="auth-stat-lbl">Lives Saved</div></div>
-            <div className="auth-stat"><div className="auth-stat-val">500+</div><div className="auth-stat-lbl">Active Donors</div></div>
-            <div className="auth-stat"><div className="auth-stat-val">48</div><div className="auth-stat-lbl">Partner Hospitals</div></div>
+            <div className="auth-stat">
+              <div className="auth-stat-val">{publicStats.transplants !== null ? publicStats.transplants.toLocaleString() : '—'}</div>
+              <div className="auth-stat-lbl">Lives Saved</div>
+            </div>
+            <div className="auth-stat">
+              <div className="auth-stat-val">{publicStats.activeDonors !== null ? publicStats.activeDonors.toLocaleString() : '—'}</div>
+              <div className="auth-stat-lbl">Active Donors</div>
+            </div>
+            <div className="auth-stat">
+              <div className="auth-stat-val">{publicStats.hospitals !== null ? publicStats.hospitals.toLocaleString() : '—'}</div>
+              <div className="auth-stat-lbl">Partner Hospitals</div>
+            </div>
           </div>
         </div>
 
@@ -489,62 +586,19 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <p>Just basic details for now — you'll complete the full registration after logging in.</p>
             </div>
 
-            <form onSubmit={handleDonorRecipientSubmit} autoComplete="off">
-              <div className="form-group">
-                <label className="form-label">Full Name *</label>
-                <input className="form-input" name="name" value={formData.name}
-                  onChange={handleInput} placeholder="Your legal full name" required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Email Address *</label>
-                <input className="form-input" name="email" type="email" value={formData.email}
-                  onChange={handleInput} placeholder="your@email.com" required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Phone Number *</label>
-                <input className="form-input" name="phone" type="tel" value={formData.phone}
-                  onChange={handleInput} placeholder="03XX-XXXXXXX" required />
-              </div>
-              <div className="grid2">
-                <div className="form-group">
-                  <label className="form-label">Password *</label>
-                  <div className="form-input-wrap">
-                    <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
-                      onChange={handleInput} placeholder="Strong password" required autoComplete="new-password" />
-                    <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
-                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Confirm Password *</label>
-                  <div className="form-input-wrap">
-                    <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
-                      onChange={handleInput} placeholder="Repeat password" required autoComplete="new-password" />
-                    <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
-                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <div style={{ background: 'var(--primary-light)', border: '1px solid rgba(26,92,158,.2)', borderRadius: 'var(--radius)', padding: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--primary)' }}>
+              <strong>📋 Next Step:</strong> After login, you'll be guided through the consent form, medical details, document upload, and hospital selection.
+            </div>
 
-              <div style={{ background: 'var(--primary-light)', border: '1px solid rgba(26,92,158,.2)', borderRadius: 'var(--radius)', padding: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--primary)' }}>
-                <strong>📋 Next Step:</strong> After login, you'll be guided through the consent form, medical details, document upload, and hospital selection.
-              </div>
-
-              <button type="submit" className="btn btn-primary btn-full" disabled={submitting}>
-                {submitting ? 'Creating Account...' : 'Create Account & Continue →'}
-              </button>
-
-              <button type="button" onClick={onBackToLogin}
-                className="btn btn-ghost btn-full" style={{ marginTop: '8px' }}>
-                Cancel — Back to Login
-              </button>
-            </form>
+            <VerifiedCredentialsStep
+              initialName={formData.name}
+              initialEmail={formData.email}
+              initialPhone={formData.phone}
+              submitting={submitting}
+              onComplete={handleDonorRecipientComplete}
+              onCancel={onBackToLogin}
+              submitLabel="Create Account & Continue →"
+            />
           </div>
         </div>
       </div>
@@ -608,51 +662,21 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <p>{hospitalStepSubtitles[step]}</p>
             </div>
 
-            {/* Step 2: Account Info */}
+            {/* Step 2: Account Info (verified email + phone + strong password) */}
             {step === 2 && (
-              <form onSubmit={handleHospitalNext}>
-                <div className="form-group">
-                  <label className="form-label">Contact Person Name *</label>
-                  <input className="form-input" name="contactPerson" value={formData.contactPerson}
-                    onChange={handleInput} placeholder="Your full name" required />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Email Address *</label>
-                  <input className="form-input" name="email" type="email" value={formData.email}
-                    onChange={handleInput} placeholder="hospital@example.com" required />
-                </div>
-                <div className="grid2">
-                  <div className="form-group">
-                    <label className="form-label">Password *</label>
-                    <div className="form-input-wrap">
-                      <input className="form-input" name="password" type={showPass ? 'text' : 'password'} value={formData.password}
-                        onChange={handleInput} placeholder="Min. 8 chars" required autoComplete="new-password" />
-                      <button type="button" className="form-input-toggle" onClick={() => setShowPass(p => !p)}>
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Confirm Password *</label>
-                    <div className="form-input-wrap">
-                      <input className="form-input" name="confirmPassword" type={showConfirmPass ? 'text' : 'password'} value={formData.confirmPassword}
-                        onChange={handleInput} placeholder="Repeat" required autoComplete="new-password" />
-                      <button type="button" className="form-input-toggle" onClick={() => setShowConfirmPass(p => !p)}>
-                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" strokeWidth="2">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-                </div>
+              <>
                 <div style={{ background: 'var(--accent-light)', border: '1px solid rgba(14,176,122,.2)', borderRadius: 'var(--radius)', padding: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--accent)' }}>
                   ✓ After registration, you can log in immediately. Full access granted after admin approval.
                 </div>
-                <button type="submit" className="btn btn-primary btn-full">Next: Hospital Info →</button>
-                <button type="button" onClick={onBackToLogin} className="btn btn-ghost btn-full" style={{ marginTop: '8px' }}>Cancel</button>
-              </form>
+                <VerifiedCredentialsStep
+                  initialName={formData.contactPerson}
+                  initialEmail={formData.email}
+                  initialPhone={formData.phone}
+                  submitLabel="Next: Hospital Info →"
+                  onComplete={handleHospitalCredentialsComplete}
+                  onCancel={onBackToLogin}
+                />
+              </>
             )}
 
             {/* Step 3: Hospital Info */}

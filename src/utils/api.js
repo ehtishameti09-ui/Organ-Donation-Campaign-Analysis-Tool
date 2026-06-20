@@ -63,6 +63,33 @@ export const registerViaAPI = async (name, email, password, role, phone = '', ex
   return data;
 };
 
+// ---- Pre-account verification (email link + phone OTP) ----
+const postJsonNoAuth = async (path, body) => {
+  const r = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(data.message || 'Request failed');
+    Object.assign(err, data);
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+};
+
+export const startEmailVerification    = (email) => postJsonNoAuth('/auth/email/start', { email });
+export const confirmEmailVerification  = (token, action) => postJsonNoAuth('/auth/email/confirm', { token, action });
+export const getEmailVerificationStatus = async (token) => {
+  const r = await fetch(`${API_BASE}/auth/email/status?token=${encodeURIComponent(token)}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!r.ok) return { status: 'expired' };
+  return r.json();
+};
+
 export const loginViaAPI = async (email, password) => {
   const response = await fetch(`${API_BASE}/login`, {
     method: 'POST',

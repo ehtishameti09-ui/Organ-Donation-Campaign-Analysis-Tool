@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Auth\AuthController;
-use App\Models\User;
+use App\Models\ClinicalProfile;
+use App\Models\DonorProfile;
 use App\Models\Notification;
+use App\Models\RecipientProfile;
+use App\Models\User;
 use App\Rules\StrongPassword;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
@@ -67,7 +70,7 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:60'],
             'email' => ['required', 'email', Rule::unique('users', 'email')],
             'password' => ['required', new StrongPassword],
-            'phone' => ['nullable', 'string', 'max:30'],
+            'phone' => ['nullable', 'string', 'max:30', new \App\Rules\ValidPhone],
             'linked_hospital_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
@@ -89,6 +92,8 @@ class UserController extends Controller
             'email_verified_at' => now(),
             'registration_complete' => true,
             'linked_hospital_id' => null,
+            // Email 2FA off by default; user can opt in from Account Settings.
+            'two_factor_enabled' => false,
         ]);
         $user->assignRole('admin');
 
@@ -143,6 +148,8 @@ class UserController extends Controller
             'email_verified_at'     => now(),
             'registration_complete' => true,
             'linked_hospital_id'    => $hospitalId,
+            // Email 2FA off by default; user can opt in from Account Settings.
+            'two_factor_enabled'    => false,
         ]);
         $employee->assignRole($data['role']);
 
@@ -184,7 +191,7 @@ class UserController extends Controller
     {
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:60'],
-            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30', new \App\Rules\ValidPhone],
             'status' => ['sometimes', Rule::in(['pending', 'approved', 'info_requested', 'registered', 'submitted', 'rejected', 'banned', 'warned'])],
             'role' => ['sometimes', Rule::in(['super_admin', 'admin', 'hospital', 'doctor', 'data_entry', 'auditor', 'donor', 'recipient'])],
             'linked_hospital_id' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
@@ -518,6 +525,53 @@ class UserController extends Controller
         return response()->json([
             'message' => 'User restored.',
             'user'    => app(AuthController::class)->userResource($user->fresh()),
+        ]);
+    }
+
+    /**
+     * POST /api/users/me/add-role  { role: 'donor'|'recipient' }
+     *
+     * Multi-role opt-in. A primary donor can add a recipient role on the same
+     * account (and vice-versa). Staff roles are excluded — separation of duties.
+     */
+    public function addRole(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $data = $request->validate([
+            'role' => ['required', Rule::in(['donor', 'recipient'])],
+        ]);
+        $newRole = $data['role'];
+
+        if (!in_array($user->role, ['donor', 'recipient'], true)) {
+            return response()->json(['message' => 'Multi-role opt-in is only available for donor and recipient accounts.'], 403);
+        }
+        if ($user->role === $newRole) {
+            return response()->json(['message' => "You are already a {$newRole}."], 422);
+        }
+        if ($user->secondary_role) {
+            return response()->json(['message' => 'You already hold both donor and recipient roles.'], 422);
+        }
+
+        if ($newRole === 'donor') {
+            DonorProfile::firstOrCreate(['user_id' => $user->id]);
+        } else {
+            RecipientProfile::firstOrCreate(['user_id' => $user->id]);
+        }
+        ClinicalProfile::firstOrCreate(['user_id' => $user->id]);
+        $user->update(['secondary_role' => $newRole]);
+        try { $user->assignRole($newRole); } catch (\Throwable $e) { /* ignore */ }
+
+        ActivityLogger::logActivity(
+            type: 'role_added',
+            title: ucfirst($newRole).' role added',
+            description: $user->name.' added a '.$newRole.' role to their account',
+            extra: ['user_id' => $user->id, 'actor_id' => $user->id]
+        );
+        ActivityLogger::logAction($user->id, 'role_added', 'Added '.$newRole.' role', ['new_role' => $newRole]);
+
+        return response()->json([
+            'message' => "The {$newRole} role has been added to your account. Please complete the registration wizard for your new role.",
+            'user'    => app(AuthController::class)->userResource($user->fresh()->load(['hospitalProfile', 'donorProfile', 'recipientProfile', 'clinicalProfile', 'documents'])),
         ]);
     }
 

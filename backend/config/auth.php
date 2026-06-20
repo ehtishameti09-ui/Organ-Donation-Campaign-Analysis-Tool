@@ -20,6 +20,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Email Verification Gate at Registration
+    |--------------------------------------------------------------------------
+    |
+    | When true, /api/register requires a `verification_token` proving the
+    | email was verified via /api/auth/email/start + /api/auth/email/confirm.
+    | When false, the verify-email step is skipped entirely (the frontend
+    | hides the Verify Email button and submits without a token), and the
+    | new account is created with `email_verified_at => now()` regardless.
+    |
+    | Toggle by setting REQUIRE_EMAIL_VERIFICATION in the .env file.
+    */
+    'require_email_verification' => filter_var(env('REQUIRE_EMAIL_VERIFICATION', false), FILTER_VALIDATE_BOOLEAN),
+
+    /*
+    |--------------------------------------------------------------------------
     | Authentication Guards
     |--------------------------------------------------------------------------
     |

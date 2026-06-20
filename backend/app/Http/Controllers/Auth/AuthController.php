@@ -27,13 +27,18 @@ class AuthController extends Controller
      */
     public function register(Request $request): JsonResponse
     {
+        $requireEmailVerify = (bool) config('auth.require_email_verification');
+
         $data = $request->validate([
             'name' => ['required', 'string', 'min:2', 'max:60'],
-            'email' => ['required', 'email:rfc', 'max:191', Rule::unique('users', 'email')],
+            'email' => ['required', 'email:rfc,strict', 'max:191', 'regex:/^[A-Za-z0-9._%+\-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}$/', Rule::unique('users', 'email')],
             'password' => ['required', 'confirmed', new StrongPassword],
             'password_confirmation' => ['required'],
             'role' => ['required', Rule::in(['donor', 'recipient', 'hospital'])],
-            'phone' => ['nullable', 'string', 'max:30'],
+            'phone' => ['required', 'string', 'min:6', 'max:30', new \App\Rules\ValidPhone],
+            // Pre-account email verification token (from /api/auth/email/start +
+            // /api/auth/email/confirm). Required only when the feature flag is on.
+            'verification_token' => [$requireEmailVerify ? 'required' : 'nullable', 'string', 'size:64'],
 
             // Hospital fields (required only for hospital role)
             'hospital_name' => ['required_if:role,hospital', 'string', 'min:2', 'max:191'],
@@ -43,11 +48,30 @@ class AuthController extends Controller
             'contact_person' => ['nullable', 'string', 'max:191'],
         ]);
 
+        // Domain check: reject typos of recognized providers (@ggmail.com…)
+        // but accept any other domain so real hospital / educational / company
+        // emails work. Same logic as the frontend.
+        if (!\App\Support\EmailDomainPolicy::isAcceptable($data['email'])) {
+            return response()->json([
+                'message' => 'That email domain looks like a typo of a recognized provider. Please check and try again.',
+            ], 422);
+        }
+
+        // Server-side email-verification gate. Skipped entirely when the feature
+        // flag is off; flip REQUIRE_EMAIL_VERIFICATION=true in .env to re-enable.
+        if ($requireEmailVerify) {
+            $emailEntry = \Illuminate\Support\Facades\Cache::get('ev:'.$data['verification_token']);
+            if (!$emailEntry || ($emailEntry['status'] ?? null) !== 'verified'
+                || strcasecmp($emailEntry['email'] ?? '', $data['email']) !== 0) {
+                return response()->json(['message' => 'Email is not verified. Please verify your email first.'], 422);
+            }
+        }
+
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => $data['password'],
-            'phone' => $data['phone'] ?? null,
+            'phone' => $data['phone'],
             'role' => $data['role'],
             'status' => $data['role'] === 'hospital' ? 'pending' : 'registered',
             'registration_type' => $data['role'] === 'hospital' ? 'hospital_request' : 'user_self',
@@ -55,9 +79,17 @@ class AuthController extends Controller
             // address are required here), so their registration is complete immediately.
             // Donors/recipients still complete a separate wizard afterwards.
             'registration_complete' => $data['role'] === 'hospital',
-            // Auto-verify email in local development so protected routes work immediately
-            'email_verified_at' => app()->environment('local') ? now() : null,
+            // Email is provably verified by the pre-account flow above.
+            'email_verified_at' => now(),
+            // Email 2FA off by default; user can opt in from Account Settings.
+            'two_factor_enabled' => false,
         ]);
+
+        // Single-use: invalidate the email verification token (when one was used).
+        if (!empty($data['verification_token'])) {
+            \Illuminate\Support\Facades\Cache::forget('ev:'.$data['verification_token']);
+        }
+        \Illuminate\Support\Facades\Cache::forget('ev-cur:'.strtolower($data['email']));
 
         // Assign a human-readable unique ID (e.g. DON-2026-0042)
         $prefix = match($data['role']) {
@@ -355,6 +387,10 @@ class AuthController extends Controller
             'email' => $user->email,
             'phone' => $user->phone,
             'role' => $user->role,
+            'secondaryRole'   => $user->secondary_role,
+            'roles'           => $user->allRoles(),
+            'donorStatus'     => $user->donorProfile?->case_status,
+            'recipientStatus' => $user->recipientProfile?->case_status,
             'status' => $user->status,
             'avatar' => $user->avatar,
             'registrationType' => $user->registration_type,

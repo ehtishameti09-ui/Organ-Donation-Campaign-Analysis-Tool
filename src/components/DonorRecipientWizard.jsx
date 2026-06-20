@@ -6,10 +6,13 @@ import {
   calculateAgeFromDOB,
   ageLabelFromDOB,
   capitalizeName,
+  validateName,
+  validatePhone,
 } from '../utils/auth';
 import { toast } from '../utils/toast';
 import { generateRegistrationPDF, generateConsentDeclarationPDF } from '../utils/pdfReport';
 import { ORGANS } from '../utils/organs';
+import Pagination, { usePagination } from './Pagination';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const GENDERS = ['Male', 'Female', 'Other'];
@@ -68,7 +71,7 @@ const PakistanConsentForm = ({ userType, name, onAccept, onDecline }) => {
     }
   };
 
-  const canSign = agreed && witnessed && readToBottom && signature.trim() && cnic.replace(/\D/g, '').length >= 13;
+  const canSign = agreed && witnessed && readToBottom && validateName(signature).ok && cnic.replace(/\D/g, '').length >= 13;
 
   const handleAccept = () => {
     if (!canSign) {
@@ -510,13 +513,25 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
 
   const [documents, setDocuments] = useState({});
   const [preferredHospitalId, setPreferredHospitalId] = useState(user.preferredHospitalId || '');
-
-  const docConfig = isDonor ? DONOR_DOCS : RECIPIENT_DOCS;
+  const [hospitalSearch, setHospitalSearch] = useState('');
   const [approvedHospitals, setApprovedHospitals] = useState([]);
+  const docConfig = isDonor ? DONOR_DOCS : RECIPIENT_DOCS;
 
   useEffect(() => {
     getApprovedHospitals().then(h => setApprovedHospitals(h)).catch(() => {});
   }, []);
+
+  const filteredHospitals = approvedHospitals.filter(h => {
+    const q = hospitalSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      (h.hospitalName || h.name || '').toLowerCase().includes(q) ||
+      (h.hospitalAddress || '').toLowerCase().includes(q) ||
+      (h.registrationNumber || '').toLowerCase().includes(q)
+    );
+  });
+  const hospitalsPg = usePagination(filteredHospitals, 5);
+  useEffect(() => { hospitalsPg.setPage(1); /* reset to page 1 on search */ }, [hospitalSearch]);
 
   // Total steps: 1=Consent, 2=Clinical, 3=Documents, 4=Hospital & Submit
   const totalSteps = 4;
@@ -572,14 +587,15 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
   // ===== STEP VALIDATION =====
   const validateClinical = () => {
     if (isGuardian) {
-      if (!clinical.patientName.trim()) { toast("Please enter the patient's (child's) full name.", 'error'); return false; }
+      { const c = validateName(clinical.patientName); if (!c.ok) { toast("Patient (child) name: " + c.error, 'error'); return false; } }
       if (!clinical.guardianName.trim()) { toast("Please enter the guardian's full name.", 'error'); return false; }
       if (!clinical.guardianRelationship) { toast('Please select your relationship to the patient.', 'error'); return false; }
       if (!clinical.guardianCnic || clinical.guardianCnic.replace(/\D/g, '').length < 13) {
         toast("Please enter the guardian's valid 13-digit CNIC.", 'error'); return false;
       }
-      if (!clinical.guardianPhone || clinical.guardianPhone.replace(/\D/g, '').length < 10) {
-        toast("Please enter the guardian's valid phone number.", 'error'); return false;
+      {
+        const c = validatePhone(clinical.guardianPhone);
+        if (!c.ok) { toast("Guardian phone: " + c.error, 'error'); return false; }
       }
     }
     if (!clinical.cnic || clinical.cnic.replace(/\D/g, '').length < 13) {
@@ -601,8 +617,18 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
     if (!clinical.phone || !clinical.address) {
       toast('Phone and address are required.', 'error'); return false;
     }
+    {
+      const c = validatePhone(clinical.phone);
+      if (!c.ok) { toast('Phone: ' + c.error, 'error'); return false; }
+    }
     if (isDonor && (!clinical.emergencyContactName || !clinical.emergencyContactPhone || !clinical.emergencyContactRelation)) {
       toast('Please provide emergency contact name, phone, and relationship.', 'error'); return false;
+    }
+    // Emergency phone: required for donors, optional for recipients — but
+    // validate the format whenever it's supplied.
+    if (clinical.emergencyContactPhone && clinical.emergencyContactPhone.trim()) {
+      const c = validatePhone(clinical.emergencyContactPhone);
+      if (!c.ok) { toast('Emergency contact phone: ' + c.error, 'error'); return false; }
     }
     if (isDonor && (!clinical.pledgedOrgans || clinical.pledgedOrgans.length === 0)) {
       toast('Please select at least one organ to pledge.', 'error'); return false;
@@ -1072,8 +1098,22 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
               ⚠️ No approved hospitals are available right now. Please contact the admin or try again later.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {approvedHospitals.map(h => {
+            <>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Search by hospital name, address, or registration #"
+                value={hospitalSearch}
+                onChange={e => setHospitalSearch(e.target.value)}
+                style={{ marginBottom: '12px' }}
+              />
+              {filteredHospitals.length === 0 && (
+                <div style={{ padding: '14px', color: 'var(--text3)', fontSize: '13px', textAlign: 'center' }}>
+                  No hospitals match "<strong>{hospitalSearch}</strong>".
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {hospitalsPg.slice.map(h => {
                 const selected = preferredHospitalId == h.id;
                 return (
                   <button key={h.id} type="button" onClick={() => setPreferredHospitalId(h.id)}
@@ -1103,7 +1143,13 @@ const DonorRecipientWizard = ({ user, onComplete, onCancel, mode = 'new' }) => {
                   </button>
                 );
               })}
-            </div>
+              </div>
+              {filteredHospitals.length > hospitalsPg.pageSize && (
+                <div style={{ marginTop: '12px' }}>
+                  <Pagination {...hospitalsPg} label="hospitals" />
+                </div>
+              )}
+            </>
           )}
 
           <div style={{ marginTop: '20px', padding: '14px', background: 'var(--accent-light)', borderRadius: 'var(--radius)', borderLeft: '4px solid var(--accent)', fontSize: '12px', color: 'var(--text1)', lineHeight: '1.6' }}>

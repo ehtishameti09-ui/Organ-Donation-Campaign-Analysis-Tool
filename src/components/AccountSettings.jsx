@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import {
   userSelfDeleteAccount,
   getNotifications, markNotificationRead, getUserActionLogs, getUserAppeals,
-  submitAppeal, uploadAdditionalHospitalDocuments, addActivity, capitalizeName
+  submitAppeal, uploadAdditionalHospitalDocuments, addActivity, capitalizeName, validateName, validateEmail, validatePhone
 } from '../utils/auth';
 import { updateUserViaAPI, changePasswordViaAPI, requestTwoFactorSetupCode, confirmTwoFactorSetup, disableTwoFactor, getMeViaAPI, uploadDocumentsViaAPI } from '../utils/api';
 import { toast } from '../utils/toast';
 import { ORGANS as ORGANS_LIST } from '../utils/organs';
 import Pagination, { usePagination } from './Pagination';
 import DocumentViewer from './DocumentViewer';
+import { useEmailField, EmailFieldError } from './EmailField';
 
 const formatPKPhone = (value) => {
   const digits = value.replace(/\D/g, '');
@@ -96,6 +97,7 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
     licenseNumber: user.licenseNumber || '',
     hospitalAddress: user.hospitalAddress || '',
   });
+  const profileEmailCheck = useEmailField(profileData.email);
 
   const [pwdData, setPwdData] = useState({ current: '', newPwd: '', confirmPwd: '' });
 
@@ -269,8 +271,14 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
   }, []);
 
   const saveProfile = async () => {
-    if (!profileData.name || !profileData.email) {
-      toast('Name and email are required.', 'error'); return;
+    const emailCheck = validateEmail(profileData.email);
+    if (!emailCheck.ok) { toast(emailCheck.error, 'error'); return; }
+    const nameCheck = validateName(profileData.name);
+    if (!nameCheck.ok) { toast(nameCheck.error, 'error'); return; }
+    // Phone is optional in the profile; validate only when supplied.
+    if (profileData.phone && profileData.phone.trim()) {
+      const phoneCheck = validatePhone(profileData.phone);
+      if (!phoneCheck.ok) { toast(phoneCheck.error, 'error'); return; }
     }
     if (profileData.age && parseInt(profileData.age) < 18) {
       toast('Age must be at least 18.', 'error'); return;
@@ -695,12 +703,21 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
             <div className="form-group">
               <label className="form-label">Email Address *</label>
               <input className="form-input" type="email" value={profileData.email}
-                onChange={e => setProfileData(p => ({ ...p, email: e.target.value }))} />
+                onChange={e => setProfileData(p => ({ ...p, email: e.target.value }))}
+                style={profileEmailCheck.borderStyle} />
+              <EmailFieldError check={profileEmailCheck} onAccept={v => setProfileData(p => ({ ...p, email: v }))} />
             </div>
             <div className="form-group">
               <label className="form-label">Phone Number</label>
               <input className="form-input" type="tel" value={profileData.phone}
                 onChange={e => setProfileData(p => ({ ...p, phone: formatPKPhone(e.target.value) }))} placeholder="03XX-XXXXXXX" />
+              {(() => {
+                if (!profileData.phone || !profileData.phone.trim()) return null;
+                const c = validatePhone(profileData.phone);
+                return c.ok
+                  ? <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px' }}>✓ {c.country} · {c.national}</div>
+                  : <div style={{ fontSize: '11px', color: 'var(--danger)', marginTop: '4px' }}>{c.error}</div>;
+              })()}
             </div>
 
             {user.role === 'donor' && (
@@ -1432,10 +1449,19 @@ const AccountSettings = ({ user, onUpdate, initialTab, onNavigate }) => {
 
           <div className="form-group">
             <label className="form-label">Notes for Hospital (optional)</label>
-            <textarea className="form-textarea" rows="3"
-              placeholder="Any preferences or accessibility needs you'd like the hospital to know..."
+            <textarea
+              className="form-input"
+              rows="4"
+              maxLength={500}
+              placeholder="Any preferences or accessibility needs you'd like the hospital to know…"
               value={recipientPrefs.preferredHospitalNotes}
-              onChange={e => setRecipientPrefs(p => ({ ...p, preferredHospitalNotes: e.target.value }))} />
+              onChange={e => setRecipientPrefs(p => ({ ...p, preferredHospitalNotes: e.target.value }))}
+              style={{ resize: 'vertical', minHeight: '96px' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '11px', color: 'var(--text3)' }}>
+              <span>Visible to the hospital reviewing your case.</span>
+              <span>{(recipientPrefs.preferredHospitalNotes || '').length}/500</span>
+            </div>
           </div>
 
           <button className="btn btn-primary" onClick={saveRecipientPrefs} disabled={saving}>

@@ -49,7 +49,7 @@ class RecipientController extends Controller
             'dob' => ['required', 'date', 'before:today'],
             'gender' => ['required', Rule::in(['Male', 'Female', 'Other'])],
             'blood_type' => ['required', Rule::in(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'])],
-            'phone' => ['required', 'string', 'max:30'],
+            'phone' => ['required', 'string', 'max:30', new \App\Rules\ValidPhone],
             'address' => ['required', 'string', 'max:500'],
             'organ_needed' => ['required', 'string'],
             'diagnosis' => ['nullable', 'string'],
@@ -60,7 +60,7 @@ class RecipientController extends Controller
             'medical_history' => ['nullable', 'string'],
             'current_medications' => ['nullable', 'string'],
             'emergency_contact_name' => ['nullable', 'string', 'max:191'],
-            'emergency_contact_phone' => ['nullable', 'string', 'max:30'],
+            'emergency_contact_phone' => ['nullable', 'string', 'max:30', new \App\Rules\ValidPhone],
             'emergency_contact_relation' => ['nullable', 'string', 'max:50'],
             'preferred_hospital_id' => ['required', 'integer', Rule::exists('users', 'id')->where('role', 'hospital')->where('status', 'approved')],
 
@@ -71,7 +71,7 @@ class RecipientController extends Controller
             'guardian_name' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:120'],
             'guardian_relationship' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:40'],
             'guardian_cnic' => ['required_if:account_type,guardian', 'nullable', 'regex:/^\d{5}-\d{7}-\d$/'],
-            'guardian_phone' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:30'],
+            'guardian_phone' => ['required_if:account_type,guardian', 'nullable', 'string', 'max:30', new \App\Rules\ValidPhone],
         ], [
             'patient_name.required_if' => "The patient's (child's) full name is required for a guardian account.",
             'guardian_name.required_if' => "The guardian's full name is required.",

@@ -3,6 +3,7 @@ import { getAllUsers, getPendingRegistrations, getApprovedHospitals, getRejected
 import { createAdminViaAPI, getUsersViaAPI, getHospitalsOverviewViaAPI, reviewDocumentViaAPI } from '../utils/api';
 import Pagination, { usePagination } from './Pagination';
 import DocumentViewer from './DocumentViewer';
+import { useEmailField, EmailFieldError } from './EmailField';
 import { toast } from '../utils/toast';
 
 const UserManagement = ({ currentUser }) => {
@@ -15,6 +16,7 @@ const UserManagement = ({ currentUser }) => {
   const [modalAction, setModalAction] = useState(''); // 'approve', 'reject', 'info'
   const [modalMessage, setModalMessage] = useState('');
   const [newAdmin, setNewAdmin] = useState({ name: '', email: '', password: '', linkedHospitalId: '', linkedHospitalName: '' });
+  const newAdminEmailCheck = useEmailField(newAdmin.email);
   const [hospitalTab, setHospitalTab] = useState('pending'); // 'pending' | 'approved' | 'rejected'
   const [approvedHospitals, setApprovedHospitals] = useState([]);
   const [rejectedHospitals, setRejectedHospitals] = useState([]);
@@ -1030,7 +1032,9 @@ const UserManagement = ({ currentUser }) => {
                   value={newAdmin.email}
                   onChange={(e) => setNewAdmin({ ...newAdmin, email: e.target.value })}
                   placeholder="admin@hospital.com"
+                  style={newAdminEmailCheck.borderStyle}
                 />
+                <EmailFieldError check={newAdminEmailCheck} onAccept={v => setNewAdmin({ ...newAdmin, email: v })} />
               </div>
               <div className="form-group">
                 <label className="form-label">Password</label>
