@@ -50,12 +50,21 @@ class Notifier
         self::email($user->email, $title, $message);
     }
 
-    /** Best-effort email, sent after the response is flushed. Never throws. */
-    public static function email(?string $to, string $subject, string $body): void
+    /**
+     * Best-effort email. Never throws — a dead SMTP host must not turn an
+     * approval or an alert into a 500.
+     *
+     * $immediate = false (web): sent after the response is flushed, so the user
+     * never waits on SMTP.
+     * $immediate = true (console): sent inline. Scheduled commands have no
+     * response to defer behind, and deferring there would risk the process
+     * exiting before the mail was handed to the mailer.
+     */
+    public static function email(?string $to, string $subject, string $body, bool $immediate = false): void
     {
         if (!$to) return;
 
-        dispatch(function () use ($to, $subject, $body) {
+        $send = function () use ($to, $subject, $body) {
             try {
                 Mail::raw($body, function ($m) use ($to, $subject) {
                     $m->to($to)->subject($subject);
@@ -63,6 +72,8 @@ class Notifier
             } catch (\Throwable $e) {
                 Log::warning('Governance email failed', ['to' => $to, 'subject' => $subject, 'error' => $e->getMessage()]);
             }
-        })->afterResponse();
+        };
+
+        $immediate ? $send() : dispatch($send)->afterResponse();
     }
 }

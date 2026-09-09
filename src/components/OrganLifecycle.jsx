@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addOrganEventViaAPI,
   getApprovalsViaAPI,
@@ -96,6 +96,7 @@ const OrganLifecycle = ({ currentUser }) => {
   const [organs, setOrgans] = useState([]);
   const [counts, setCounts] = useState({});
   const [metrics, setMetrics] = useState(null);
+  const [metricsStale, setMetricsStale] = useState(true);
   const [readOnly, setReadOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -103,20 +104,22 @@ const OrganLifecycle = ({ currentUser }) => {
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
+  // Used to tell whether this page is the one actually on screen (see the poll below).
+  const rootRef = useRef(null);
 
   const canWrite = ['hospital', 'admin', 'doctor'].includes(currentUser?.role) && !readOnly;
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [reg, m] = await Promise.all([
-        getOrgansViaAPI({ status: statusFilter === 'all' ? null : statusFilter, alert: riskOnly ? 'at_risk' : null }),
-        getOrganMetricsViaAPI(),
-      ]);
+      const reg = await getOrgansViaAPI({
+        status: statusFilter === 'all' ? null : statusFilter,
+        alert: riskOnly ? 'at_risk' : null,
+      });
       setOrgans(reg.data || []);
       setCounts(reg.counts || {});
       setReadOnly(!!reg.read_only);
-      setMetrics(m);
+      setMetricsStale(true);
       if (reg.alerts_raised?.length) {
         toast(`Cold ischemia breach: ${reg.alerts_raised.join(', ')}`, 'error');
       }
@@ -129,10 +132,35 @@ const OrganLifecycle = ({ currentUser }) => {
 
   useEffect(() => { load(); }, [load]);
 
+  // Utilization figures are only shown on the Utilization tab, so they are
+  // fetched when that tab is opened rather than alongside every registry load
+  // (including the 60s poll). The dev server serves one request at a time, so
+  // every request avoided is latency removed from the whole page.
+  useEffect(() => {
+    if (tab !== 'analytics' || !metricsStale) return;
+    let cancelled = false;
+    getOrganMetricsViaAPI()
+      .then(m => { if (!cancelled) { setMetrics(m); setMetricsStale(false); } })
+      .catch(e => toast(e.message, 'error'));
+    return () => { cancelled = true; };
+  }, [tab, metricsStale]);
+
   // The cold chain is a live clock. Refresh quietly every 60s so an organ that
   // crosses a threshold while the page sits open surfaces without a manual reload.
+  //
+  // The visibility guard matters more than it looks. App.jsx keeps every visited
+  // page mounted and merely hides it with display:none, so without this check the
+  // timer keeps firing forever after you navigate away — polling a page nobody is
+  // looking at, and stealing request slots from the page they ARE looking at. The
+  // backend runs on PHP's single-threaded dev server, so a stolen slot is not
+  // just wasted work, it is latency added to somebody's visible page.
   useEffect(() => {
-    const t = setInterval(() => load(true), 60000);
+    const t = setInterval(() => {
+      // offsetParent is null when an ancestor has display:none.
+      if (!rootRef.current?.offsetParent) return;
+      if (document.hidden) return;          // browser tab in the background
+      load(true);
+    }, 60000);
     return () => clearInterval(t);
   }, [load]);
 
@@ -165,7 +193,7 @@ const OrganLifecycle = ({ currentUser }) => {
   const { page, setPage, totalPages, total, pageSize, slice } = usePagination(organs, 12);
 
   return (
-    <div>
+    <div ref={rootRef}>
       <div style={{
         background: 'linear-gradient(135deg, #0d7d8f 0%, #16a8bd 100%)',
         color: 'white', padding: '16px 20px', borderRadius: 'var(--radius)', marginBottom: '16px',
@@ -364,7 +392,7 @@ const OrganDetail = ({ o, busy, canWrite, onClose, onStatus, onNote }) => {
             <Badge meta={STATUS_META[o.status]}>{STATUS_META[o.status].label}</Badge>
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text3)', marginTop: '3px' }}>
-            Donor {o.donor?.name || '—'} → Recipient {o.recipient?.name || 'unassigned'}
+            {o.donor?.name ? `Donor ${o.donor.name}` : 'Donor not linked'} → {o.recipient?.name ? `Recipient ${o.recipient.name}` : 'Recipient unassigned'}
             {o.case_approval_id && <> · approval case #{o.case_approval_id}</>}
           </div>
         </div>

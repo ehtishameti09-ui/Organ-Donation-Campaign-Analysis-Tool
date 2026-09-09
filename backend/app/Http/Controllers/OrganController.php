@@ -7,6 +7,7 @@ use App\Models\Organ;
 use App\Models\OrganEvent;
 use App\Models\User;
 use App\Services\ActivityLogger;
+use App\Services\ColdChainMonitor;
 use App\Services\Notifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,6 +27,8 @@ use Illuminate\Support\Facades\DB;
  */
 class OrganController extends Controller
 {
+    public function __construct(private ColdChainMonitor $coldChain) {}
+
     /** Same scoping contract as the approval board: null means read-only oversight. */
     private function scope(Request $request, bool $forWrite): ?int
     {
@@ -60,58 +63,18 @@ class OrganController extends Controller
     }
 
     /**
-     * 8.1 — raise the one-off breach alert for any organ that has crossed its
-     * limit and not yet been notified.
+     * 8.1 — raise any outstanding warning/breach alerts for these organs.
      *
-     * Idempotent by construction: the UPDATE that stamps breach_notified_at is
-     * conditional on it still being null, so if two requests observe the same
-     * breach at once, exactly one of them wins the row and sends the alert. The
-     * other sees 0 affected rows and stays quiet. No lock, no duplicate email.
+     * The actual logic lives in ColdChainMonitor, shared with the scheduled
+     * organs:check-cold-chain command. Doing it on read keeps the UI correct the
+     * instant anyone looks, without depending on the scheduler having run;
+     * doing it on a schedule makes the email arrive even when nobody is looking.
+     * Both routes are idempotent, so whichever gets there first sends the one
+     * alert and the other stays quiet.
      */
     private function sweepBreaches($organs): array
     {
-        $raised = [];
-
-        foreach ($organs as $organ) {
-            if (!$organ->needsBreachAlert()) continue;
-
-            $claimed = Organ::where('id', $organ->id)
-                ->whereNull('breach_notified_at')
-                ->update(['breach_notified_at' => now()]);
-
-            if (!$claimed) continue;   // another request already alerted on this one
-
-            $chain = $organ->coldChain();
-            $hours = round($chain['elapsed_minutes'] / 60, 1);
-            $limitH = round($chain['limit_minutes'] / 60, 1);
-
-            $title = "Cold ischemia limit exceeded — {$organ->reference}";
-            $body  = "The {$organ->organ_type} recorded as {$organ->reference} has exceeded its cold ischemia limit.\n\n"
-                   . "Elapsed: {$hours}h\nLimit: {$limitH}h\n"
-                   . "Recovered: " . optional($organ->recovered_at)->toDayDateTimeString() . "\n\n"
-                   . "This organ requires immediate review — viability may be compromised.";
-
-            // The hospital owning the organ is who must act. Its linked admins
-            // and doctors get the in-app flag through the same dashboard read.
-            $hospital = User::find($organ->hospital_id);
-            Notifier::notifyAndEmail($hospital, 'cold_chain_breach', $title, $body, [
-                'organ_id'  => $organ->id,
-                'reference' => $organ->reference,
-                'elapsed_minutes' => $chain['elapsed_minutes'],
-                'limit_minutes'   => $chain['limit_minutes'],
-            ]);
-
-            OrganEvent::record($organ->id, 'cold_chain_breach', 'Cold ischemia limit exceeded',
-                "Elapsed {$hours}h against a {$limitH}h limit.", null, $chain);
-
-            ActivityLogger::logActivity('organ_breach', 'Cold ischemia breach',
-                "{$organ->reference} exceeded its cold ischemia limit", ['user_id' => $organ->hospital_id]);
-
-            $organ->breach_notified_at = now();
-            $raised[] = $organ->reference;
-        }
-
-        return $raised;
+        return array_column($this->coldChain->sweep($organs), 'reference');
     }
 
     /** GET /api/organs — registry with live cold-chain state. */

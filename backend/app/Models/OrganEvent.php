@@ -18,7 +18,13 @@ class OrganEvent extends Model
         return ['meta' => 'array', 'occurred_at' => 'datetime'];
     }
 
-    /** Record a timeline entry. occurred_at defaults to now. */
+    /**
+     * Record a timeline entry. occurred_at defaults to now.
+     *
+     * The actor falls back to the logged-in user, but only in a web request —
+     * the scheduled cold-chain command writes events too, and there is no
+     * authenticated user to resolve there.
+     */
     public static function record(int $organId, string $type, string $title, ?string $description = null, ?int $actorId = null, array $meta = [], $occurredAt = null): self
     {
         return self::create([
@@ -26,7 +32,7 @@ class OrganEvent extends Model
             'event_type'  => $type,
             'title'       => $title,
             'description' => $description,
-            'actor_id'    => $actorId ?? optional(request()->user())->id,
+            'actor_id'    => $actorId ?? (app()->runningInConsole() ? null : optional(request()->user())->id),
             'meta'        => $meta ?: null,
             'occurred_at' => $occurredAt ?? now(),
         ]);

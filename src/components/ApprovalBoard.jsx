@@ -73,6 +73,7 @@ const ApprovalBoard = ({ currentUser }) => {
   const [filter, setFilter] = useState('open');
   const [board, setBoard] = useState({ data: [], counts: {}, read_only: false });
   const [metrics, setMetrics] = useState(null);
+  const [metricsLoaded, setMetricsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);   // full case detail
   const [busy, setBusy] = useState(false);
@@ -89,12 +90,7 @@ const ApprovalBoard = ({ currentUser }) => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [b, m] = await Promise.all([
-        getApprovalsViaAPI({ stage: filter, limit: 100 }),
-        getApprovalMetricsViaAPI(),
-      ]);
-      setBoard(b);
-      setMetrics(m);
+      setBoard(await getApprovalsViaAPI({ stage: filter, limit: 100 }));
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -103,6 +99,23 @@ const ApprovalBoard = ({ currentUser }) => {
   }, [filter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Metrics power the Performance tab only, so they are fetched when that tab is
+  // first opened rather than on every board load. The backend runs on PHP's
+  // single-threaded dev server, where one avoidable request delays every other
+  // one on the page — so not asking for data nobody is looking at is the single
+  // cheapest speed-up available here.
+  useEffect(() => {
+    if (tab !== 'performance' || metricsLoaded) return;
+    let cancelled = false;
+    getApprovalMetricsViaAPI()
+      .then(m => { if (!cancelled) { setMetrics(m); setMetricsLoaded(true); } })
+      .catch(e => toast(e.message, 'error'));
+    return () => { cancelled = true; };
+  }, [tab, metricsLoaded]);
+
+  // A completed approval changes the timings, so let the next visit refetch.
+  const invalidateMetrics = () => setMetricsLoaded(false);
 
   const openCase = async (id) => {
     try {
@@ -116,6 +129,47 @@ const ApprovalBoard = ({ currentUser }) => {
     }
   };
 
+  /**
+   * Ticking a checklist item applies immediately, then reconciles with the server.
+   *
+   * These are controlled checkboxes, so without an optimistic update the box does
+   * not move until the round trip completes — which reads as a broken control and
+   * invites repeat clicking. The local edit recomputes the same gate the server
+   * enforces (all required items ticked), so the approve button enables at the
+   * same instant the box does. Any failure rolls the whole panel back.
+   *
+   * Deliberately does not set `busy`: the checkboxes stay live so several items
+   * can be ticked in a row without waiting on each other.
+   */
+  const toggleChecklistItem = async (key, checked) => {
+    const previous = selected;
+
+    setSelected(s => {
+      const checklist = s.checklist.map(i => i.key === key ? {
+        ...i,
+        checked,
+        checked_by: checked ? (currentUser?.name ?? null) : null,
+        checked_at: checked ? new Date().toISOString() : null,
+      } : i);
+      const required = checklist.filter(i => i.required);
+      return {
+        ...s,
+        checklist,
+        checklist_done: required.filter(i => i.checked).length,
+        checklist_complete: required.every(i => i.checked),
+      };
+    });
+
+    try {
+      const r = await setApprovalChecklistItemViaAPI(previous.id, key, checked);
+      setSelected(r.data);
+      load();
+    } catch (e) {
+      setSelected(previous);
+      toast(e.message, 'error');
+    }
+  };
+
   /** Every mutation returns the refreshed case, so the panel updates without a refetch. */
   const act = async (fn, successMsg) => {
     setBusy(true);
@@ -124,6 +178,7 @@ const ApprovalBoard = ({ currentUser }) => {
       setSelected(r.data);
       if (successMsg) toast(successMsg, 'success');
       load();
+      invalidateMetrics();
       return true;
     } catch (e) {
       toast(e.message, 'error');
@@ -287,7 +342,7 @@ const ApprovalBoard = ({ currentUser }) => {
               rejectReason={rejectReason}
               setRejectReason={setRejectReason}
               onClose={() => setSelected(null)}
-              onToggleItem={(key, checked) => act(() => setApprovalChecklistItemViaAPI(selected.id, key, checked))}
+              onToggleItem={toggleChecklistItem}
               onSetMode={(v) => act(() => setApprovalModeViaAPI(selected.id, v), v ? 'Dual sign-off required' : 'Switched to single sign-off')}
               onDoctorApprove={() => act(() => doctorApproveCaseViaAPI(selected.id, notes), 'Clinical sign-off recorded')}
               onAdminConfirm={() => act(() => adminConfirmCaseViaAPI(selected.id, notes), 'Case approved — donor and recipient notified')}
@@ -384,7 +439,7 @@ const CaseDetail = ({
                 <input
                   type="checkbox"
                   checked={!!item.checked}
-                  disabled={readOnly || terminal || busy}
+                  disabled={readOnly || terminal}
                   onChange={e => onToggleItem(item.key, e.target.checked)}
                   style={{ marginTop: '2px' }}
                 />

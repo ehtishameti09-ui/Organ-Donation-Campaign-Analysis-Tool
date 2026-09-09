@@ -22,7 +22,8 @@ class Organ extends Model
         'allocation_decision_id', 'case_approval_id', 'donor_user_id', 'recipient_user_id',
         'hospital_id', 'organ_type', 'reference', 'status',
         'recovered_at', 'cold_ischemia_limit_minutes',
-        'transplanted_at', 'discarded_at', 'discard_reason', 'breach_notified_at',
+        'transplanted_at', 'discarded_at', 'discard_reason',
+        'breach_notified_at', 'warning_notified_at',
     ];
 
     protected function casts(): array
@@ -31,7 +32,8 @@ class Organ extends Model
             'recovered_at'       => 'datetime',
             'transplanted_at'    => 'datetime',
             'discarded_at'       => 'datetime',
-            'breach_notified_at' => 'datetime',
+            'breach_notified_at'  => 'datetime',
+            'warning_notified_at' => 'datetime',
         ];
     }
 
@@ -102,14 +104,6 @@ class Organ extends Model
             // ticking down right now.
             'is_live'           => !$stop,
         ];
-    }
-
-    /** True when this organ needs a one-off breach alert that has not been sent. */
-    public function needsBreachAlert(): bool
-    {
-        return !$this->breach_notified_at
-            && !$this->isTerminal()
-            && $this->coldChain()['state'] === 'breached';
     }
 
     public function events(): HasMany       { return $this->hasMany(OrganEvent::class)->orderBy('occurred_at'); }
