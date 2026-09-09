@@ -21,3 +21,7 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+
+# Compiled config/route/event caches. Machine-specific, and config.php contains
+# resolved .env values (APP_KEY, MAIL_PASSWORD) — it must never be committed.
+/bootstrap/cache/*.php

@@ -55,6 +55,14 @@ return [
     'url' => env('APP_URL', 'http://localhost'),
 
     /*
+     | Where the React frontend lives. Read through config, never env(), because
+     | env() returns null once the config is cached -- and app code that calls
+     | env() directly is the classic way a cached-config deployment silently
+     | starts generating broken links.
+     */
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------

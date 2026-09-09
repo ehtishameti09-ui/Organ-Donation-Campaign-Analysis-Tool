@@ -229,7 +229,7 @@ class EmailVerificationController extends Controller
      */
     private function sendVerificationEmail(string $email, string $token): ?string
     {
-        $base = rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        $base = rtrim(config('app.frontend_url'), '/');
         $yesUrl = $base.'/verify-email?token='.$token.'&action=yes';
         $noUrl  = $base.'/verify-email?token='.$token.'&action=no';
         $appName = config('app.name', 'Organ Donation Campaign Analysis Tool');

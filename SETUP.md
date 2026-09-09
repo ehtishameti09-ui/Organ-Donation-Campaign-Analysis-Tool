@@ -590,3 +590,130 @@ Internal use only. All rights reserved.
 
 **Last Updated**: May 2026
 **Version**: 1.0 (Production Ready)
+
+---
+
+# Running the backend (updated)
+
+## The API is now served by Apache, not `php artisan serve`
+
+`php artisan serve` is single-threaded on Windows — `PHP_CLI_SERVER_WORKERS`
+needs `fork()`, which Windows does not have — so the app's parallel requests
+were handled strictly one at a time. With OPcache also disabled, each request
+cost ~1.5s and the dashboard alone took ~13 seconds to settle.
+
+Apache serves the same app on the **same port 8000**, so `APP_URL`, the CORS
+config and the frontend's `API_BASE` are all unchanged.
+
+Measured, same machine, same code:
+
+| | artisan serve | Apache + OPcache |
+|---|---|---|
+| Warm API request | ~1.5s | **~0.14s** |
+| Dashboard settle | ~13s | **~4.1s** |
+| Page open | ~5s | **~0.9s** |
+| 60 concurrent requests | serialized | 60 × HTTP 200, 0 errors |
+
+### To start it
+Open the **XAMPP Control Panel** and start **Apache** and **MySQL**.
+Then `npm run dev` in the project root for the frontend.
+
+Do **not** also run `php artisan serve` — it will fail with "port already in use".
+
+### What was changed outside this repo
+| File | Change | Backup |
+|---|---|---|
+| `C:\xampp\apache\conf\httpd.conf` | added `Listen 8000` | `httpd.conf.odcat-backup` |
+| `C:\xampp\apache\conf\extra\httpd-vhosts.conf` | added the ODCAT vhost | `httpd-vhosts.conf.odcat-backup` |
+| `C:\xampp\php\php.ini` | enabled OPcache (incl. CLI) | `php.ini.odcat-backup` |
+
+**To revert:** stop Apache, restore those three `.odcat-backup` files, and go
+back to `php artisan serve`.
+
+OPcache is configured with `validate_timestamps=1` and `revalidate_freq=0`, so
+code edits are picked up immediately — it removes the compile cost, not the
+ability to develop.
+
+---
+
+## ⚠️ Cached config — read this before editing `.env`
+
+Apache runs a **threaded** MPM. PHP's environment handling is process-global and
+races under threads, which produced intermittent 500s where Laravel fell back to
+its default SQLite connection. The fix is `php artisan config:cache`: with config
+cached, Laravel never reads `.env` at runtime at all, so there is nothing to race.
+
+The consequence you must remember:
+
+> **After editing `.env`, run `php artisan config:cache` or the change is ignored.**
+
+To go back to reading `.env` live: `php artisan config:clear` (but then the race
+returns under Apache — clear it only while running `artisan serve`).
+
+---
+
+## Running tests — use `composer run test`
+
+```bash
+composer run test
+```
+
+This clears the cached config, runs the suite, then re-caches. Use it rather
+than `php artisan test` directly.
+
+**Why this matters.** `phpunit.xml` points the suite at `odcat_backend_test`, but
+`<env>` entries in `phpunit.xml` are **silently ignored when config is cached** —
+cached config never consults the environment. In that state `RefreshDatabase`
+would drop every table in the real `odcat_backend`.
+
+`tests/TestCase.php` now has a hard interlock: it checks the connected database
+in `setUpTraits()` — after the app boots but *before* any trait touches the
+database — and aborts with a clear message if it is not a `*_test` database.
+The check must live there, not in `setUp()`: `RefreshDatabase` drops the tables
+*inside* `parent::setUp()`, so a guard placed after that call reports the damage
+instead of preventing it.
+
+---
+
+## Cold chain alerting needs the scheduler running
+
+Module 8's unattended alerts come from `organs:check-cold-chain`, which the
+scheduler runs every five minutes. Something must actually drive the scheduler:
+
+```bash
+php artisan schedule:work
+```
+
+Leave that running in a terminal. For a setup that survives reboots, add a
+Windows Task Scheduler entry running `php artisan schedule:run` every minute
+from the `backend` directory instead.
+
+Without it the alerts still appear in the UI the moment anyone opens the organ
+registry (the state is derived on read), but **no email is sent to an empty
+room** — which is the whole point of the scheduled sweep.
+
+Check it by hand any time:
+
+```bash
+php artisan organs:check-cold-chain --dry-run
+```
+
+---
+
+## Backups — please set one up
+
+There is currently **no database backup**. MySQL binary logging is off
+(`log_bin=OFF`), so there is no point-in-time recovery either: if the database
+is lost, it is lost. `spatie/laravel-backup` is already installed.
+
+A manual dump before anything risky:
+
+```bash
+"C:\xampp\mysql\bin\mysqldump.exe" -u root -P 3307 odcat_backend > backup.sql
+```
+
+Restore with:
+
+```bash
+"C:\xampp\mysql\bin\mysql.exe" -u root -P 3307 odcat_backend < backup.sql
+```
