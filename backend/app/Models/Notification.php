@@ -11,13 +11,14 @@ class Notification extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'type', 'title', 'message', 'data', 'is_read', 'read_at',
+        'user_id', 'type', 'title', 'message', 'data', 'is_persistent', 'is_read', 'read_at',
     ];
 
     protected function casts(): array
     {
         return [
             'data' => 'array',
+            'is_persistent' => 'boolean',
             'is_read' => 'boolean',
             'read_at' => 'datetime',
         ];

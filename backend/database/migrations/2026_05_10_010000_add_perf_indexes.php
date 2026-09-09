@@ -24,6 +24,12 @@ return new class extends Migration
     public function down(): void
     {
         $this->dropIndexIfExists('users', 'users_role_status_pref_hospital_idx');
+
+        // alloc_runs_donor_mode_idx leads with donor_user_id, which carries a
+        // foreign key. MySQL requires every FK column to keep a supporting index
+        // and refuses to drop the last one (error 1553), so this rollback failed
+        // outright until a replacement single-column index was put in first.
+        $this->addIndexIfMissing('allocation_runs', ['donor_user_id'], 'allocation_runs_donor_user_id_foreign');
         $this->dropIndexIfExists('allocation_runs', 'alloc_runs_donor_mode_idx');
         $this->dropIndexIfExists('allocation_runs', 'alloc_runs_mode_created_idx');
         $this->dropIndexIfExists('allocation_decisions', 'alloc_dec_hospital_rej_status_idx');

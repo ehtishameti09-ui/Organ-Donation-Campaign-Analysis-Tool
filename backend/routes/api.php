@@ -18,6 +18,9 @@ use App\Http\Controllers\ActivityController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\AllocationController;
 use App\Http\Controllers\AdminRequestController;
+use App\Http\Controllers\CaseApprovalController;
+use App\Http\Controllers\OrganController;
+use App\Http\Controllers\SurgeryController;
 
 // Public routes (no authentication required)
 Route::post('/register', [AuthController::class, 'register'])->name('register');
@@ -152,6 +155,41 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::post('/admin-requests/{id}/approve',         [AdminRequestController::class, 'approve']);
     Route::post('/admin-requests/{id}/reject',          [AdminRequestController::class, 'reject']);
     Route::delete('/admin-requests/{id}',               [AdminRequestController::class, 'cancel']);
+
+    // Module 7 — Hospital Approval Board.
+    // Deliberately NOT inside the role:hospital|admin group: doctors provide the
+    // clinical sign-off and super_admin/auditor need read-only oversight for the
+    // cross-hospital comparison. The controller scopes every call by hospital and
+    // enforces which role may perform which stage.
+    Route::get('/approvals',                     [CaseApprovalController::class, 'index'])->name('approvals.index');
+    Route::get('/approvals/metrics',             [CaseApprovalController::class, 'metrics'])->name('approvals.metrics');
+    Route::get('/approvals/{id}',                [CaseApprovalController::class, 'show'])->whereNumber('id')->name('approvals.show');
+    Route::post('/approvals/{id}/checklist',     [CaseApprovalController::class, 'updateChecklist'])->whereNumber('id')->name('approvals.checklist');
+    Route::patch('/approvals/{id}/mode',         [CaseApprovalController::class, 'setMode'])->whereNumber('id')->name('approvals.mode');
+    Route::post('/approvals/{id}/doctor-approve',[CaseApprovalController::class, 'doctorApprove'])->whereNumber('id')->name('approvals.doctor-approve');
+    Route::post('/approvals/{id}/admin-confirm', [CaseApprovalController::class, 'adminConfirm'])->whereNumber('id')->name('approvals.admin-confirm');
+    Route::post('/approvals/{id}/reject',        [CaseApprovalController::class, 'reject'])->whereNumber('id')->name('approvals.reject');
+
+    // Module 8 — Organ Lifecycle & Cold Chain. Same scoping contract as the
+    // approval board: the owning hospital (and its linked admins/doctors) can
+    // act; super_admin and auditor observe read-only.
+    Route::get('/organs',                    [OrganController::class, 'index'])->name('organs.index');
+    Route::get('/organs/metrics',            [OrganController::class, 'metrics'])->name('organs.metrics');
+    Route::post('/organs',                   [OrganController::class, 'store'])->name('organs.store');
+    Route::get('/organs/{id}',               [OrganController::class, 'show'])->whereNumber('id')->name('organs.show');
+    Route::patch('/organs/{id}/status',      [OrganController::class, 'updateStatus'])->whereNumber('id')->name('organs.status');
+    Route::post('/organs/{id}/events',       [OrganController::class, 'addEvent'])->whereNumber('id')->name('organs.events');
+
+    // Module 9 — Surgery Scheduling & Resource Allocation. Booking safety is
+    // enforced in SurgeryScheduler (row locks + overlap check in one transaction).
+    Route::get('/surgery/resources',        [SurgeryController::class, 'resources'])->name('surgery.resources');
+    Route::post('/surgery/resources',       [SurgeryController::class, 'storeResource'])->name('surgery.resources.store');
+    Route::patch('/surgery/resources/{id}', [SurgeryController::class, 'updateResource'])->whereNumber('id')->name('surgery.resources.update');
+    Route::get('/surgery/bookings',         [SurgeryController::class, 'bookings'])->name('surgery.bookings');
+    Route::post('/surgery/bookings',        [SurgeryController::class, 'book'])->name('surgery.book');
+    Route::patch('/surgery/bookings/{id}',  [SurgeryController::class, 'updateBooking'])->whereNumber('id')->name('surgery.bookings.update');
+    Route::get('/surgery/calendar',         [SurgeryController::class, 'month'])->name('surgery.calendar');
+    Route::get('/surgery/utilization',      [SurgeryController::class, 'utilization'])->name('surgery.utilization');
 
     // Admin-only routes
     Route::middleware(['role:super_admin|admin'])->group(function () {

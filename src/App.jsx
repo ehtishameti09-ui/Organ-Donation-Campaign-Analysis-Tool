@@ -19,6 +19,9 @@ const AuditorDashboard   = lazy(() => import('./components/AuditorDashboard'));
 const AllocationEngine   = lazy(() => import('./components/AllocationEngine'));
 const MatchingGovernance = lazy(() => import('./components/MatchingGovernance'));
 const FairnessLab        = lazy(() => import('./components/FairnessLab'));
+const ApprovalBoard      = lazy(() => import('./components/ApprovalBoard'));
+const OrganLifecycle     = lazy(() => import('./components/OrganLifecycle'));
+const SurgerySchedule    = lazy(() => import('./components/SurgerySchedule'));
 const AdminRequests      = lazy(() => import('./components/AdminRequests'));
 const HospitalRegistrationForm = lazy(() => import('./components/HospitalRegistrationForm'));
 const VerifyEmail = lazy(() => import('./components/VerifyEmail'));
@@ -391,6 +394,10 @@ function App() {
     if (currentUser.role === 'super_admin') {
       items.push({ id: 'users', label: 'Hospital Registrations', icon: 'users' });
       items.push({ id: 'admin-requests', label: 'Admin Management', icon: 'inbox' });
+      // Read-only oversight across every hospital's board (Module 7.4 comparison).
+      items.push({ id: 'approvals', label: 'Approval Board', icon: 'checkCircle' });
+      items.push({ id: 'organs', label: 'Organ Lifecycle', icon: 'snowflake' });
+      items.push({ id: 'surgery', label: 'Surgery Schedule', icon: 'calendar' });
     }
 
     if (currentUser.role === 'admin') {
@@ -403,6 +410,9 @@ function App() {
         items.push({ id: 'allocation', label: 'Allocation Engine', icon: 'cpu' });
         items.push({ id: 'matching', label: 'Matching & Governance', icon: 'shield' });
         items.push({ id: 'fairness', label: 'Fairness Lab', icon: 'scale' });
+        items.push({ id: 'approvals', label: 'Approval Board', icon: 'checkCircle' });
+      items.push({ id: 'organs', label: 'Organ Lifecycle', icon: 'snowflake' });
+      items.push({ id: 'surgery', label: 'Surgery Schedule', icon: 'calendar' });
       }
     }
 
@@ -413,10 +423,17 @@ function App() {
       items.push({ id: 'allocation', label: 'Allocation Engine', icon: 'cpu' });
       items.push({ id: 'matching', label: 'Matching & Governance', icon: 'shield' });
       items.push({ id: 'fairness', label: 'Fairness Lab', icon: 'scale' });
+      items.push({ id: 'approvals', label: 'Approval Board', icon: 'checkCircle' });
+      items.push({ id: 'organs', label: 'Organ Lifecycle', icon: 'snowflake' });
+      items.push({ id: 'surgery', label: 'Surgery Schedule', icon: 'calendar' });
     }
 
     if (currentUser.role === 'doctor') {
       items.push({ id: 'doctor-review', label: 'Case Reviews', icon: 'clipboard' });
+      // Module 7: the doctor supplies the clinical sign-off, so the board is theirs too.
+      items.push({ id: 'approvals', label: 'Approval Board', icon: 'checkCircle' });
+      items.push({ id: 'organs', label: 'Organ Lifecycle', icon: 'snowflake' });
+      items.push({ id: 'surgery', label: 'Surgery Schedule', icon: 'calendar' });
     }
 
     if (currentUser.role === 'data_entry') {
@@ -425,6 +442,9 @@ function App() {
 
     if (currentUser.role === 'auditor') {
       items.push({ id: 'audit', label: 'Audit Dashboard', icon: 'shield' });
+      items.push({ id: 'approvals', label: 'Approval Board', icon: 'checkCircle' });
+      items.push({ id: 'organs', label: 'Organ Lifecycle', icon: 'snowflake' });
+      items.push({ id: 'surgery', label: 'Surgery Schedule', icon: 'calendar' });
     }
 
     // Settings for all users
@@ -458,6 +478,24 @@ function App() {
       case 'matching':
       case 'fairness':          return (currentUser.role === 'hospital' && currentUser.status === 'approved') ||
                                        (currentUser.role === 'admin' && !!currentUser.linkedHospitalId);
+      // Module 7 — hospital + linked admin act; doctor signs; super_admin/auditor observe.
+      case 'approvals':         return (currentUser.role === 'hospital' && currentUser.status === 'approved') ||
+                                       (currentUser.role === 'admin' && !!currentUser.linkedHospitalId) ||
+                                       currentUser.role === 'doctor' ||
+                                       currentUser.role === 'super_admin' ||
+                                       currentUser.role === 'auditor';
+      // Module 8 — same audience and scoping contract as the approval board.
+      case 'organs':            return (currentUser.role === 'hospital' && currentUser.status === 'approved') ||
+                                       (currentUser.role === 'admin' && !!currentUser.linkedHospitalId) ||
+                                       currentUser.role === 'doctor' ||
+                                       currentUser.role === 'super_admin' ||
+                                       currentUser.role === 'auditor';
+      // Module 9 — same audience and scoping contract as Modules 7 and 8.
+      case 'surgery':           return (currentUser.role === 'hospital' && currentUser.status === 'approved') ||
+                                       (currentUser.role === 'admin' && !!currentUser.linkedHospitalId) ||
+                                       currentUser.role === 'doctor' ||
+                                       currentUser.role === 'super_admin' ||
+                                       currentUser.role === 'auditor';
       case 'settings':          return true;
       case 'complete-registration': return currentUser.role === 'donor' || currentUser.role === 'recipient';
       case 'complete-hospital-registration': return currentUser.role === 'hospital';
@@ -480,6 +518,9 @@ function App() {
       { id: 'allocation',      el: <AllocationEngine currentUser={currentUser} /> },
       { id: 'matching',        el: <MatchingGovernance currentUser={currentUser} /> },
       { id: 'fairness',        el: <FairnessLab currentUser={currentUser} /> },
+      { id: 'approvals',       el: <ApprovalBoard currentUser={currentUser} /> },
+      { id: 'organs',          el: <OrganLifecycle currentUser={currentUser} /> },
+      { id: 'surgery',         el: <SurgerySchedule currentUser={currentUser} /> },
     ];
 
     // Settings + Wizard remount per session (have state tied to context like settingsTab / wizard mode) — render only when active
@@ -559,6 +600,9 @@ function App() {
       allocation: { title: 'Allocation Engine', sub: 'Explainable, version-controlled organ allocation with simulation' },
       matching:   { title: 'Matching & Governance', sub: 'Compatibility rules, hospital distances, override accountability' },
       fairness:   { title: 'Fairness Lab', sub: 'Auto-running fairness analysis, sensitivity reports, bias detection' },
+      surgery:    { title: 'Surgery Scheduling & Resources', sub: 'Conflict-free theatre, surgeon and ICU booking with utilization analytics' },
+      organs:     { title: 'Organ Lifecycle & Cold Chain', sub: 'Live cold ischemia monitoring, utilization analytics, and per-organ timelines' },
+      approvals:  { title: 'Approval Board', sub: 'Checklist-gated, sequential sign-off between allocation and transplant' },
       'admin-requests': { title: 'Admin Management', sub: 'Request, review, and manage hospital admin accounts.' },
       settings: { title: 'Account Settings', sub: 'Update your profile and preferences' },
       'complete-registration': { title: 'Complete Registration', sub: 'Sign the consent form, submit clinical info, and upload documents' },
@@ -759,6 +803,9 @@ const getNavIcon = (iconName) => {
     cpu: <><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></>,
     inbox: <><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>,
     scale: <><path d="M12 3v18"/><path d="M5 8h14"/><path d="M5 8 2 14h6L5 8z"/><path d="M19 8l-3 6h6l-3-6z"/><path d="M5 21h14"/></>,
+    calendar: <><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></>,
+    snowflake: <><line x1="12" y1="2" x2="12" y2="22"/><line x1="3" y1="7" x2="21" y2="17"/><line x1="21" y1="7" x2="3" y2="17"/><polyline points="9 4 12 7 15 4"/><polyline points="9 20 12 17 15 20"/></>,
+    checkCircle: <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
   };
   return icons[iconName] || null;

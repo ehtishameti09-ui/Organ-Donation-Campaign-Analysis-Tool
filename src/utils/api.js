@@ -1070,6 +1070,160 @@ export const downloadAllocationCsv = async (runId) => {
   URL.revokeObjectURL(url);
 };
 
+// ===== Module 7 — Hospital Approval Board =====
+
+const approvalsBase = `${API_BASE}/approvals`;
+
+// Shared unwrap: the approval endpoints all answer with either { data } on
+// success or { message } on a governance rejection (422). Surfacing that
+// message verbatim matters — it is the checklist/sequence rule explaining
+// exactly why the action was refused.
+const approvalRequest = async (path, { method = 'GET', body = null, fallback = 'Request failed' } = {}) => {
+  const r = await fetch(`${approvalsBase}${path}`, {
+    method,
+    headers: getHeaders(true),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.message || fallback);
+  }
+  return await r.json();
+};
+
+export const getApprovalsViaAPI = async ({ stage = null, page = 1, limit = 20 } = {}) => {
+  const qs = new URLSearchParams({ page, limit });
+  if (stage) qs.set('stage', stage);
+  return approvalRequest(`?${qs}`, { fallback: 'Failed to load the approval board' });
+};
+
+export const getApprovalViaAPI = async (id) =>
+  approvalRequest(`/${id}`, { fallback: 'Failed to load that case' });
+
+export const getApprovalMetricsViaAPI = async () =>
+  approvalRequest('/metrics', { fallback: 'Failed to load approval metrics' });
+
+export const setApprovalChecklistItemViaAPI = async (id, key, checked) =>
+  approvalRequest(`/${id}/checklist`, {
+    method: 'POST', body: { key, checked }, fallback: 'Failed to update the checklist',
+  });
+
+export const setApprovalModeViaAPI = async (id, requiresMultiUser) =>
+  approvalRequest(`/${id}/mode`, {
+    method: 'PATCH', body: { requires_multi_user: requiresMultiUser }, fallback: 'Failed to change approval mode',
+  });
+
+export const doctorApproveCaseViaAPI = async (id, notes = '') =>
+  approvalRequest(`/${id}/doctor-approve`, {
+    method: 'POST', body: { notes }, fallback: 'Failed to record clinical sign-off',
+  });
+
+export const adminConfirmCaseViaAPI = async (id, notes = '') =>
+  approvalRequest(`/${id}/admin-confirm`, {
+    method: 'POST', body: { notes }, fallback: 'Failed to confirm the case',
+  });
+
+export const rejectCaseViaAPI = async (id, reason) =>
+  approvalRequest(`/${id}/reject`, {
+    method: 'POST', body: { reason }, fallback: 'Failed to reject the case',
+  });
+
+// ===== Module 8 — Organ Lifecycle & Cold Chain =====
+
+const organsBase = `${API_BASE}/organs`;
+
+const organRequest = async (path, { method = 'GET', body = null, fallback = 'Request failed' } = {}) => {
+  const r = await fetch(`${organsBase}${path}`, {
+    method,
+    headers: getHeaders(true),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error(e.errors ? Object.values(e.errors).flat()[0] : (e.message || fallback));
+  }
+  return await r.json();
+};
+
+export const getOrgansViaAPI = async ({ status = null, alert = null } = {}) => {
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (alert) qs.set('alert', alert);
+  const q = qs.toString();
+  return organRequest(q ? `?${q}` : '', { fallback: 'Failed to load the organ registry' });
+};
+
+export const getOrganViaAPI = async (id) =>
+  organRequest(`/${id}`, { fallback: 'Failed to load that organ' });
+
+export const getOrganMetricsViaAPI = async () =>
+  organRequest('/metrics', { fallback: 'Failed to load organ metrics' });
+
+export const registerOrganViaAPI = async (payload) =>
+  organRequest('', { method: 'POST', body: payload, fallback: 'Failed to register the organ' });
+
+export const updateOrganStatusViaAPI = async (id, status, { reason = null, note = null } = {}) =>
+  organRequest(`/${id}/status`, {
+    method: 'PATCH', body: { status, reason, note }, fallback: 'Failed to update organ status',
+  });
+
+export const addOrganEventViaAPI = async (id, title, description = '') =>
+  organRequest(`/${id}/events`, {
+    method: 'POST', body: { title, description }, fallback: 'Failed to add the timeline entry',
+  });
+
+// ===== Module 9 — Surgery Scheduling & Resource Allocation =====
+
+const surgeryBase = `${API_BASE}/surgery`;
+
+// A booking rejection carries a `conflicts` array describing exactly which
+// resource clashed and when. That detail is attached to the thrown Error so the
+// calendar can render it rather than just showing "slot unavailable".
+const surgeryRequest = async (path, { method = 'GET', body = null, fallback = 'Request failed' } = {}) => {
+  const r = await fetch(`${surgeryBase}${path}`, {
+    method,
+    headers: getHeaders(true),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    const err = new Error(e.errors ? Object.values(e.errors).flat()[0] : (e.message || fallback));
+    if (e.conflicts) err.conflicts = e.conflicts;
+    throw err;
+  }
+  return await r.json();
+};
+
+export const getSurgicalResourcesViaAPI = async () =>
+  surgeryRequest('/resources', { fallback: 'Failed to load resources' });
+
+export const createSurgicalResourceViaAPI = async (payload) =>
+  surgeryRequest('/resources', { method: 'POST', body: payload, fallback: 'Failed to add resource' });
+
+export const updateSurgicalResourceViaAPI = async (id, payload) =>
+  surgeryRequest(`/resources/${id}`, { method: 'PATCH', body: payload, fallback: 'Failed to update resource' });
+
+export const getSurgeryCalendarViaAPI = async (month = null) =>
+  surgeryRequest(month ? `/calendar?month=${month}` : '/calendar', { fallback: 'Failed to load the calendar' });
+
+export const getSurgeryBookingsViaAPI = async ({ from = null, to = null, status = null } = {}) => {
+  const qs = new URLSearchParams();
+  if (from) qs.set('from', from);
+  if (to) qs.set('to', to);
+  if (status) qs.set('status', status);
+  const q = qs.toString();
+  return surgeryRequest(`/bookings${q ? `?${q}` : ''}`, { fallback: 'Failed to load bookings' });
+};
+
+export const bookSurgeryViaAPI = async (payload) =>
+  surgeryRequest('/bookings', { method: 'POST', body: payload, fallback: 'Failed to book the surgery' });
+
+export const updateSurgeryBookingViaAPI = async (id, status, reason = null) =>
+  surgeryRequest(`/bookings/${id}`, { method: 'PATCH', body: { status, reason }, fallback: 'Failed to update the booking' });
+
+export const getSurgeryUtilizationViaAPI = async (days = 30) =>
+  surgeryRequest(`/utilization?days=${days}`, { fallback: 'Failed to load utilization analytics' });
+
 export default {
   registerViaAPI,
   loginViaAPI,
@@ -1147,6 +1301,31 @@ export default {
   getSensitivityReportViaAPI,
   runAllocationViaAPI,
   simulateAllocationViaAPI,
+  // Module 9 — Surgery Scheduling
+  bookSurgeryViaAPI,
+  createSurgicalResourceViaAPI,
+  getSurgeryBookingsViaAPI,
+  getSurgeryCalendarViaAPI,
+  getSurgeryUtilizationViaAPI,
+  getSurgicalResourcesViaAPI,
+  updateSurgeryBookingViaAPI,
+  updateSurgicalResourceViaAPI,
+  // Module 8 — Organ Lifecycle
+  addOrganEventViaAPI,
+  getOrganMetricsViaAPI,
+  getOrganViaAPI,
+  getOrgansViaAPI,
+  registerOrganViaAPI,
+  updateOrganStatusViaAPI,
+  // Module 7 — Approval Board
+  adminConfirmCaseViaAPI,
+  doctorApproveCaseViaAPI,
+  getApprovalMetricsViaAPI,
+  getApprovalViaAPI,
+  getApprovalsViaAPI,
+  rejectCaseViaAPI,
+  setApprovalChecklistItemViaAPI,
+  setApprovalModeViaAPI,
   // Admin requests
   approveAdminRequestViaAPI,
   cancelAdminRequestViaAPI,

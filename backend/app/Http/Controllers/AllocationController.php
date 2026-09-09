@@ -6,6 +6,7 @@ use App\Models\AllocationDecision;
 use App\Models\AllocationPolicy;
 use App\Models\AllocationRun;
 use App\Models\BloodCompatibility;
+use App\Models\CaseApproval;
 use App\Models\DonorProfile;
 use App\Models\HospitalProfile;
 use App\Models\RecipientProfile;
@@ -392,7 +393,7 @@ class AllocationController extends Controller
                 ]);
             }
 
-            return AllocationDecision::create([
+            $decision = AllocationDecision::create([
                 'allocation_run_id'     => $run->id,
                 'selected_recipient_id' => $data['selected_recipient_id'],
                 'selected_rank'         => $data['selected_rank'],
@@ -404,6 +405,16 @@ class AllocationController extends Controller
                 'status'                => 'confirmed',
                 'notes'                 => $data['notes'] ?? null,
             ]);
+
+            // Module 7 — a confirmed match is not yet a cleared transplant. Open its
+            // approval case in the same transaction so a decision can never exist
+            // without the governance record that gates it. Rejections are already
+            // terminal here and get no board entry.
+            if (!$isRejected) {
+                CaseApprovalController::openFor($decision, $run->donor_user_id, $run->organ);
+            }
+
+            return $decision;
         });
 
         // Bust dashboard caches so stat counts update immediately for everyone

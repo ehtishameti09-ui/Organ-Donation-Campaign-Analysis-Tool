@@ -46,12 +46,16 @@ class PurgeDailyActivity extends Command
             runId: $runId,
         );
 
+        // Governance notifications (approval outcomes, cold-chain breaches) are
+        // flagged is_persistent and deliberately survive the purge — they are a
+        // record the donor/recipient must still be able to read, not feed chatter.
         $notificationsPurged = $this->purge(
             table: 'notifications',
             label: 'notification',
             cutoff: $cutoff,
             archive: $archive,
             runId: $runId,
+            keep: fn ($q) => $q->where('is_persistent', false),
         );
 
         $summary = "Daily purge complete — archived & deleted {$activitiesPurged} activity row(s) and {$notificationsPurged} notification row(s) older than {$cutoff->toDateTimeString()}.";
@@ -67,13 +71,18 @@ class PurgeDailyActivity extends Command
      * immutability guard — that guard protects against accidental edits/deletes
      * in normal request code, while this scheduled, archive-first prune is the
      * one sanctioned path that is allowed to remove old feed rows.
+     *
+     * $keep receives the builder so a caller can exclude rows that must never be
+     * purged (see the is_persistent notifications above).
      */
-    private function purge(string $table, string $label, Carbon $cutoff, $archive, string $runId): int
+    private function purge(string $table, string $label, Carbon $cutoff, $archive, string $runId, ?callable $keep = null): int
     {
         $total = 0;
 
-        DB::table($table)
-            ->where('created_at', '<', $cutoff)
+        $query = DB::table($table)->where('created_at', '<', $cutoff);
+        if ($keep) $keep($query);
+
+        $query
             ->orderBy('id')
             ->chunkById(500, function ($rows) use ($table, $label, $archive, $runId, &$total) {
                 $ids = [];
