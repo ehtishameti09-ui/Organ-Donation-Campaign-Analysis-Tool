@@ -74,6 +74,17 @@ class UserController extends Controller
             'linked_hospital_id' => ['nullable', 'integer', 'exists:users,id'],
         ]);
 
+        // Minting administrators is a governance action, not an operational one.
+        // A hospital-linked admin creating further admins sidesteps the whole
+        // AdminRequest -> super admin approval workflow this system is built on,
+        // so it is restricted to the super admin and to general (unlinked) admins.
+        $actor = $request->user();
+        if ($actor->role === 'admin' && !empty($actor->linked_hospital_id)) {
+            return response()->json([
+                'message' => 'Hospital-linked admins cannot create admin accounts. Submit an admin request for the super admin to review.',
+            ], 403);
+        }
+
         // Bias prevention: super_admin cannot unilaterally create hospital-linked admins.
         // Those must come through the admin-request approval flow initiated by the hospital itself.
         if (!empty($data['linked_hospital_id'])) {
@@ -237,6 +248,35 @@ class UserController extends Controller
             'licenseNumber.regex'      => 'License number must follow format like SHC-AKU-1985-LIC (uppercase code + dashes/numbers).',
         ]);
 
+        // ---------------------------------------------------------------- authorization
+        //
+        // This route sits in the plain authenticated group, because every user
+        // edits their own profile through it. It previously performed no
+        // actor-side check at all, while accepting `role` and
+        // `linked_hospital_id` — so any logged-in account could promote itself
+        // to super_admin, or edit anybody else's record, with a single PATCH.
+        //
+        // Two separate rules apply:
+        //   1. Role and hospital linkage ARE the privilege model. Only a super
+        //      admin may ever change them, on anyone, including themselves.
+        //   2. Editing your own profile is fine; editing someone else's needs
+        //      the same hospital scoping that ban/delete/restore use.
+        $actor = $request->user();
+
+        foreach (['role', 'linked_hospital_id'] as $privilegedField) {
+            if (array_key_exists($privilegedField, $data) && $actor->role !== 'super_admin') {
+                return response()->json([
+                    'message' => 'Only the super admin can change a user\'s role or hospital assignment.',
+                ], 403);
+            }
+        }
+
+        if ($actor->id !== $user->id) {
+            if ($authError = $this->checkUserActionPermission($actor, $user, 'edit')) {
+                return response()->json(['message' => $authError], 403);
+            }
+        }
+
         // Pull out hospital-profile fields and apply only user fields to the user model
         $hospitalProfileFlat = array_filter([
             'hospital_name'       => $data['hospitalName']       ?? null,
@@ -312,8 +352,8 @@ class UserController extends Controller
         }
         ActivityLogger::logAction($user->id, 'user_updated', 'User profile updated', $data, $request->user()->id);
 
-        // Hospital-scoped audit trail (visible in Recent Activity for the relevant hospital)
-        $actor = $request->user();
+        // Hospital-scoped audit trail (visible in Recent Activity for the relevant hospital).
+        // $actor is already resolved by the authorization block above.
         $scopeHospital = $user->linked_hospital_id ?? $user->preferred_hospital_id ?? ($actor->role === 'hospital' ? $actor->id : $actor->linked_hospital_id);
         if ($scopeHospital) {
             ActivityLogger::logActivity(
@@ -343,9 +383,6 @@ class UserController extends Controller
             'category' => ['required', 'string'],
         ]);
 
-        if ($user->isSuperAdmin()) {
-            return response()->json(['message' => 'Cannot delete super admin.'], 403);
-        }
         if ($request->user()->id === $user->id) {
             return response()->json(['message' => 'You cannot delete your own account from here. Use Account Settings.'], 403);
         }
@@ -360,6 +397,14 @@ class UserController extends Controller
                     'message' => 'Admins can only be deleted by the super admin or by the hospital they are linked to.',
                 ], 403);
             }
+        }
+
+        // Hospital scoping. Deleting is the most destructive action here, yet it
+        // was the only one that never consulted this guard — unban() and restore()
+        // did. The REVERSING actions were scoped while the destructive ones were
+        // not, which let any hospital admin delete any patient in the system.
+        if ($authError = $this->checkUserActionPermission($request->user(), $user, 'delete')) {
+            return response()->json(['message' => $authError], 403);
         }
 
         $user->update([
@@ -401,9 +446,6 @@ class UserController extends Controller
             'duration' => ['nullable', 'integer', 'min:1'], // days for temporary
         ]);
 
-        if ($user->isSuperAdmin()) {
-            return response()->json(['message' => 'Cannot ban super admin.'], 403);
-        }
         if ($request->user()->id === $user->id) {
             return response()->json(['message' => 'You cannot ban your own account.'], 403);
         }
@@ -418,6 +460,13 @@ class UserController extends Controller
                     'message' => 'Admins can only be banned by the super admin or by the hospital they are linked to.',
                 ], 403);
             }
+        }
+
+        // Hospital scoping — see the matching note in destroy(). Banning a user
+        // at another hospital is not a thing any hospital admin should be able
+        // to do, and until now nothing stopped them.
+        if ($authError = $this->checkUserActionPermission($request->user(), $user, 'ban')) {
+            return response()->json(['message' => $authError], 403);
         }
 
         $expiry = $data['ban_type'] === 'temporary' && !empty($data['duration'])
@@ -706,8 +755,7 @@ class UserController extends Controller
         if ($actor->role === 'hospital') {
             $belongsToThisHospital =
                 (int) $target->linked_hospital_id === (int) $actor->id ||
-                (int) $target->preferred_hospital_id === (int) $actor->id ||
-                (int) $target->id === (int) $actor->id; // self check already above, but harmless
+                (int) $target->preferred_hospital_id === (int) $actor->id;
             return $belongsToThisHospital
                 ? null
                 : "You can only {$verb} users tied to your hospital.";
@@ -717,13 +765,30 @@ class UserController extends Controller
             if ($target->role === 'admin') {
                 return "Admins cannot {$verb} other admins. Only the super admin or the owning hospital can do that.";
             }
-            // Optional scope check: admin can only act within its own hospital
-            if ($actor->linked_hospital_id) {
-                $targetHospital = $target->linked_hospital_id ?? $target->preferred_hospital_id;
-                if ($targetHospital && (int) $targetHospital !== (int) $actor->linked_hospital_id) {
-                    return "You can only {$verb} users at your assigned hospital.";
-                }
+
+            // An admin with no hospital has no scope to act within, so it may not
+            // act on users at all. This used to be `if ($actor->linked_hospital_id)`,
+            // which SKIPPED the scope check for unlinked admins and so made them
+            // strictly more powerful than hospital-linked ones — the opposite of
+            // the intent everywhere else in the system.
+            if (empty($actor->linked_hospital_id)) {
+                return "Your account is not linked to a hospital, so it cannot {$verb} other users.";
             }
+
+            $targetHospital = $target->linked_hospital_id ?? $target->preferred_hospital_id;
+
+            // A user attached to no hospital is in nobody's scope. The previous
+            // `if ($targetHospital && ...)` fell through to "allowed" here, which
+            // let any hospital admin ban or delete every unaffiliated account in
+            // the system — including patients who had not yet chosen a hospital.
+            if (empty($targetHospital)) {
+                return "That user is not attached to your hospital, so you cannot {$verb} them.";
+            }
+
+            if ((int) $targetHospital !== (int) $actor->linked_hospital_id) {
+                return "You can only {$verb} users at your assigned hospital.";
+            }
+
             return null;
         }
 

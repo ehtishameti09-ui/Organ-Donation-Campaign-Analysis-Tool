@@ -80,8 +80,33 @@ class HospitalController extends Controller
     }
 
     /** POST /api/hospitals/{hospital}/approve */
+    /**
+     * Deciding whether a hospital may join the network is a regulator function.
+     *
+     * A hospital-linked admin approving or rejecting another hospital is a plain
+     * conflict of interest: those hospitals compete for the same organs, and the
+     * rest of this system goes out of its way to prevent exactly that kind of
+     * bias (super admins are barred from the allocation engine for the same
+     * reason). Super admins and general, unlinked admins may decide; admins
+     * attached to a hospital may not.
+     */
+    private function assertMayDecideOnHospitals(Request $request): ?JsonResponse
+    {
+        $actor = $request->user();
+
+        if ($actor->role === 'admin' && !empty($actor->linked_hospital_id)) {
+            return response()->json([
+                'message' => 'Admins attached to a hospital cannot approve or reject other hospitals. Only the super admin or an unaffiliated admin can decide hospital registrations.',
+            ], 403);
+        }
+
+        return null;
+    }
+
     public function approve(Request $request, User $hospital): JsonResponse
     {
+        if ($denied = $this->assertMayDecideOnHospitals($request)) return $denied;
+
         if ($hospital->role !== 'hospital') {
             return response()->json(['message' => 'Not a hospital user.'], 422);
         }
@@ -115,6 +140,8 @@ class HospitalController extends Controller
     /** POST /api/hospitals/{hospital}/reject */
     public function reject(Request $request, User $hospital): JsonResponse
     {
+        if ($denied = $this->assertMayDecideOnHospitals($request)) return $denied;
+
         $data = $request->validate(['reason' => ['required', 'string', 'min:5']]);
         $hospital->update(['status' => 'rejected']);
         Cache::forget('hospitals:overview:v1');
@@ -140,6 +167,8 @@ class HospitalController extends Controller
     /** POST /api/hospitals/{hospital}/request-info */
     public function requestInfo(Request $request, User $hospital): JsonResponse
     {
+        if ($denied = $this->assertMayDecideOnHospitals($request)) return $denied;
+
         $data = $request->validate(['message' => ['required', 'string', 'min:5']]);
         $hospital->update(['status' => 'info_requested']);
         Cache::forget('hospitals:overview:v1');

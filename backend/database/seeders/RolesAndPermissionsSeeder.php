@@ -7,6 +7,26 @@ use Spatie\Permission\Models\Permission;
 use Spatie\Permission\Models\Role;
 use Spatie\Permission\PermissionRegistrar;
 
+/**
+ * Roles and permissions.
+ *
+ * IMPORTANT, so nobody mistakes this for a security control:
+ *
+ * ROLES are enforced. The `role:` middleware in routes/api.php and the explicit
+ * role checks in the controllers are what actually authorize every request.
+ *
+ * PERMISSIONS are NOT currently enforced anywhere. Nothing in the codebase calls
+ * can(), hasPermissionTo(), or the `permission:` middleware. The grants below are
+ * a declarative map of intent - useful documentation, and the groundwork if this
+ * ever moves to permission-based gates - but granting a permission here changes
+ * no behaviour on its own. If you add a capability, enforce it in the route or
+ * controller; editing only this file will give you a false sense of security.
+ *
+ * Note too that several grants are hospital-SCOPED in practice even though the
+ * permission name is global: an admin holding 'delete-users' can only delete
+ * users at its own hospital, enforced by
+ * UserController::checkUserActionPermission(). See UserAuthorizationTest.
+ */
 class RolesAndPermissionsSeeder extends Seeder
 {
     public function run(): void
@@ -50,7 +70,11 @@ class RolesAndPermissionsSeeder extends Seeder
         // Super Admin: everything
         $superAdmin->syncPermissions(Permission::all());
 
-        // Admin: most things except super-admin-only
+        // Admin: most things except super-admin-only.
+        // User-management grants are scoped to the admin's own hospital at the
+        // controller level; an unlinked admin has no scope and so cannot act on
+        // users at all. Hospital approve/reject is deliberately absent - vetting
+        // a competing hospital is a conflict of interest (HospitalController).
         $admin->syncPermissions([
             'view-users', 'create-users', 'edit-users', 'delete-users',
             'ban-users', 'unban-users',
