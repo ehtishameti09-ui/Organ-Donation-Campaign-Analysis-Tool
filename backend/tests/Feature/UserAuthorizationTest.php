@@ -283,4 +283,98 @@ class UserAuthorizationTest extends TestCase
 
         $this->assertDatabaseMissing('users', ['email' => 'backdoor@test.local']);
     }
+
+    // --------------------------------------------------------- status workflow
+
+    /**
+     * The sharpest consequence in this domain: AllocationController gates donor
+     * and recipient eligibility on users.status === 'approved', so a patient who
+     * can set their own status can enter the organ allocation pool with no
+     * clinical verification whatsoever.
+     */
+    public function test_a_donor_cannot_approve_their_own_account(): void
+    {
+        $hospital = $this->makeUser('hospital');
+        $donor    = $this->makeUser('donor', [
+            'status' => 'pending', 'preferred_hospital_id' => $hospital->id,
+        ]);
+
+        $this->actingAs($donor, 'sanctum')
+            ->patchJson("/api/users/{$donor->id}", ['status' => 'approved'])
+            ->assertStatus(403);
+
+        $this->assertSame('pending', $donor->fresh()->status);
+    }
+
+    public function test_a_recipient_cannot_set_an_arbitrary_status_on_themselves(): void
+    {
+        $recipient = $this->makeUser('recipient', ['status' => 'pending']);
+
+        foreach (['approved', 'registered', 'rejected', 'warned'] as $attempt) {
+            $this->actingAs($recipient, 'sanctum')
+                ->patchJson("/api/users/{$recipient->id}", ['status' => $attempt])
+                ->assertStatus(403);
+        }
+
+        $this->assertSame('pending', $recipient->fresh()->status);
+    }
+
+    /** The one legitimate self-transition: resubmitting after info_requested. */
+    public function test_a_patient_can_resubmit_their_case_after_info_was_requested(): void
+    {
+        $hospital = $this->makeUser('hospital');
+        $donor    = $this->makeUser('donor', [
+            'status' => 'info_requested', 'preferred_hospital_id' => $hospital->id,
+        ]);
+
+        $this->actingAs($donor, 'sanctum')
+            ->patchJson("/api/users/{$donor->id}", ['status' => 'submitted'])
+            ->assertStatus(200);
+
+        $this->assertSame('submitted', $donor->fresh()->status);
+    }
+
+    public function test_an_approved_patient_cannot_rewind_their_own_status(): void
+    {
+        $hospital = $this->makeUser('hospital');
+        $donor    = $this->makeUser('donor', [
+            'status' => 'approved', 'preferred_hospital_id' => $hospital->id,
+        ]);
+
+        $this->actingAs($donor, 'sanctum')
+            ->patchJson("/api/users/{$donor->id}", ['status' => 'submitted'])
+            ->assertStatus(403);
+
+        $this->assertSame('approved', $donor->fresh()->status);
+    }
+
+    /** The hospital reviewing its own patient is the whole point of the column. */
+    public function test_a_hospital_can_approve_its_own_patient(): void
+    {
+        $hospital = $this->makeUser('hospital');
+        $donor    = $this->makeUser('donor', [
+            'status' => 'submitted', 'preferred_hospital_id' => $hospital->id,
+        ]);
+
+        $this->actingAs($hospital, 'sanctum')
+            ->patchJson("/api/users/{$donor->id}", ['status' => 'approved'])
+            ->assertStatus(200);
+
+        $this->assertSame('approved', $donor->fresh()->status);
+    }
+
+    public function test_a_hospital_cannot_approve_another_hospitals_patient(): void
+    {
+        $mine   = $this->makeUser('hospital');
+        $theirs = $this->makeUser('hospital');
+        $donor  = $this->makeUser('donor', [
+            'status' => 'submitted', 'preferred_hospital_id' => $theirs->id,
+        ]);
+
+        $this->actingAs($mine, 'sanctum')
+            ->patchJson("/api/users/{$donor->id}", ['status' => 'approved'])
+            ->assertStatus(403);
+
+        $this->assertSame('submitted', $donor->fresh()->status);
+    }
 }

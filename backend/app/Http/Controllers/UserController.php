@@ -277,6 +277,29 @@ class UserController extends Controller
             }
         }
 
+        // `status` is the case-review workflow state, and it belongs to the
+        // reviewing hospital - not to the person being reviewed. Letting a user
+        // set it on themselves meant a donor could PATCH status to 'approved'
+        // and walk straight into the allocation pool: AllocationController gates
+        // donor and recipient eligibility on exactly this column, so a
+        // self-approved patient becomes matchable with no clinical verification
+        // at all. Verified against the running app before this was added.
+        //
+        // One self-transition is legitimate and must keep working: a patient
+        // resubmitting after the hospital asked for more information, which
+        // DonorRecipientWizard does via resubmitCaseInfo() and which sets
+        // 'submitted'. That is the only value allowed, and only from a state
+        // that has not already been decided.
+        if (array_key_exists('status', $data) && $actor->id === $user->id && $actor->role !== 'super_admin') {
+            $resubmittableFrom = ['pending', 'info_requested', 'registered', 'rejected', 'submitted'];
+
+            if ($data['status'] !== 'submitted' || !in_array($user->status, $resubmittableFrom, true)) {
+                return response()->json([
+                    'message' => 'You cannot set your own account status. Submitting your case for review is the only change you can make here; approval is decided by your hospital.',
+                ], 403);
+            }
+        }
+
         // Pull out hospital-profile fields and apply only user fields to the user model
         $hospitalProfileFlat = array_filter([
             'hospital_name'       => $data['hospitalName']       ?? null,
