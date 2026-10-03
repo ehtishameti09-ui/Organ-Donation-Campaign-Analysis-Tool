@@ -92,7 +92,10 @@ const ChainBar = ({ chain, height = 7 }) => {
  * page also polls while mounted so a ticking clock stays honest on screen.
  */
 const OrganLifecycle = ({ currentUser }) => {
-  const [tab, setTab] = useState('registry');
+  // Supervision sees utilisation and wastage rates, not the per-organ registry -
+  // that carries donor and recipient names and discard reasons.
+  const supervisorOnly = currentUser?.role === 'super_admin';
+  const [tab, setTab] = useState(supervisorOnly ? 'analytics' : 'registry');
   const [organs, setOrgans] = useState([]);
   const [counts, setCounts] = useState({});
   const [metrics, setMetrics] = useState(null);
@@ -110,6 +113,7 @@ const OrganLifecycle = ({ currentUser }) => {
   const canWrite = ['hospital', 'admin', 'doctor'].includes(currentUser?.role) && !readOnly;
 
   const load = useCallback(async (quiet = false) => {
+    if (supervisorOnly) { setLoading(false); return; }
     if (!quiet) setLoading(true);
     try {
       const reg = await getOrgansViaAPI({
@@ -128,7 +132,7 @@ const OrganLifecycle = ({ currentUser }) => {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [statusFilter, riskOnly]);
+  }, [statusFilter, riskOnly, supervisorOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -245,7 +249,7 @@ const OrganLifecycle = ({ currentUser }) => {
 
       <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', borderBottom: '1px solid var(--border)' }}>
         {[
-          { id: 'registry', label: `🧊 Registry${atRisk.length ? ` (${atRisk.length} at risk)` : ''}` },
+          ...(supervisorOnly ? [] : [{ id: 'registry', label: `🧊 Registry${atRisk.length ? ` (${atRisk.length} at risk)` : ''}` }]),
           { id: 'analytics', label: '📊 Utilization' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -257,7 +261,7 @@ const OrganLifecycle = ({ currentUser }) => {
         ))}
         <div style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex', gap: '8px', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: loading ? 'var(--accent)' : 'var(--text3)' }}>
-            {loading ? '⏳ Loading…' : readOnly ? '👁 Read-only' : `${total} organ${total === 1 ? '' : 's'}`}
+            {supervisorOnly ? '👁 All hospitals' : loading ? '⏳ Loading…' : readOnly ? '👁 Read-only' : `${total} organ${total === 1 ? '' : 's'}`}
           </span>
           {canWrite && (
             <button className="btn btn-primary" style={{ fontSize: '12px', padding: '5px 11px' }}
@@ -266,7 +270,18 @@ const OrganLifecycle = ({ currentUser }) => {
         </div>
       </div>
 
-      {tab === 'registry' && (
+      {supervisorOnly && (
+        <div style={{
+          padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '12.5px',
+          background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text2)',
+        }}>
+          👁 <strong>Network supervision view.</strong> Utilisation, wastage and cold-ischemia
+          performance across hospitals. The organ registry itself — donors, recipients and clinical
+          discard reasons — stays with the treating hospital.
+        </div>
+      )}
+
+      {tab === 'registry' && !supervisorOnly && (
         <>
           <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
             {['all', ...Object.keys(STATUS_META)].map(s => {

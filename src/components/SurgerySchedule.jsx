@@ -54,7 +54,10 @@ const SummaryCard = ({ label, value, sub, accent }) => (
  * conflict comes back, because only the server can answer that question safely.
  */
 const SurgerySchedule = ({ currentUser }) => {
-  const [tab, setTab] = useState('calendar');
+  // Supervision sees theatre/ICU/surgeon occupancy for capacity planning. The
+  // calendar itself names patients and has no supervisory purpose.
+  const supervisorOnly = currentUser?.role === 'super_admin';
+  const [tab, setTab] = useState(supervisorOnly ? 'analytics' : 'calendar');
   const [month, setMonth] = useState(null);
   const [calendar, setCalendar] = useState(null);
   const [resources, setResources] = useState([]);
@@ -68,9 +71,10 @@ const SurgerySchedule = ({ currentUser }) => {
   const [showResources, setShowResources] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const canWrite = ['hospital', 'admin'].includes(currentUser?.role) && !readOnly;
+  const canWrite = ['hospital', 'admin'].includes(currentUser?.role) && !readOnly && !supervisorOnly;
 
   const load = useCallback(async () => {
+    if (supervisorOnly) { setLoading(false); return; }
     setLoading(true);
     try {
       const [cal, res] = await Promise.all([
@@ -85,7 +89,7 @@ const SurgerySchedule = ({ currentUser }) => {
     } finally {
       setLoading(false);
     }
-  }, [month]);
+  }, [month, supervisorOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -142,7 +146,7 @@ const SurgerySchedule = ({ currentUser }) => {
 
       <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', borderBottom: '1px solid var(--border)' }}>
         {[
-          { id: 'calendar', label: '🗓 Calendar' },
+          ...(supervisorOnly ? [] : [{ id: 'calendar', label: '🗓 Calendar' }]),
           { id: 'analytics', label: '📊 Utilization' },
         ].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -154,7 +158,7 @@ const SurgerySchedule = ({ currentUser }) => {
         ))}
         <div style={{ marginLeft: 'auto', alignSelf: 'center', display: 'flex', gap: '8px', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', color: loading ? 'var(--accent)' : 'var(--text3)' }}>
-            {loading ? '⏳ Loading…' : readOnly ? '👁 Read-only' : `${resources.filter(r => r.is_active).length} active resources`}
+            {supervisorOnly ? '👁 All hospitals' : loading ? '⏳ Loading…' : readOnly ? '👁 Read-only' : `${resources.filter(r => r.is_active).length} active resources`}
           </span>
           {canWrite && (
             <>
@@ -182,7 +186,18 @@ const SurgerySchedule = ({ currentUser }) => {
         </div>
       )}
 
-      {tab === 'calendar' && calendar && (
+      {supervisorOnly && (
+        <div style={{
+          padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '12.5px',
+          background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text2)',
+        }}>
+          👁 <strong>Network supervision view.</strong> Theatre, ICU and surgeon utilisation for
+          capacity planning. The surgery calendar — who is operated on, and when — stays with the
+          treating hospital.
+        </div>
+      )}
+
+      {tab === 'calendar' && calendar && !supervisorOnly && (
         <>
           <div className="card" style={{ marginBottom: '12px', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button className="btn btn-outline" style={{ fontSize: '12px', padding: '4px 10px' }}

@@ -80,7 +80,11 @@ const ApprovalBoard = ({ currentUser }) => {
   const [notes, setNotes] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
-  const [tab, setTab] = useState('board');
+  // Super admins supervise the network and are served aggregate figures only -
+  // the case list carries named patients and clinical detail they have no
+  // purpose for. The API enforces this; the UI just avoids asking.
+  const supervisorOnly = currentUser?.role === 'super_admin';
+  const [tab, setTab] = useState(supervisorOnly ? 'performance' : 'board');
 
   const role = currentUser?.role;
   const isDoctor = role === 'doctor';
@@ -88,6 +92,7 @@ const ApprovalBoard = ({ currentUser }) => {
   const readOnly = board.read_only || (!isDoctor && !isAdminSide);
 
   const load = useCallback(async () => {
+    if (supervisorOnly) { setLoading(false); return; }
     setLoading(true);
     try {
       setBoard(await getApprovalsViaAPI({ stage: filter, limit: 100 }));
@@ -96,7 +101,7 @@ const ApprovalBoard = ({ currentUser }) => {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, supervisorOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -225,7 +230,10 @@ const ApprovalBoard = ({ currentUser }) => {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '6px', marginBottom: '12px', borderBottom: '1px solid var(--border)' }}>
-        {[{ id: 'board', label: `📋 Board${openCount ? ` (${openCount})` : ''}` }, { id: 'performance', label: '⏱ Performance' }].map(t => (
+        {[
+          ...(supervisorOnly ? [] : [{ id: 'board', label: `📋 Board${openCount ? ` (${openCount})` : ''}` }]),
+          { id: 'performance', label: '⏱ Performance' },
+        ].map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -241,11 +249,22 @@ const ApprovalBoard = ({ currentUser }) => {
           </button>
         ))}
         <div style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: '12px', color: loading ? 'var(--accent)' : 'var(--text3)' }}>
-          {loading ? '⏳ Loading…' : readOnly ? '👁 Read-only oversight view' : `✓ ${total} case${total === 1 ? '' : 's'}`}
+          {supervisorOnly ? '👁 All hospitals' : loading ? '⏳ Loading…' : readOnly ? '👁 Read-only oversight view' : `✓ ${total} case${total === 1 ? '' : 's'}`}
         </div>
       </div>
 
-      {tab === 'board' && (
+      {supervisorOnly && (
+        <div style={{
+          padding: '10px 14px', borderRadius: '8px', marginBottom: '14px', fontSize: '12.5px',
+          background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text2)',
+        }}>
+          👁 <strong>Network supervision view.</strong> You see aggregate performance across hospitals.
+          Individual cases — patient names, verification checklists and clinical notes — stay with the
+          treating hospital.
+        </div>
+      )}
+
+      {tab === 'board' && !supervisorOnly && (
         <>
           <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
             {FILTERS.map(f => {

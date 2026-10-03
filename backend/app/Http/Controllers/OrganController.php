@@ -29,26 +29,59 @@ class OrganController extends Controller
 {
     public function __construct(private ColdChainMonitor $coldChain) {}
 
-    /** Same scoping contract as the approval board: null means read-only oversight. */
+    /**
+     * Resolve which hospital's organ registry the caller may act on.
+     *
+     * Three tiers, drawn on data-minimisation lines:
+     *
+     *  - Hospital, its linked admins and doctors: full access to their OWN
+     *    hospital. They are delivering the care, so they need the patient.
+     *  - Auditor: read-only, and ONLY their own hospital. Auditors are hospital
+     *    employees (see UserController::createEmployee) - they were previously
+     *    grouped with super_admin here and could read every other hospital's
+     *    patients, which was a cross-tenant leak.
+     *  - Super admin: network supervision. Gets null (all hospitals) so the
+     *    cross-hospital aggregates in metrics() work, but every case-level read
+     *    rejects it via denyIdentifiableToSupervisor(). Supervising the registry
+     *    does not require knowing which named patient had which crossmatch.
+     */
     private function scope(Request $request, bool $forWrite): ?int
     {
         $u = $request->user();
 
-        if (in_array($u->role, ['super_admin', 'auditor'], true)) {
-            if ($forWrite) abort(403, 'Oversight roles can view the organ registry but cannot modify it.');
+        if ($u->role === 'super_admin') {
+            if ($forWrite) abort(403, 'Super admins supervise the network; they do not modify organ records.');
             return null;
         }
 
         if ($u->role === 'hospital') return (int) $u->id;
 
-        if (in_array($u->role, ['admin', 'doctor'], true)) {
+        if (in_array($u->role, ['admin', 'doctor', 'auditor'], true)) {
             if (empty($u->linked_hospital_id)) {
                 abort(403, 'Your account is not linked to a hospital, so it has no organ registry.');
+            }
+            if ($forWrite && $u->role === 'auditor') {
+                abort(403, 'Auditors have read-only access.');
             }
             return (int) $u->linked_hospital_id;
         }
 
         abort(403, 'Organ registry access denied.');
+    }
+
+    /**
+     * Block the supervisor role from anything that identifies a patient.
+     *
+     * Aggregate performance and utilisation figures are the registry's own
+     * supervision data and carry no patient. Case lists, detail panels and
+     * timelines carry names, clinical checklists (serology, crossmatch),
+     * doctors' notes and discard reasons - none of which supervision needs.
+     */
+    private function denyIdentifiableToSupervisor(Request $request): void
+    {
+        if ($request->user()->role === 'super_admin') {
+            abort(403, 'Super admins see network-level metrics only. Case-level records belong to the treating hospital.');
+        }
     }
 
     private function findScoped(Request $request, int $id, bool $forWrite): Organ
@@ -80,6 +113,7 @@ class OrganController extends Controller
     /** GET /api/organs — registry with live cold-chain state. */
     public function index(Request $request): JsonResponse
     {
+        $this->denyIdentifiableToSupervisor($request);
         $scope = $this->scope($request, false);
 
         $data = $request->validate([
@@ -115,6 +149,7 @@ class OrganController extends Controller
     /** GET /api/organs/{id} — detail plus the lifecycle timeline (8.3). */
     public function show(Request $request, int $id): JsonResponse
     {
+        $this->denyIdentifiableToSupervisor($request);
         $organ = $this->findScoped($request, $id, false);
         $this->sweepBreaches([$organ]);
 
