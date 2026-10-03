@@ -8,6 +8,7 @@ use App\Models\ClinicalProfile;
 use App\Models\ConsentForm;
 use App\Models\Notification;
 use App\Models\User;
+use App\Support\CaseScope;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -118,6 +119,14 @@ class DonorController extends Controller
     public function verify(Request $request, User $donor): JsonResponse
     {
         if ($donor->role !== 'donor') return response()->json(['message' => 'Not a donor.'], 422);
+
+        // This endpoint sat behind `auth` alone - no role middleware, no check
+        // here - so ANY authenticated account could approve ANY donor straight
+        // into the allocation pool. Verified exploitable from a recipient
+        // account before this was added.
+        if ($denied = CaseScope::denyReview($request->user(), $donor)) {
+            return response()->json(['message' => $denied], 403);
+        }
 
         $data = $request->validate([
             'action' => ['required', Rule::in(['approve', 'reject', 'request_info'])],

@@ -738,3 +738,55 @@ tar -xzf odcat_files_<stamp>.tar.gz -C backend/storage/app
 ```
 
 Run the backup before anything risky - migrations, `db:seed`, or any schema work.
+
+---
+
+## Frontend smoke tests
+
+```bash
+npm run test:smoke
+```
+
+Drives a real browser against the running app and checks that every page loads,
+renders its own data, and makes no failing API calls - as the hospital, as the
+super admin (asserting the supervision-only view leaks no patient records), and
+unauthenticated. Exits non-zero on failure.
+
+Needs the app running and the demo data seeded. It is a smoke suite, not a full
+UI suite: it catches a page that throws, an endpoint that starts refusing, or a
+role seeing something it should not - which is where the real regressions are.
+
+## Refreshing stale demo data
+
+```bash
+cd backend
+php artisan demo:refresh-dates            # add --dry-run to preview
+```
+
+`DemoDataSeeder` generates bookings and organ clocks relative to the day it runs,
+so after a week or two the calendar is empty, the utilisation window reads 0%
+across the board, and every organ has aged past its cold-ischemia limit. This
+slides the whole set back onto today, preserving relative spacing, and
+redistributes the organ clocks so all four cold-chain bands are represented
+again. Run it before a demo.
+
+## Automatic daily backups
+
+```powershell
+cd backend
+.\scripts\install-backup-task.ps1              # daily at 03:00
+.\scripts\install-backup-task.ps1 -At 02:30    # different time
+.\scripts\install-backup-task.ps1 -Remove      # uninstall
+```
+
+Registers a Windows Scheduled Task running the verified backup script. Runs as
+the current user, catches up if the machine was off at the scheduled time, and
+logs to `D:\Shamyp\odcat-backupsackup-task.log`.
+
+```powershell
+Start-ScheduledTask -TaskName 'ODCAT Database Backup'      # run it now
+Get-ScheduledTaskInfo -TaskName 'ODCAT Database Backup'    # last result
+```
+
+A manual backup only protects you if somebody remembers to run it - and the one
+time this project lost its data, nobody had.

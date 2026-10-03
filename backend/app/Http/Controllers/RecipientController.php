@@ -7,6 +7,7 @@ use App\Models\RecipientProfile;
 use App\Models\ClinicalProfile;
 use App\Models\Notification;
 use App\Models\User;
+use App\Support\CaseScope;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -157,6 +158,11 @@ class RecipientController extends Controller
     public function verify(Request $request, User $recipient): JsonResponse
     {
         if ($recipient->role !== 'recipient') return response()->json(['message' => 'Not a recipient.'], 422);
+
+        // Same gap as DonorController::verify - unguarded clinical approval.
+        if ($denied = CaseScope::denyReview($request->user(), $recipient)) {
+            return response()->json(['message' => $denied], 403);
+        }
 
         $data = $request->validate([
             'action' => ['required', Rule::in(['approve', 'reject', 'request_info'])],

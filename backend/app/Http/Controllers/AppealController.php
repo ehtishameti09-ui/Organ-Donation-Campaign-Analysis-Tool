@@ -6,6 +6,7 @@ use App\Models\Appeal;
 use App\Models\CaseAppeal;
 use App\Models\Notification;
 use App\Models\User;
+use App\Support\CaseScope;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -219,7 +220,13 @@ class AppealController extends Controller
     public function reviewCaseAppeal(Request $request, CaseAppeal $caseAppeal): JsonResponse
     {
         $user = $request->user();
-        if (!$user->isHospital() && !$user->isAdmin()) abort(403);
+
+        // Role-only check: any hospital could decide another hospital's appeals.
+        $caseUser = $caseAppeal->user;
+        if (!$caseUser || ($denied = CaseScope::denyReview($user, $caseUser))) {
+            abort(403, $denied ?? 'Appeal subject not found.');
+        }
+
         $data = $request->validate([
             'decision' => ['required', Rule::in(['reopened', 'rejected_final'])],
             'notes' => ['nullable', 'string'],

@@ -374,3 +374,156 @@ Concurrency cannot be verified by clicking, so it is tested directly:
 Super admin and auditor are deliberately read-only: they need the
 cross-hospital comparison to be meaningful without being able to influence the
 cases it measures.
+
+---
+
+# Security Review — Defects Found and Fixed
+
+A systematic review of authorization and authentication, carried out after
+Modules 7–9 were built. Every defect below was **confirmed against the running
+application** before being fixed, and every fix is **pinned by a test** so it
+cannot silently regress.
+
+The theme is consistent and worth stating plainly: almost every defect was a
+missing *ownership* check, not a missing *role* check. The code asked "are you an
+admin?" and forgot to ask "is this your patient?". That failure mode is invisible
+in review because each individual `if` looks reasonable — it is the check nobody
+wrote that causes the breach.
+
+## Summary
+
+| # | Defect | Impact | Verified | Fixed in |
+|---|---|---|---|---|
+| 1 | Any authenticated user could set their own `role` | **Critical** — donor → super_admin in one request | Exploited live, reverted | `3fb866d` |
+| 2 | Any authenticated user could approve any donor | **Critical** — unverified donors enter the allocation pool | Exploited live from a *recipient* account | `(this commit)` |
+| 3 | Patients could set their own case `status` | **Critical** — self-approval into the allocation pool | Exploited live, reverted | `ff9f1ea` |
+| 4 | Pre-registration account takeover via Google | **High** — sign the real owner into a squatter's account | Code analysis | `902f2c3` |
+| 5 | `ban()` / `destroy()` had no hospital scoping | **High** — delete any patient in the system | Code analysis | `3fb866d` |
+| 6 | Any admin could download any patient's documents | **High** — CNICs, medical certificates, nationwide | Code analysis | `(this commit)` |
+| 7 | Auditors could read every hospital's patients | **High** — cross-tenant clinical data | Code analysis | `509ad3c` |
+| 8 | Super admin held full case-level clinical data | **Medium** — privacy, exceeded supervision purpose | Code analysis | `509ad3c` |
+| 9 | Hospital admins could vet competing hospitals | **Medium** — conflict of interest | Code analysis | `3fb866d` |
+| 10 | Document review unscoped by hospital | **Medium** — approve another hospital's papers | Code analysis | `(this commit)` |
+| 11 | Test suite could drop the live database | **Critical (ops)** — and did, once | Reproduced | `151ac33` |
+
+## The two that mattered most
+
+### Unguarded clinical approval
+
+`POST /api/donors/{id}/verify` sat behind `auth` alone — no role middleware, and
+no check inside the controller. Any authenticated account could approve any
+donor. Demonstrated by approving a donor from a **recipient's** token:
+
+```
+POST /api/donors/621/verify {"action":"approve"}   ->  HTTP 200
+donor status: registered -> approved
+```
+
+Approval is what makes a donor eligible for allocation
+(`AllocationController` filters on `status = 'approved'` in three places), so
+this placed unverified donors into the organ matching pool with no clinical
+review, no document check and no hospital sign-off.
+
+### Privilege escalation through profile update
+
+`PATCH /api/users/{id}` accepted `role` and `linked_hospital_id` with no
+actor-side authorization:
+
+```
+login as donor  ->  PATCH /users/4 {"role":"super_admin"}  ->  HTTP 200
+role: donor -> super_admin
+```
+
+Both were reverted immediately after demonstration and their tokens revoked.
+
+## What changed structurally
+
+Authorization for patient cases and documents now goes through a single class,
+`app/Support/CaseScope.php`, rather than being re-derived in each controller:
+
+- `CaseScope::denyRead()` — may this actor see this patient's record?
+- `CaseScope::denyReview()` — may this actor make a clinical decision about them?
+
+Two rules inside it fix inversions that appeared repeatedly in the original code:
+
+1. An actor with **no hospital** has **no scope**, rather than unlimited scope.
+   The previous `if ($actor->linked_hospital_id)` guard *skipped* the check for
+   unlinked admins, making them more powerful than hospital-linked ones.
+2. A patient attached to **no hospital** is in **nobody's** caseload, rather than
+   everybody's. The previous `if ($targetHospital && ...)` fell through to
+   "allowed", exposing every unaffiliated account in the system.
+
+## Access model after the review
+
+| Role | Patient records | Clinical decisions | Scope |
+|---|---|---|---|
+| Hospital | read + write | yes | own patients |
+| Admin (hospital-linked) | read + write | yes | that hospital only |
+| Doctor | read + write | yes (clinical sign-off) | that hospital only |
+| Data entry | read + write | no | that hospital only |
+| Auditor | read only | no | **own hospital only** |
+| Super admin | **aggregates only** | **no** | network-wide statistics |
+| Donor / Recipient | own record only | no | themselves |
+
+Super admins are deliberately excluded from clinical decisions, matching a
+principle the codebase already applied to the allocation engine: *"Super admins
+cannot use the allocation engine. This is intentional to prevent allocation
+bias."* Supervising the registry does not require knowing which named patient had
+which crossmatch result.
+
+## Authentication
+
+- **Email ownership is now proven at registration.** `REQUIRE_EMAIL_VERIFICATION`
+  was `false` and `register()` stamped `email_verified_at` unconditionally, so
+  anyone could register under an address they did not control. The
+  pre-registration verification flow already existed and the frontend already
+  sent its token — the gate was built and switched off.
+- **Google sign-in links safely.** Matching is on `google_id` first. Falling back
+  to email refuses two cases: an account already bound to a *different* Google
+  identity, and an account whose email was never verified (which must be claimed
+  with its password first).
+- **Google sign-up** is available for donor, recipient and hospital. The role is
+  chosen on our own screen and sealed into the OAuth `state` parameter —
+  **encrypted**, because the role decides what kind of account is created.
+- **No email OTP follows Google sign-in.** Google has already proven the user
+  controls that mailbox; mailing a code to it verifies nothing and only adds
+  friction. What Google cannot prove — identity, and authority to operate a
+  transplant centre — is still established by document upload and super admin
+  approval, which are unchanged.
+
+## Verification
+
+```bash
+cd backend
+composer run test
+```
+
+84 tests, 199 assertions. The authorization boundaries specifically:
+
+```bash
+php artisan test --filter=UserAuthorizationTest        # 21 - roles, scoping, case status
+php artisan test --filter=CaseAndDocumentScopeTest     # 13 - clinical review, documents
+php artisan test --filter=ModuleAccessScopeTest        # 10 - Modules 7-9 data access
+php artisan test --filter=GoogleAuthTest               # 11 - sign-up, sign-in, linking
+```
+
+Each test corresponds to a defect that was actually open, and covers **both**
+directions — that the attack is refused, *and* that the legitimate action still
+works. A guard that denies everything is not a fix.
+
+## Known limitations
+
+Stated plainly rather than left for a reader to discover:
+
+- **No automated frontend tests.** The React side was verified by driving a real
+  browser during development, not by a committed suite.
+- **The Google consent screen is not covered end to end.** Google blocks headless
+  automation, so the tests mock Socialite. Everything on both sides of the
+  consent screen is tested; the screen itself needs a manual click-through.
+- **Permissions are declarative, not enforced.** The 24 Spatie permissions are
+  never read by any code — authorization is entirely role-based. The seeder says
+  so prominently so the table is not mistaken for a security control.
+- **This is a student project, not a certified clinical system.** The review
+  applied standard data-protection principles (data minimisation, purpose
+  limitation). It is not a formal compliance audit against THOTA 2010 or any
+  other regime.

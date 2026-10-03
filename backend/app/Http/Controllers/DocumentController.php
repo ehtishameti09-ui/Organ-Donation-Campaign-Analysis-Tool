@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\Notification;
 use App\Models\User;
+use App\Support\CaseScope;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -31,9 +32,14 @@ class DocumentController extends Controller
         $authUser = $request->user();
         $targetUserId = $data['user_id'] ?? $authUser->id;
 
-        // Permission check: can only upload for self or if admin/hospital
-        if ($targetUserId !== $authUser->id && !$authUser->isAdmin() && !$authUser->isHospital()) {
-            return response()->json(['message' => 'Cannot upload documents for another user.'], 403);
+        // Uploading on someone else's behalf is a staff action, and it has to be
+        // scoped: a blanket admin/hospital check let anyone with those roles
+        // attach documents to any patient in the system.
+        if ((int) $targetUserId !== (int) $authUser->id) {
+            $owner = User::find($targetUserId);
+            if (!$owner || ($denied = CaseScope::denyReview($authUser, $owner))) {
+                return response()->json(['message' => $denied ?? 'Cannot upload documents for another user.'], 403);
+            }
         }
 
         // A document type is single-slot: re-uploading a "Healthcare License"
@@ -116,8 +122,11 @@ class DocumentController extends Controller
     public function destroy(Request $request, Document $document): JsonResponse
     {
         $authUser = $request->user();
-        if ($document->user_id !== $authUser->id && !$authUser->isAdmin()) {
-            return response()->json(['message' => 'Cannot delete this document.'], 403);
+        if ((int) $document->user_id !== (int) $authUser->id) {
+            $owner = User::find($document->user_id);
+            if (!$owner || ($denied = CaseScope::denyReview($authUser, $owner))) {
+                return response()->json(['message' => $denied ?? 'Cannot delete this document.'], 403);
+            }
         }
 
         Storage::disk('local')->delete($document->file_path);
@@ -129,9 +138,14 @@ class DocumentController extends Controller
     public function review(Request $request, Document $document): JsonResponse
     {
         $authUser = $request->user();
-        if (!$authUser->isAdmin() && !$authUser->isHospital()) {
-            return response()->json(['message' => 'Forbidden.'], 403);
+
+        // Checked the actor's ROLE but never whose document it was, so any
+        // hospital could approve or reject another hospital's patients' papers.
+        $owner = User::find($document->user_id);
+        if (!$owner || ($denied = CaseScope::denyReview($authUser, $owner))) {
+            return response()->json(['message' => $denied ?? 'Document owner not found.'], 403);
         }
+
         $data = $request->validate([
             'status' => ['required', 'in:approved,rejected'],
             'notes' => ['nullable', 'string'],
@@ -176,13 +190,17 @@ class DocumentController extends Controller
     private function authorizeAccess(User $user, int $ownerId): void
     {
         if ($user->id === $ownerId) return;
-        if ($user->isAdmin()) return;
 
-        if ($user->isHospital()) {
-            $owner = User::find($ownerId);
-            if ($owner && $owner->preferred_hospital_id === $user->id) return;
+        // `if ($user->isAdmin()) return;` used to sit here, which let every
+        // admin - including one linked to a single hospital - download any
+        // patient's CNIC, medical certificate and blood report in the country.
+        // Identity documents are the most sensitive thing this system stores,
+        // so they get the same hospital scoping as the case itself.
+        $owner = User::find($ownerId);
+        if (!$owner) abort(403, 'You do not have access to this document.');
+
+        if ($denied = CaseScope::denyRead($user, $owner)) {
+            abort(403, $denied);
         }
-
-        abort(403, 'You do not have access to this document.');
     }
 }
