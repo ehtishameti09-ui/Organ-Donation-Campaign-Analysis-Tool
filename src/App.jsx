@@ -27,6 +27,22 @@ const HospitalRegistrationForm = lazy(() => import('./components/HospitalRegistr
 const VerifyEmail = lazy(() => import('./components/VerifyEmail'));
 import './styles/App.css';
 
+/**
+ * The OAuth callback query string, captured at module load.
+ *
+ * This has to happen here, not inside an effect. The history/popstate effect
+ * further down calls `replaceState(..., window.location.pathname + hash)` to
+ * normalise the URL on first load — and `pathname` carries no query string, so
+ * that call silently destroys `?token=…` before the OAuth effect, declared
+ * later, ever gets to read it. React runs effects in declaration order, so the
+ * OAuth handler always lost the race and every Google sign-in fell through to
+ * "no session" and bounced back to the login screen.
+ *
+ * Module scope runs once, before React mounts and before any effect, which is
+ * the only point guaranteed to be earlier than the rewrite.
+ */
+const OAUTH_SEARCH = typeof window !== 'undefined' ? window.location.search : '';
+
 const PageLoader = () => (
   <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text2)', fontSize: '13px' }}>
     Loading…
@@ -182,7 +198,9 @@ function App() {
     //   ?error=...&register=1                       → unregistered email; toast + jump to Create account
     //   ?token=...&user_id=...                      → existing user signed in, finalize session
     //   ?google_2fa=...&masked_email=...            → 2FA challenge, show OTP modal
-    const params = new URLSearchParams(window.location.search);
+    // Read the snapshot taken at module load, not window.location — by the time
+    // this runs the URL has already been normalised and the params are gone.
+    const params = new URLSearchParams(OAUTH_SEARCH);
     const oauthToken = params.get('token');
     const oauthError = params.get('error');
     const google2FA = params.get('google_2fa');
