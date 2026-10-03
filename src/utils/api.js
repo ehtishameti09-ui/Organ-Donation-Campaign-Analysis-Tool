@@ -1224,6 +1224,17 @@ export const updateSurgeryBookingViaAPI = async (id, status, reason = null) =>
 export const getSurgeryUtilizationViaAPI = async (days = 30) =>
   surgeryRequest(`/utilization?days=${days}`, { fallback: 'Failed to load utilization analytics' });
 
+// ===== Google OAuth =====
+
+// Whether the server has GOOGLE_CLIENT_ID / SECRET set. The button is disabled
+// rather than hidden when it is not, so the option is still discoverable and the
+// reason is explained in the tooltip.
+export const getGoogleOAuthStatus = async () => {
+  const r = await fetch(`${API_BASE}/oauth/google/status`, { headers: getHeaders(false) });
+  if (!r.ok) return { configured: false };
+  return await r.json();
+};
+
 export default {
   registerViaAPI,
   loginViaAPI,
@@ -1301,6 +1312,8 @@ export default {
   getSensitivityReportViaAPI,
   runAllocationViaAPI,
   simulateAllocationViaAPI,
+  // Google OAuth
+  getGoogleOAuthStatus,
   // Module 9 — Surgery Scheduling
   bookSurgeryViaAPI,
   createSurgicalResourceViaAPI,

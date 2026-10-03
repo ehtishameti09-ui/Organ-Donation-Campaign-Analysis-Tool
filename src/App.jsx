@@ -213,6 +213,11 @@ function App() {
     }
 
     if (oauthToken) {
+      // `setup=1` marks an account that was just created through Google sign-up.
+      // It has an email and a role but nothing else yet, so send it straight to
+      // the form that finishes the job rather than to an empty dashboard.
+      const isNewAccount = params.get('setup') === '1';
+
       localStorage.setItem('odcat_token', oauthToken);
       window.history.replaceState({ page: 'dashboard', settingsTab: null }, '', window.location.pathname + '#dashboard');
       getMeViaAPI()
@@ -220,6 +225,14 @@ function App() {
           localStorage.setItem('odcat_user', JSON.stringify(user));
           localStorage.setItem('odcat_current', JSON.stringify(user));
           setCurrentUser(user);
+
+          if (isNewAccount) {
+            toast(`Welcome, ${user.name?.split(' ')[0] || 'there'}! Just a few details to finish.`, 'success');
+            if (user.role === 'hospital') setCurrentPage('complete-hospital-registration');
+            else if (user.role === 'donor' || user.role === 'recipient') setCurrentPage('complete-registration');
+            return;
+          }
+
           toast(`Welcome, ${user.name?.split(' ')[0] || 'User'}!`, 'success');
         })
         .catch(() => {

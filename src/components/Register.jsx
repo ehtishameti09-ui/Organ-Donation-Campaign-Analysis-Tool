@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { registerUser, registerBasicAccount, addActivity, validateEmail, validateName, capitalizeName, validatePhone } from '../utils/auth';
 import VerifiedCredentialsStep from './VerifiedCredentialsStep';
+import GoogleAuthButton from './GoogleAuthButton';
 import { toast } from '../utils/toast';
 
 // ============================================================
@@ -590,6 +591,13 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
               <strong>📋 Next Step:</strong> After login, you'll be guided through the consent form, medical details, document upload, and hospital selection.
             </div>
 
+            <GoogleAuthButton intent="signup" role={accountType} style={{ marginBottom: '14px' }} />
+            <div style={{ fontSize: '11.5px', color: 'var(--text3)', textAlign: 'center', marginBottom: '14px' }}>
+              Google confirms your email address, so there is no code to enter. You will still complete
+              your medical details and documents afterwards.
+            </div>
+            <div className="divider-text"><span>or sign up with email</span></div>
+
             <VerifiedCredentialsStep
               initialName={formData.name}
               initialEmail={formData.email}
@@ -668,6 +676,13 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
                 <div style={{ background: 'var(--accent-light)', border: '1px solid rgba(14,176,122,.2)', borderRadius: 'var(--radius)', padding: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--accent)' }}>
                   ✓ After registration, you can log in immediately. Full access granted after admin approval.
                 </div>
+                <GoogleAuthButton intent="signup" role="hospital" style={{ marginBottom: '14px' }} />
+                <div style={{ fontSize: '11.5px', color: 'var(--text3)', textAlign: 'center', marginBottom: '14px' }}>
+                  Google confirms your email address. Your registration number, licence and documents are
+                  still reviewed by the super admin before the account is activated.
+                </div>
+                <div className="divider-text"><span>or sign up with email</span></div>
+
                 <VerifiedCredentialsStep
                   initialName={formData.contactPerson}
                   initialEmail={formData.email}
