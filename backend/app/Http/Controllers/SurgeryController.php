@@ -435,6 +435,13 @@ class SurgeryController extends Controller
             }
         }
 
+        // Hospital names, so a supervisor looking across the whole network can tell
+        // one hospital's "Theatre 1" from another's. Every hospital names its
+        // theatres the same way, so without this the merged list is unreadable.
+        // A hospital name is not patient data, so it is safe at this tier.
+        $hospitalNames = User::whereIn('id', $resources->pluck('hospital_id')->unique())
+            ->pluck('name', 'id');
+
         $byType = [];
         $perResource = [];
 
@@ -448,13 +455,15 @@ class SurgeryController extends Controller
                 $u = (int) ($used[$r->id] ?? 0);
                 $totalUsed += $u;
                 $perResource[] = [
-                    'id'          => $r->id,
-                    'type'        => $type,
-                    'name'        => $r->name,
-                    'code'        => $r->code,
-                    'used_minutes'=> $u,
+                    'id'            => $r->id,
+                    'type'          => $type,
+                    'name'          => $r->name,
+                    'code'          => $r->code,
+                    'hospital_id'   => (int) $r->hospital_id,
+                    'hospital_name' => $hospitalNames[$r->hospital_id] ?? '-',
+                    'used_minutes'  => $u,
                     'capacity_minutes' => $capacityEach,
-                    'utilization' => $capacityEach > 0 ? round(($u / $capacityEach) * 100, 1) : null,
+                    'utilization'   => $capacityEach > 0 ? round(($u / $capacityEach) * 100, 1) : null,
                 ];
             }
 
@@ -468,10 +477,39 @@ class SurgeryController extends Controller
 
         usort($perResource, fn ($a, $b) => ($b['utilization'] ?? 0) <=> ($a['utilization'] ?? 0));
 
+        // Per-hospital rollup. For a supervisor this is the answer to the actual
+        // question - "which hospitals are at capacity?" - which a flat list of 35
+        // identically named theatres cannot give.
+        $byHospital = [];
+        foreach ($perResource as $row) {
+            $h = $row['hospital_id'];
+            $byHospital[$h] ??= [
+                'hospital_id'   => $h,
+                'hospital_name' => $row['hospital_name'],
+                'resources'     => 0,
+                'used_minutes'  => 0,
+                'capacity_minutes' => 0,
+            ];
+            $byHospital[$h]['resources']++;
+            $byHospital[$h]['used_minutes']     += $row['used_minutes'];
+            $byHospital[$h]['capacity_minutes'] += $row['capacity_minutes'];
+        }
+
+        $bookingsByHospital = $bookings->groupBy('hospital_id')->map->count();
+
+        $byHospital = collect($byHospital)->map(function ($h) use ($bookingsByHospital) {
+            $h['bookings']    = (int) ($bookingsByHospital[$h['hospital_id']] ?? 0);
+            $h['utilization'] = $h['capacity_minutes'] > 0
+                ? round(($h['used_minutes'] / $h['capacity_minutes']) * 100, 1)
+                : null;
+            return $h;
+        })->sortByDesc('utilization')->values()->all();
+
         return response()->json([
             'window'   => ['days' => $days, 'from' => $from->toDateString(), 'to' => $to->toDateString()],
             'by_type'  => $byType,
             'resources'=> $perResource,
+            'by_hospital' => $byHospital,
             'bookings' => [
                 'total'     => $bookings->count(),
                 'scheduled' => $bookings->where('status', 'scheduled')->count(),

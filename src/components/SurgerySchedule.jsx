@@ -13,6 +13,7 @@ import {
 import { formatOrgan } from '../utils/organs';
 import { toast } from '../utils/toast';
 import HelpPanel from './HelpPanel';
+import Pagination, { usePagination } from './Pagination';
 
 const BOOKING_META = {
   scheduled:   { label: 'Scheduled',   color: '#1a5c9e' },
@@ -437,9 +438,20 @@ const BookingDetail = ({ b, busy, canWrite, onClose, onStatus }) => {
 
 /** 9.3 — resource utilization analytics. */
 const UtilizationTab = ({ utilization, days, setDays }) => {
+  const [typeFilter, setTypeFilter] = useState('all');
+
+  const rows = useMemo(() => {
+    const all = utilization?.resources || [];
+    return typeFilter === 'all' ? all : all.filter(r => r.type === typeFilter);
+  }, [utilization, typeFilter]);
+
+  // Thirty-five identically named theatres across nine hospitals is not a list
+  // anyone can read, so it is filtered by type and paged rather than dumped whole.
+  const { page, setPage, totalPages, total, pageSize, slice } = usePagination(rows, 10);
+
   if (!utilization) return <div className="card" style={{ padding: '28px', textAlign: 'center', color: 'var(--text3)' }}>Loading…</div>;
 
-  const { by_type: byType, resources, bookings, assumptions, window } = utilization;
+  const { by_type: byType, resources, bookings, assumptions, window, by_hospital: byHospital = [] } = utilization;
 
   const colorFor = (pct) => pct === null ? 'var(--text3)' : pct >= 85 ? '#c5371f' : pct >= 60 ? '#e8900a' : '#0eb07a';
 
@@ -488,24 +500,88 @@ const UtilizationTab = ({ utilization, days, setDays }) => {
         <p style={{ marginTop: '8px' }}><strong>High is not automatically good.</strong> A theatre above 85% has no slack for an emergency retrieval — which, in transplant work, is most of them. Read a red bar as "no room to absorb an urgent case", not as "efficient".</p>
       </HelpPanel>
 
+      {/* Per-hospital rollup. Only shown when more than one hospital is in view,
+          which is the supervisor case - it answers "which hospitals are at
+          capacity?", the question a flat resource list cannot. */}
+      {byHospital.length > 1 && (
+        <div className="card" style={{ marginBottom: '12px' }}>
+          <div style={{ fontSize: '13px', fontWeight: '700', marginBottom: '10px' }}>
+            By hospital <span style={{ fontWeight: '400', color: 'var(--text3)' }}>· busiest first</span>
+          </div>
+          <div className="table-wrap">
+            <table style={{ fontSize: '12.5px' }}>
+              <thead><tr><th>Hospital</th><th>Resources</th><th>Bookings</th><th>Booked</th><th style={{ minWidth: '160px' }}>Utilization</th></tr></thead>
+              <tbody>
+                {byHospital.map(h => (
+                  <tr key={h.hospital_id}>
+                    <td><strong>{h.hospital_name}</strong></td>
+                    <td>{h.resources}</td>
+                    <td>{h.bookings}</td>
+                    <td>{humanMins(h.used_minutes)}</td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                        <div style={{ flex: 1, height: '7px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
+                          <div style={{ width: `${Math.min(100, h.utilization ?? 0)}%`, height: '100%', background: colorFor(h.utilization) }} />
+                        </div>
+                        <span style={{ width: '42px', textAlign: 'right' }}>{h.utilization ?? 0}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="card">
-        <div style={{ fontSize: '13px', fontWeight: '700', marginBottom: '10px' }}>Per-resource breakdown</div>
-        {resources.length === 0 ? (
-          <div style={{ fontSize: '12.5px', color: 'var(--text3)' }}>No active resources registered.</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+          <div style={{ fontSize: '13px', fontWeight: '700' }}>
+            Per-resource breakdown <span style={{ fontWeight: '400', color: 'var(--text3)' }}>· busiest first</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {[['all', `All (${(utilization.resources || []).length})`],
+              ...Object.entries(RESOURCE_META).map(([k, m]) => [k, `${m.icon} ${m.plural} (${(utilization.resources || []).filter(r => r.type === k).length})`])
+            ].map(([id, label]) => {
+              const active = typeFilter === id;
+              return (
+                <button key={id} onClick={() => { setTypeFilter(id); setPage(1); }} style={{
+                  padding: '4px 11px', borderRadius: '13px', fontSize: '11.5px', cursor: 'pointer',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  background: active ? 'var(--accent)' : 'transparent',
+                  color: active ? 'white' : 'var(--text2)', fontWeight: active ? '600' : '500',
+                }}>{label}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        {rows.length === 0 ? (
+          <div style={{ fontSize: '12.5px', color: 'var(--text3)' }}>No active resources in this view.</div>
         ) : (
-          resources.map(r => (
-            <div key={r.id} style={{ marginBottom: '9px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px' }}>
-                <span>{RESOURCE_META[r.type].icon} <strong>{r.name}</strong> <span style={{ color: 'var(--text3)' }}>({r.code})</span></span>
-                <span style={{ color: 'var(--text3)' }}>
-                  {humanMins(r.used_minutes)} of {humanMins(r.capacity_minutes)} · {r.utilization ?? 0}%
-                </span>
+          <>
+            {slice.map(r => (
+              <div key={r.id} style={{ marginBottom: '9px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px', gap: '10px' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {RESOURCE_META[r.type].icon} <strong>{r.name}</strong>{' '}
+                    <span style={{ color: 'var(--text3)' }}>({r.code})</span>
+                    {r.hospital_name && <span style={{ color: 'var(--text3)' }}> · {r.hospital_name}</span>}
+                  </span>
+                  <span style={{ color: 'var(--text3)', whiteSpace: 'nowrap' }}>
+                    {humanMins(r.used_minutes)} of {humanMins(r.capacity_minutes)} · {r.utilization ?? 0}%
+                  </span>
+                </div>
+                <div style={{ height: '7px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, r.utilization ?? 0)}%`, height: '100%', background: colorFor(r.utilization) }} />
+                </div>
               </div>
-              <div style={{ height: '7px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(100, r.utilization ?? 0)}%`, height: '100%', background: colorFor(r.utilization) }} />
-              </div>
-            </div>
-          ))
+            ))}
+            {totalPages > 1 && (
+              <Pagination page={page} setPage={setPage} totalPages={totalPages}
+                          total={total} pageSize={pageSize} label="resources" />
+            )}
+          </>
         )}
       </div>
     </>
