@@ -706,14 +706,35 @@ There is currently **no database backup**. MySQL binary logging is off
 (`log_bin=OFF`), so there is no point-in-time recovery either: if the database
 is lost, it is lost. `spatie/laravel-backup` is already installed.
 
-A manual dump before anything risky:
+### Taking a backup
 
-```bash
-"C:\xampp\mysql\bin\mysqldump.exe" -u root -P 3307 odcat_backend > backup.sql
+```powershell
+cd backend
+.\scripts\backup.ps1
 ```
 
-Restore with:
+That dumps the database, archives the uploaded files, and then **verifies the
+dump by restoring it into a throwaway database and comparing every table's row
+count against the live one**. An unverified backup is not a backup: if the
+comparison fails the file is renamed `.FAILED` and the script exits non-zero, so
+a corrupt dump can never sit in the folder looking healthy. A dump that fails
+part-way is deleted rather than left behind as a plausible-looking empty file.
+
+Backups land in `D:\Sham\fyp\odcat-backups` - deliberately **outside the git
+repo**, because the dump contains real user data and password hashes and must
+never be committed. Anything older than 30 days is pruned (`-KeepDays 0` keeps
+everything).
+
+### Restoring
+
+```powershell
+& "C:\xampp\mysql\bin\mysql.exe" -u root -P 3307 odcat_backend < "D:\Sham\fyp\odcat-backups\odcat_backend_<stamp>.sql"
+```
+
+Uploaded files, if you need them back too:
 
 ```bash
-"C:\xampp\mysql\bin\mysql.exe" -u root -P 3307 odcat_backend < backup.sql
+tar -xzf odcat_files_<stamp>.tar.gz -C backend/storage/app
 ```
+
+Run the backup before anything risky - migrations, `db:seed`, or any schema work.
