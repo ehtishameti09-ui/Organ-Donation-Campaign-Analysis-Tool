@@ -9,9 +9,6 @@ dist/
 .env.local
 .env.*.local
 
-# Claude Code internals
-.claude/
-
 # Editor
 .vscode/
 *.swp
