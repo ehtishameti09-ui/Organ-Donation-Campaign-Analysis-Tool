@@ -7,21 +7,21 @@ background reading required.
 
 ## 1. Things only you can do
 
-### ☐ Click through Google sign-in once
+### ☑ Click through Google sign-in — **confirmed working, 4 Oct 2026**
 
-The one step that could not be automated: Google blocks headless browsers, so
-every test mocks the consent screen. Both sides of it are verified; the screen
-itself is not.
+This was the one step that could not be automated: Google blocks headless
+browsers, so every test mocks the consent screen. Both sides of it were
+verified automatically; the screen itself needed a human.
 
-1. Start the app (see §3), open http://localhost:3000
-2. **"Continue with Google"** → pick an account that already has an ODCAT
-   account → you should land signed in
-3. **Create Account → pick Donor → "Sign up with Google"** → pick a *fresh*
-   Google account → you should land on **Complete Your Donor Registration**
-4. Repeat step 3 for Recipient and Hospital
+Confirmed by hand. Nothing in the project is now unverified for want of testing.
 
-If any of those bounce you back to the login screen, tell me what the URL bar
-says — the query string is the diagnostic.
+If it ever misbehaves later, the diagnostic is the address bar — the `error=`
+value in the query string says exactly which branch of the callback refused.
+To re-check:
+
+1. **"Continue with Google"** with an account that already exists → lands signed in
+2. **Create Account → Donor → "Sign up with Google"** with a fresh Google account
+   → lands on **Complete Your Donor Registration**
 
 ### ☐ Decide whether the security write-up stays public
 
