@@ -790,3 +790,28 @@ Get-ScheduledTaskInfo -TaskName 'ODCAT Database Backup'    # last result
 
 A manual backup only protects you if somebody remembers to run it - and the one
 time this project lost its data, nobody had.
+
+### Off-machine copy
+
+Each verified backup is mirrored to OneDrive automatically:
+
+```
+C:\Users\global\OneDrive - Punjab Group of Colleges\odcat-backups
+```
+
+The destination comes from `$env:OneDrive`, so it follows whichever account
+Windows is signed into. Override or disable it:
+
+```powershell
+.\scripts\backup.ps1 -MirrorTo "D:\some\other\place"
+.\scripts\backup.ps1 -MirrorTo ""        # local only
+```
+
+It mirrors **after** verification, so only a backup that restored cleanly is
+synced, and `.FAILED` files are excluded. If OneDrive is paused or signed out the
+mirror is skipped with a warning - the local backup still succeeds, because a
+cloud problem must not turn a good backup into a failed run.
+
+A backup on the same disk as the database does not survive the failure it exists
+to protect against. **The `.sql` files contain real user data and password
+hashes - keep that folder private and do not share it.**

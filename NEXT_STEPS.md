@@ -125,7 +125,7 @@ not a claim that the system is free of all defects.
 | **Permissions are declarative, not enforced.** 24 Spatie permissions exist; no code reads them. Authorization is entirely role-based. | Leave as-is and keep the seeder's warning comment. Enforcing them now is a large refactor with real regression risk and no behaviour change. |
 | **Frontend tests are smoke-level.** They catch pages that throw, failing requests, and a role seeing the wrong data — not every button. | Good enough for this project. Extend only if a specific flow keeps breaking. |
 | **2FA is off by default.** `TwoFactorController` works and users can opt in from Account Settings. | Consider defaulting it **on for hospital and admin accounts** — those hold other people's clinical data. Donors and recipients can stay opt-in. I can do this if you want it. |
-| **Backups are local only.** Daily task writes to `D:\Sham\fyp\odcat-backups` on the same machine. | Copy the folder to OneDrive/Google Drive occasionally. A disk failure currently loses both the database and its backups. |
+| ~~Backups are local only.~~ **Done** - every verified backup now mirrors to OneDrive automatically. | Nothing to do. The copy lives in `OneDrive - Punjab Group of Colleges\odcat-backups`. Keep it private - the dumps contain password hashes. |
 | **No CI.** Tests run only when someone runs them. | Low value for an FYP. Skip unless your supervisor asks. |
 
 ---

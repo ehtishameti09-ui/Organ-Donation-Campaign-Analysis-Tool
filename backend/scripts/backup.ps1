@@ -28,7 +28,12 @@ param(
     [int]    $Port      = 3307,
     [string] $User      = 'root',
     # Older backups are pruned after this many days. 0 keeps everything.
-    [int]    $KeepDays  = 30
+    [int]    $KeepDays  = 30,
+    # Off-machine copy. Defaults to OneDrive, which $env:OneDrive resolves to the
+    # account Windows has signed in. A backup sitting on the same disk as the
+    # database does not survive the failure it exists to protect against.
+    # Pass '' to skip mirroring.
+    [string] $MirrorTo  = $(if ($env:OneDrive) { Join-Path $env:OneDrive 'odcat-backups' } else { '' })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -165,10 +170,42 @@ if ($KeepDays -gt 0) {
     }
 }
 
+# ------------------------------------------------------- 5. off-machine copy
+# Deliberately AFTER verification and pruning: only a backup that restored
+# cleanly is worth syncing, and mirroring first would push .FAILED files too.
+if ($MirrorTo) {
+    Write-Host '  mirroring off-machine ...' -NoNewline
+    try {
+        if (-not (Test-Path $MirrorTo)) { New-Item -ItemType Directory -Path $MirrorTo -Force | Out-Null }
+
+        # /MIR keeps the copy in step rather than accumulating duplicates, so the
+        # pruning above applies to both. .FAILED files are excluded so a bad dump
+        # can never masquerade as a good one in the cloud copy.
+        & robocopy $BackupDir $MirrorTo /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1 /XF '*.FAILED' | Out-Null
+
+        # robocopy exit codes below 8 are success; 8+ are real failures.
+        if ($LASTEXITCODE -lt 8) {
+            $n = @(Get-ChildItem $MirrorTo -File -ErrorAction SilentlyContinue).Count
+            Write-Host (' ok  (' + $n + ' file(s) -> ' + $MirrorTo + ')') -ForegroundColor Green
+        } else {
+            Write-Host (' FAILED (robocopy ' + $LASTEXITCODE + ')') -ForegroundColor Yellow
+            Write-Host '      The local backup is still good; only the off-machine copy was skipped.' -ForegroundColor Yellow
+        }
+    } catch {
+        # A paused or signed-out OneDrive must never turn a good backup into a
+        # failed run - the thing that matters already succeeded.
+        Write-Host ' SKIPPED' -ForegroundColor Yellow
+        Write-Host ('      ' + $_.Exception.Message) -ForegroundColor Yellow
+    }
+    # robocopy's exit code would otherwise leak out as this script's.
+    $global:LASTEXITCODE = 0
+}
+
 Write-Host ''
 Write-Host 'Backup verified:' -ForegroundColor Green
 Write-Host ('  ' + $sqlFile)
 if (Test-Path $tarFile) { Write-Host ('  ' + $tarFile) }
+if ($MirrorTo -and (Test-Path $MirrorTo)) { Write-Host ('  mirrored to ' + $MirrorTo) }
 Write-Host ''
 Write-Host 'To restore:' -ForegroundColor Cyan
 Write-Host ('  & "' + $mysql + '" -u ' + $User + ' -P ' + $Port + ' ' + $Database + ' < "' + $sqlFile + '"')
