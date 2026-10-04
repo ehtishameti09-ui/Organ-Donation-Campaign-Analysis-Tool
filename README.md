@@ -60,20 +60,6 @@ npm run build
 npm run preview
 ```
 
-## 🔑 Demo Credentials
-
-### Super Admin
-- **Email:** admin@odcat.com
-- **Password:** Admin@123
-
-### Admin
-- **Email:** dr.ali@odcat.com
-- **Password:** Admin@123
-
-### Hospital
-- **Email:** cmh@odcat.com
-- **Password:** Admin@123
-
 ## 📁 Project Structure
 
 ```
