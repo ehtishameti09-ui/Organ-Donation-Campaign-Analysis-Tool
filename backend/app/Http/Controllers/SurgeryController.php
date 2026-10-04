@@ -200,22 +200,48 @@ class SurgeryController extends Controller
 
         // Cross-check the linked case/organ actually belongs to this hospital,
         // and carry the recipient across so the booking knows who it is for.
+        //
+        // EITHER SIDE of a cross-hospital case may schedule. Allocation is
+        // network-wide, so in most cases the organ is procured at one hospital and
+        // implanted at another - and the implant happens in the RECEIVING
+        // hospital's theatre, with its surgeon and its ICU bed. Requiring
+        // $a->hospital_id === $scope meant the hospital that actually performs the
+        // operation was refused, while the procuring hospital was invited to book
+        // theatre time it does not own.
+        //
+        // This grants no extra read: both sides can already see the case. And it
+        // cannot be used to book someone else's resources, because the scheduler
+        // filters every resource on $hospitalId and the booking is stamped with it.
         $recipientId = null;
+        $linkedCase  = null;
 
         if (!empty($data['case_approval_id'])) {
             $a = CaseApproval::find($data['case_approval_id']);
-            if (!$a || (int) $a->hospital_id !== $scope) {
+            $onCase = $a && (
+                (int) $a->hospital_id === $scope || (int) $a->recipient_hospital_id === $scope
+            );
+            if (!$onCase) {
                 return response()->json(['message' => 'That approval case belongs to another hospital.'], 403);
             }
             if ($a->stage !== 'approved') {
                 return response()->json(['message' => 'Surgery can only be scheduled against a case the approval board has cleared.'], 422);
             }
+            $linkedCase  = $a;
             $recipientId = $a->recipient_user_id;
         }
 
         if (!empty($data['organ_id'])) {
             $o = Organ::find($data['organ_id']);
-            if (!$o || (int) $o->hospital_id !== $scope) {
+
+            // The organ row belongs to the procuring hospital, which recovered it.
+            // The receiving hospital reaches it through the approval case it is the
+            // counterparty on - not by hospital_id, which it will never match.
+            $onOrgan = $o && (
+                (int) $o->hospital_id === $scope
+                || ($linkedCase && (int) $linkedCase->recipient_hospital_id === $scope
+                    && (int) $o->case_approval_id === (int) $linkedCase->id)
+            );
+            if (!$onOrgan) {
                 return response()->json(['message' => 'That organ belongs to another hospital.'], 403);
             }
             if ($o->isTerminal()) {

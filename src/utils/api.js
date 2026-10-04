@@ -1091,9 +1091,10 @@ const approvalRequest = async (path, { method = 'GET', body = null, fallback = '
   return await r.json();
 };
 
-export const getApprovalsViaAPI = async ({ stage = null, page = 1, limit = 20 } = {}) => {
+export const getApprovalsViaAPI = async ({ stage = null, side = null, page = 1, limit = 20 } = {}) => {
   const qs = new URLSearchParams({ page, limit });
   if (stage) qs.set('stage', stage);
+  if (side) qs.set('side', side);
   return approvalRequest(`?${qs}`, { fallback: 'Failed to load the approval board' });
 };
 
@@ -1126,6 +1127,20 @@ export const adminConfirmCaseViaAPI = async (id, notes = '') =>
 export const rejectCaseViaAPI = async (id, reason) =>
   approvalRequest(`/${id}/reject`, {
     method: 'POST', body: { reason }, fallback: 'Failed to reject the case',
+  });
+
+/**
+ * The receiving hospital's answer to an organ offer.
+ *
+ * Only the hospital holding the recipient's record may call this - allocation is
+ * cross-hospital, so the procuring hospital cannot consent on its behalf. A
+ * decline needs a reason and sends the organ to the next-ranked candidate.
+ */
+export const respondToOfferViaAPI = async (id, accept, { reason = null, notes = null } = {}) =>
+  approvalRequest(`/${id}/offer-respond`, {
+    method: 'POST',
+    body: accept ? { accept: true, notes } : { accept: false, reason },
+    fallback: accept ? 'Failed to accept the offer' : 'Failed to decline the offer',
   });
 
 // ===== Module 8 — Organ Lifecycle & Cold Chain =====
@@ -1337,6 +1352,7 @@ export default {
   getApprovalViaAPI,
   getApprovalsViaAPI,
   rejectCaseViaAPI,
+  respondToOfferViaAPI,
   setApprovalChecklistItemViaAPI,
   setApprovalModeViaAPI,
   // Admin requests

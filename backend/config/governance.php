@@ -35,6 +35,19 @@ return [
     'rejection_reason_min' => 20,
 
     /*
+     * How long an organ offer may sit unanswered before the receiving hospital is
+     * reminded and the procuring hospital is told it is stalling.
+     *
+     * Expressed as a FRACTION of that organ's own cold-ischemia limit, because the
+     * urgency is not the same for every organ: a heart has roughly four hours in
+     * total, a kidney closer to a day, so a flat timeout would be far too slow for
+     * one and needlessly noisy for the other. The floor stops very short-limit
+     * organs from escalating almost immediately.
+     */
+    'offer_escalation_fraction'   => 0.20,
+    'offer_escalation_min_minutes' => 30,
+
+    /*
      |--------------------------------------------------------------------------
      | Module 8 — Cold ischemia limits (minutes)
      |--------------------------------------------------------------------------

@@ -46,6 +46,12 @@ cd backend
 php artisan demo:refresh-dates      # bookings and organ clocks back onto today
 ```
 
+The approval board now has two sides, so a good demo signs in as **two**
+hospitals: one procuring (ticks the checklist, then waits) and one receiving
+(accepts or declines the offer). The seeded data puts at least one case at
+**Offer Pending** and one at **Declined** so both are visible without clicking
+anything.
+
 `DemoDataSeeder` generates data relative to the day it runs. After a week or
 two the calendar empties, every utilisation figure reads 0%, and all organs show
 as breached. This slides the set back. **Run it the morning of any demo.**
@@ -54,6 +60,7 @@ Quick sanity check that the data looks alive:
 
 ```bash
 php artisan organs:check-cold-chain --dry-run
+php artisan offers:check-stalled --dry-run   # unanswered organ offers
 ```
 
 ---
@@ -80,7 +87,7 @@ curl http://localhost:8000/api/health
 ## 4. Running the tests
 
 ```bash
-cd backend && composer run test   # 84 backend tests
+cd backend && composer run test   # 115 backend tests
 npm run test:smoke                # frontend, needs the app running
 ```
 
@@ -104,6 +111,8 @@ Every mutating API route was enumerated and checked. Current state:
 | Clinical approval (donor / recipient verify) | ✅ fixed + tested |
 | Patient documents (read, review, upload, delete) | ✅ fixed + tested |
 | Modules 7–9 (approvals, organs, surgery) | ✅ fixed + tested |
+| Cross-hospital offers (two-sided approval board) | ✅ fixed + tested |
+| Cross-hospital data minimisation (allocation pool) | ✅ fixed + tested + scrubbed at rest |
 | Google sign-in / sign-up / account linking | ✅ fixed + tested |
 | Case appeals + ban appeals | ✅ verified scoped |
 | Notifications | ✅ verified scoped (own records only) |
@@ -127,6 +136,8 @@ not a claim that the system is free of all defects.
 | **2FA is off by default.** `TwoFactorController` works and users can opt in from Account Settings. | Consider defaulting it **on for hospital and admin accounts** — those hold other people's clinical data. Donors and recipients can stay opt-in. I can do this if you want it. |
 | ~~Backups are local only.~~ **Done** - every verified backup now mirrors to OneDrive automatically. | Nothing to do. The copy lives in `OneDrive - Punjab Group of Colleges\odcat-backups`. Keep it private - the dumps contain password hashes. |
 | **No CI.** Tests run only when someone runs them. | Low value for an FYP. Skip unless your supervisor asks. |
+| ~~Allocation runs held other hospitals' patient names at rest.~~ **Done** - `php artisan allocation:scrub-pii` cleaned 2,361 records across 19 runs, and new runs never store them. | Nothing to do. Re-run the command after restoring any backup taken before 4 Oct 2026, since those dumps still contain the old data. |
+| ~~Nothing chased an offer nobody answered.~~ **Done** - `offers:check-stalled` runs every 5 minutes and reminds both hospitals once the offer passes 20% of that organ's cold-ischemia limit. | Nothing to do. Note it deliberately does **not** auto-decline: that would record a clinical decision no clinician made. It escalates and leaves the decision with the people qualified to take it. |
 
 ---
 

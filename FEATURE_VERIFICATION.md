@@ -405,6 +405,9 @@ wrote that causes the breach.
 | 9 | Hospital admins could vet competing hospitals | **Medium** — conflict of interest | Code analysis | `3fb866d` |
 | 10 | Document review unscoped by hospital | **Medium** — approve another hospital's papers | Code analysis | `(this commit)` |
 | 11 | Test suite could drop the live database | **Critical (ops)** — and did, once | Reproduced | `151ac33` |
+| 12 | Approval board ignored cross-hospital matching | **High** — a hospital approved transplants for another hospital's patients, who never saw the case | Queried live data: 8 of 10 cases | `(this commit)` |
+| 13 | Allocation pool leaked identified clinical data | **High** — every hospital could read every approved recipient's name, email and diagnosis nationwide | Code analysis + payload inspection | `(this commit)` |
+| 14 | The same leak was persisted at rest | **High** — 2,361 candidate records held cross-hospital PII in `allocation_runs.results` | Counted in the database | `(this commit)` |
 
 ## The two that mattered most
 
@@ -436,6 +439,104 @@ role: donor -> super_admin
 
 Both were reverted immediately after demonstration and their tokens revoked.
 
+## Cross-hospital allocation versus a single-hospital approval board
+
+The three defects above (12–14) share one root cause: Module 5 was built to match
+across the whole network, and Module 7 was built as though it did not.
+
+`AllocationController::loadRecipientPayloads()` draws candidates from **every**
+approved recipient in the country. But `CaseApprovalController::openFor()` stamped
+each approval case with the **donor's** hospital alone, and the board filtered on
+that single column. Querying the seeded data showed how far from an edge case this
+was:
+
+```
+cross-hospital approval cases: 8 of 10
+H3:   board shows 2 | own patients in ANOTHER hospital's case: 5 (3 already decided)
+H597: board shows 2 | own patients in ANOTHER hospital's case: 3
+```
+
+Two cases had already been closed — one approved, one rejected — by a hospital that
+had never seen the patient. The hospital that holds the chart, obtains consent and
+performs the operation had no stage in the workflow and could not see the case at
+all.
+
+The second half of the problem was disclosure. The cross-hospital pool returned
+`name`, `email` and `diagnosis` for every approved recipient in the network to any
+hospital-linked admin who ran an allocation. That is a wider exposure than the
+super-admin case already closed on data-minimisation grounds, because there are
+many hospitals and one supervisor. Worse, `allocation_runs.results` is a JSON
+snapshot of the whole ranked pool, so the disclosure was **persisted**: 2,361
+candidate records across 19 runs.
+
+### What changed
+
+The board is now two-sided. `case_approvals` carries `recipient_hospital_id`, and
+a case is visible to either side — with asymmetric rights:
+
+| | Procuring hospital | Receiving hospital |
+|---|---|---|
+| Verification checklist | ticks it | reads it |
+| Clinical sign-off / final confirmation | yes | no |
+| Accept or decline the offer | **no** | **yes** |
+| Reject the case outright | yes | no |
+| Sees its own patient | in full | in full |
+| Sees the counterparty's patient | match code until the offer is accepted | n/a |
+| Sees donor identity | yes | **never** |
+| Sees the other side's free-text notes | no | no |
+
+A new `offer` stage sits between the checklist and clinical sign-off: the procuring
+hospital cannot proceed until the receiving hospital accepts. Same-hospital cases
+skip it, because there is no counterparty to ask.
+
+A decline is recorded as `declined`, not `rejected`, and is **not** a verdict on the
+patient — they keep their place on the list. The organ falls automatically to the
+next-ranked candidate from the same run, walking the stored ranking rather than
+re-scoring, so the decision stays faithful to the policy version that produced the
+original offer. Candidates already tried are skipped, so a chain of declines cannot
+loop.
+
+On disclosure: the live payload now withholds `name`, `email` and `diagnosis` across
+a hospital boundary, the read paths scrub historical rows, and
+`php artisan allocation:scrub-pii` removes the data at rest. The scoring fields are
+untouched — `AllocationService::rank()` never reads the three withheld fields, which
+was verified against the service before removing them, and confirmed empirically:
+after scrubbing all 19 runs, the ranking signature of run 19 was **byte-identical**
+(`sha1 ee07ad4a…` before and after).
+
+Offer-response time is tracked separately from approval time, so a hospital is not
+ranked in the 7.4 performance comparison on how fast its partners answer.
+
+### The failure mode this introduced
+
+Making the procuring hospital wait on a counterparty is correct, but it created a
+way to strand an organ that did not exist before: previously a hospital could
+complete an approval on its own, so nothing could block indefinitely. Now an offer
+can sit untouched while the cold-ischemia clock runs, and the organ is lost to a
+missed notification rather than to any clinical decision. Handling that is part of
+the change, not a separate feature.
+
+`offers:check-stalled` runs every five minutes alongside the cold-chain sweep and
+reminds **both** hospitals once an offer passes 20% of that organ's cold-ischemia
+limit — a fraction rather than a flat timeout, because a heart has roughly four
+hours in total and a kidney closer to a day.
+
+It deliberately does **not** auto-decline on timeout. That would be worse than the
+stall: it would record a clinical decision that no clinician made, against a
+patient who might well have been accepted. It escalates and leaves the decision
+with the people qualified to take it.
+
+Idempotent via a conditional `UPDATE` on `offer_escalated_at`, the same pattern as
+`organs.breach_notified_at`, so a sweep every five minutes sends one reminder
+rather than one per tick.
+
+One migration subtlety worth recording: open cross-hospital cases that had already
+cleared their checklist were sitting at `doctor`/`admin` with no offer on record.
+The migration walks those **back** to `offer` rather than grandfathering them — the
+missing consent step is the defect, and approving them silently would bake it in.
+Terminal cases are left untouched, because rewriting a closed decision would
+falsify the record.
+
 ## What changed structurally
 
 Authorization for patient cases and documents now goes through a single class,
@@ -457,7 +558,8 @@ Two rules inside it fix inversions that appeared repeatedly in the original code
 
 | Role | Patient records | Clinical decisions | Scope |
 |---|---|---|---|
-| Hospital | read + write | yes | own patients |
+| Hospital (procuring side) | read + write | yes | own patients; counterparty candidates by match code |
+| Hospital (receiving side) | own patient only | offer accept/decline only | no donor identity |
 | Admin (hospital-linked) | read + write | yes | that hospital only |
 | Doctor | read + write | yes (clinical sign-off) | that hospital only |
 | Data entry | read + write | no | that hospital only |
@@ -498,13 +600,14 @@ cd backend
 composer run test
 ```
 
-84 tests, 199 assertions. The authorization boundaries specifically:
+115 tests, 545 assertions. The authorization boundaries specifically:
 
 ```bash
 php artisan test --filter=UserAuthorizationTest        # 21 - roles, scoping, case status
 php artisan test --filter=CaseAndDocumentScopeTest     # 13 - clinical review, documents
 php artisan test --filter=ModuleAccessScopeTest        # 10 - Modules 7-9 data access
 php artisan test --filter=GoogleAuthTest               # 11 - sign-up, sign-in, linking
+php artisan test --filter=CrossHospitalApprovalTest    # 31 - two-sided board, offers, re-offer, minimisation, escalation, seeder
 ```
 
 Each test corresponds to a defect that was actually open, and covers **both**

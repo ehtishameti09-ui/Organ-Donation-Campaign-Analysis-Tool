@@ -17,6 +17,28 @@ import { ORGAN_GROUPS, formatOrgan } from '../utils/organs';
 import HelpPanel from './HelpPanel';
 import Pagination, { usePagination } from './Pagination';
 
+/**
+ * How to name a candidate.
+ *
+ * The cross-hospital pool is minimised: a recipient at another hospital comes
+ * back with `name` null and a `match_code` instead, because identified clinical
+ * data should not cross a tenant boundary just because someone ran an allocation.
+ * Every place that used to print `r.name` goes through this, so a withheld
+ * candidate reads as a code rather than as a blank cell.
+ */
+const candidateLabel = (r) => {
+  if (!r) return '—';
+  return r.name || r.match_code || (r.user_id ? `REC-${r.user_id}` : '—');
+};
+
+/** Free-text clinical detail is not disclosed across hospitals at all. */
+const candidateDiagnosis = (r) => {
+  if (!r) return '—';
+  if (r.diagnosis) return r.diagnosis;
+  return r.identity_withheld ? 'Withheld — other hospital' : '—';
+};
+
+
 const SCORE_COLORS = {
   urgency:  '#d63e3e',
   waiting:  '#e8900a',
@@ -315,7 +337,7 @@ const RunTab = ({ donors, policies, onRunComplete }) => {
                       </td>
                       <td>
                         <div style={{ fontWeight: '600', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                          {r.name}
+                          {candidateLabel(r)}
                           {r.is_cross_hospital && (
                             <span style={{
                               fontSize: '9px', fontWeight: '700',
@@ -336,7 +358,7 @@ const RunTab = ({ donors, policies, onRunComplete }) => {
                         </div>
                       </td>
                       <td><span className="badge badge-blue">{r.blood_type}</span></td>
-                      <td style={{ fontSize: '12px', maxWidth: '200px' }}>{r.diagnosis || '—'}</td>
+                      <td style={{ fontSize: '12px', maxWidth: '200px' }}>{candidateDiagnosis(r)}</td>
                       <td><ScoreBreakdown breakdown={r.score_breakdown} /></td>
                       <td style={{ textAlign: 'right', fontWeight: '700', color: 'var(--primary)' }}>
                         {r.final_score}
@@ -754,7 +776,7 @@ const SimulationTab = ({ runs }) => {
                   const chSym = ch > 0 ? `▲ +${ch}` : ch < 0 ? `▼ ${ch}` : '= 0';
                   return (
                     <tr key={c.user_id}>
-                      <td><strong>{c.name}</strong></td>
+                      <td><strong>{candidateLabel(c)}</strong></td>
                       <td style={{ textAlign: 'center' }}>#{c.old_rank ?? '—'}</td>
                       <td style={{ textAlign: 'center' }}>#{c.new_rank}</td>
                       <td style={{ textAlign: 'center', color: chColor, fontWeight: '600' }}>{chSym}</td>
@@ -904,7 +926,7 @@ const HistoryTab = ({ runs }) => {
                     {(selectedRun.results || []).map(r => (
                       <tr key={r.user_id}>
                         <td>#{r.rank}</td>
-                        <td>{r.name}</td>
+                        <td>{candidateLabel(r)}</td>
                         <td><ScoreBreakdown breakdown={r.score_breakdown} /></td>
                         <td style={{ textAlign: 'right', fontWeight: '700' }}>{r.final_score}</td>
                       </tr>
@@ -955,7 +977,7 @@ const AutoMatchTab = ({ onAction }) => {
         selected_rank: recipient.rank,
         decision_type: 'confirmed',
       });
-      toast(`Confirmed match — ${recipient.name}`, 'success');
+      toast(`Confirmed match — ${candidateLabel(recipient)}`, 'success');
       load(page, { silent: true });
       onAction?.();
     } catch (e) {
@@ -1085,7 +1107,7 @@ const AutoMatchTab = ({ onAction }) => {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '10px', alignItems: 'center' }}>
                           <div>
                             <div style={{ fontSize: '12.5px', fontWeight: '600', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px' }}>
-                              👤 {m.top_match.name}
+                              👤 {candidateLabel(m.top_match)}
                               <span style={{ fontSize: '10px', fontWeight: '400', color: 'var(--text3)' }}>
                                 ({m.top_match.blood_type} · age {m.top_match.age ?? '—'} · {m.top_match.gender || '—'})
                               </span>
@@ -1101,7 +1123,7 @@ const AutoMatchTab = ({ onAction }) => {
                               )}
                             </div>
                             <div style={{ fontSize: '10.5px', color: 'var(--text2)', marginTop: '1px' }}>
-                              {m.top_match.diagnosis} · urgency {m.top_match.urgency_score} · {m.top_match.days_on_waitlist}d on waitlist
+                              {candidateDiagnosis(m.top_match)} · urgency {m.top_match.urgency_score} · {m.top_match.days_on_waitlist}d on waitlist
                             </div>
                             <div style={{ fontSize: '10.5px', color: 'var(--text2)', marginTop: '1px' }}>
                               🏥 <strong>{m.top_match.hospital_name || '—'}</strong>
@@ -1125,7 +1147,7 @@ const AutoMatchTab = ({ onAction }) => {
 
                         {m.runner_up && (
                           <div style={{ fontSize: '10px', color: 'var(--text3)', marginTop: '5px', paddingLeft: '2px' }}>
-                            Runner-up: {m.runner_up.name} (score {m.runner_up.final_score})
+                            Runner-up: {candidateLabel(m.runner_up)} (score {m.runner_up.final_score})
                           </div>
                         )}
 
@@ -1184,7 +1206,7 @@ const AutoMatchTab = ({ onAction }) => {
                   <strong>Donor:</strong> {decisionTarget.donor.name} · <strong>Organ:</strong> {formatOrgan(decisionTarget.organ)}
                 </div>
                 <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  <strong>{decisionTarget.mode === 'reject' ? 'Rejecting recommendation:' : 'Selecting:'}</strong> {decisionTarget.recipient.name}
+                  <strong>{decisionTarget.mode === 'reject' ? 'Rejecting recommendation:' : 'Selecting:'}</strong> {candidateLabel(decisionTarget.recipient)}
                   <span style={{ color: 'var(--text3)' }}> · score {decisionTarget.recipient.final_score} · rank #{decisionTarget.recipient.rank}</span>
                 </div>
               </div>

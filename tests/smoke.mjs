@@ -99,7 +99,9 @@ const run = async () => {
 
     // Each module must render its own data, not just an empty shell.
     const pages = [
-      ['Approval Board', () => /Needs Action|No cases in this view/.test(document.body.innerText)],
+      // "Needs You" is the two-sided board's actionable queue - offers waiting on
+      // us as the receiving centre, plus our own donor-side work.
+      ['Approval Board', () => /Needs You|No cases in this view/.test(document.body.innerText)],
       ['Organ Lifecycle', () => /ORG-\d{4}|No organs in this view/.test(document.body.innerText)],
       ['Surgery Schedule', () => /(January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d/.test(document.body.innerText)],
       ['Allocation Engine', () => /Allocation|Donor/i.test(document.body.innerText)],
@@ -107,6 +109,22 @@ const run = async () => {
     for (const [label, marker] of pages) {
       if (!(await visit(page, label))) { fail(`${label}: nav item missing`); continue; }
       check(await until(page, marker), `${label} renders`);
+    }
+
+    // The approval board is two-sided: allocation matches across hospitals, so a
+    // hospital sees cases it procures AND offers made to it. Assert the side
+    // column renders rather than silently falling back to blank cells.
+    if (await visit(page, 'Approval Board')) {
+      const sided = await until(page, () =>
+        /Procuring|Receiving|Internal|No cases in this view/.test(document.body.innerText));
+      check(sided, 'Approval Board shows which side of each offer we are on');
+
+      // A withheld counterparty patient must read as a match code, never blank.
+      const noBlankParty = await page.evaluate(() => {
+        const body = document.body.innerText;
+        return !/withheld/.test(body) || /REC-|DNR-/.test(body);
+      });
+      check(noBlankParty, 'withheld patients render as a match code');
     }
 
     check(page._smokeErrors.length === 0,

@@ -6,6 +6,7 @@ import {
   getApprovalViaAPI,
   getApprovalsViaAPI,
   rejectCaseViaAPI,
+  respondToOfferViaAPI,
   setApprovalChecklistItemViaAPI,
   setApprovalModeViaAPI,
 } from '../utils/api';
@@ -15,19 +16,26 @@ import Pagination, { usePagination } from './Pagination';
 
 const STAGE_META = {
   checklist: { label: 'Verification',   color: '#e8900a', hint: 'Checklist in progress' },
+  offer:     { label: 'Offer Pending',  color: '#0d7f8c', hint: 'Awaiting the receiving hospital’s decision' },
   doctor:    { label: 'Doctor Review',  color: '#7c5cbf', hint: 'Awaiting clinical sign-off' },
   admin:     { label: 'Final Sign-off', color: '#1a5c9e', hint: 'Awaiting admin confirmation' },
   approved:  { label: 'Approved',       color: '#0eb07a', hint: 'Cleared for transplant' },
-  rejected:  { label: 'Rejected',       color: '#c5371f', hint: 'Closed — not cleared' },
+  rejected:  { label: 'Rejected',       color: '#c5371f', hint: 'Closed — not cleared by the procuring hospital' },
+  declined:  { label: 'Offer Declined', color: '#8a6d3b', hint: 'Receiving hospital declined — organ re-offered' },
 };
 
 const FILTERS = [
-  { id: 'open',      label: 'Needs Action' },
-  { id: 'checklist', label: 'Verification' },
-  { id: 'doctor',    label: 'Doctor Review' },
-  { id: 'admin',     label: 'Final Sign-off' },
-  { id: 'approved',  label: 'Approved' },
-  { id: 'rejected',  label: 'Rejected' },
+  // First chip is the actionable queue: cases where the ball is in THIS
+  // hospital's court, on either side of the offer.
+  { id: 'awaiting_us', label: 'Needs You' },
+  { id: 'open',        label: 'All Open' },
+  { id: 'checklist',   label: 'Verification' },
+  { id: 'offer',       label: 'Offer Pending' },
+  { id: 'doctor',      label: 'Doctor Review' },
+  { id: 'admin',       label: 'Final Sign-off' },
+  { id: 'approved',    label: 'Approved' },
+  { id: 'declined',    label: 'Declined' },
+  { id: 'rejected',    label: 'Rejected' },
 ];
 
 /** Human-readable duration. Seconds are only useful under a minute. */
@@ -39,6 +47,45 @@ const humanDuration = (secs) => {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ${m % 60}m`;
   return `${Math.floor(h / 24)}d ${h % 24}h`;
+};
+
+/**
+ * A donor or recipient cell. Across a hospital boundary the server sends `label`
+ * as a match code and `name` as null, so the UI shows the code in a muted,
+ * monospaced style rather than an empty cell - the absence is deliberate and
+ * should look deliberate.
+ */
+const Party = ({ p }) => {
+  if (!p) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  if (!p.withheld) return <span>{p.label || p.name}</span>;
+
+  return (
+    <span
+      title="Identity withheld - this patient belongs to another hospital"
+      style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11.5px', color: 'var(--text3)' }}
+    >
+      {p.label} · withheld
+    </span>
+  );
+};
+
+/** Which side of the offer this hospital is on. */
+const SideChip = ({ c }) => {
+  if (!c.is_cross_hospital) {
+    return <span style={{ fontSize: '11px', color: 'var(--text3)' }}>Internal</span>;
+  }
+  const receiving = c.side === 'recipient';
+  return (
+    <span style={{
+      fontSize: '10.5px', fontWeight: '700', padding: '2px 7px', borderRadius: '10px',
+      background: receiving ? '#e6f4f6' : '#eef2f8',
+      color: receiving ? '#0d7f8c' : '#1a5c9e',
+      border: `1px solid ${receiving ? '#bfe0e5' : '#ccd9ec'}`,
+      whiteSpace: 'nowrap',
+    }}>
+      {receiving ? 'Receiving' : 'Procuring'}
+    </span>
+  );
 };
 
 const StageBadge = ({ stage }) => {
@@ -70,8 +117,8 @@ const SummaryCard = ({ label, value, sub, accent }) => (
  * reason an action is unavailable is visible before you click, not after.
  */
 const ApprovalBoard = ({ currentUser }) => {
-  const [filter, setFilter] = useState('open');
-  const [board, setBoard] = useState({ data: [], counts: {}, read_only: false });
+  const [filter, setFilter] = useState('awaiting_us');
+  const [board, setBoard] = useState({ data: [], counts: {}, awaiting_us: 0, read_only: false });
   const [metrics, setMetrics] = useState(null);
   const [metricsLoaded, setMetricsLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -80,6 +127,8 @@ const ApprovalBoard = ({ currentUser }) => {
   const [notes, setNotes] = useState('');
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [offerOpen, setOfferOpen] = useState(false);
+  const [offerReason, setOfferReason] = useState('');
   // Super admins supervise the network and are served aggregate figures only -
   // the case list carries named patients and clinical detail they have no
   // purpose for. The API enforces this; the UI just avoids asking.
@@ -89,6 +138,9 @@ const ApprovalBoard = ({ currentUser }) => {
   const role = currentUser?.role;
   const isDoctor = role === 'doctor';
   const isAdminSide = role === 'hospital' || role === 'admin';
+  // Role-level capability. Per-CASE authority also depends on which side of the
+  // offer this hospital is on, which only the server can say - so each case
+  // carries can_act / can_answer_offer and the UI defers to those.
   const readOnly = board.read_only || (!isDoctor && !isAdminSide);
 
   const load = useCallback(async () => {
@@ -196,7 +248,11 @@ const ApprovalBoard = ({ currentUser }) => {
   const { page, setPage, totalPages, total, pageSize, slice } = usePagination(board.data || [], 12);
 
   const counts = board.counts || {};
-  const openCount = (counts.checklist || 0) + (counts.doctor || 0) + (counts.admin || 0);
+  const openCount = (counts.checklist || 0) + (counts.offer || 0) + (counts.doctor || 0) + (counts.admin || 0);
+  // Supplied by the API: offers waiting on us as the receiving centre, plus our
+  // own donor-side work. Not derivable from the stage counts alone, because an
+  // 'offer' case is actionable for one side and merely pending for the other.
+  const awaitingUs = board.awaiting_us || 0;
 
   return (
     <div>
@@ -268,7 +324,9 @@ const ApprovalBoard = ({ currentUser }) => {
         <>
           <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
             {FILTERS.map(f => {
-              const n = f.id === 'open' ? openCount : (counts[f.id] || 0);
+              const n = f.id === 'awaiting_us' ? awaitingUs
+                      : f.id === 'open' ? openCount
+                      : (counts[f.id] || 0);
               const active = filter === f.id;
               return (
                 <button
@@ -297,6 +355,8 @@ const ApprovalBoard = ({ currentUser }) => {
                     <th>Organ</th>
                     <th>Recipient</th>
                     <th>Donor</th>
+                    <th>Counterparty</th>
+                    <th>Your Side</th>
                     {board.read_only && <th>Hospital</th>}
                     <th>Checklist</th>
                     <th>Stage</th>
@@ -306,7 +366,7 @@ const ApprovalBoard = ({ currentUser }) => {
                 <tbody>
                   {slice.length === 0 && (
                     <tr>
-                      <td colSpan={board.read_only ? 8 : 7} style={{ textAlign: 'center', padding: '28px', color: 'var(--text3)', fontSize: '13px' }}>
+                      <td colSpan={board.read_only ? 10 : 9} style={{ textAlign: 'center', padding: '28px', color: 'var(--text3)', fontSize: '13px' }}>
                         {loading ? 'Loading…' : 'No cases in this view.'}
                       </td>
                     </tr>
@@ -322,8 +382,14 @@ const ApprovalBoard = ({ currentUser }) => {
                       >
                         <td style={{ fontWeight: '600' }}>#{c.id}</td>
                         <td style={{ textTransform: 'capitalize' }}>{c.organ || '—'}</td>
-                        <td>{c.recipient?.name || '—'}</td>
-                        <td>{c.donor?.name || '—'}</td>
+                        <td><Party p={c.recipient} /></td>
+                        <td><Party p={c.donor} /></td>
+                        <td style={{ fontSize: '11.5px', color: 'var(--text2)' }}>
+                          {c.is_cross_hospital
+                            ? (c.side === 'recipient' ? c.hospital_name : c.recipient_hospital_name) || '—'
+                            : '—'}
+                        </td>
+                        <td><SideChip c={c} /></td>
                         {board.read_only && <td>{c.hospital_name || '—'}</td>}
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -360,6 +426,10 @@ const ApprovalBoard = ({ currentUser }) => {
               setRejectOpen={setRejectOpen}
               rejectReason={rejectReason}
               setRejectReason={setRejectReason}
+              offerOpen={offerOpen}
+              setOfferOpen={setOfferOpen}
+              offerReason={offerReason}
+              setOfferReason={setOfferReason}
               onClose={() => setSelected(null)}
               onToggleItem={toggleChecklistItem}
               onSetMode={(v) => act(() => setApprovalModeViaAPI(selected.id, v), v ? 'Dual sign-off required' : 'Switched to single sign-off')}
@@ -368,6 +438,26 @@ const ApprovalBoard = ({ currentUser }) => {
               onReject={async () => {
                 const ok = await act(() => rejectCaseViaAPI(selected.id, rejectReason), 'Case rejected — donor and recipient notified');
                 if (ok) { setRejectOpen(false); setRejectReason(''); }
+              }}
+              onRespondOffer={async (accept) => {
+                // The API's own message is used verbatim on success: only the
+                // server knows whether a decline found a next candidate, and
+                // guessing here would risk telling the user the organ was passed
+                // on when it was not.
+                let apiMessage = null;
+                const ok = await act(async () => {
+                  const r = await respondToOfferViaAPI(
+                    selected.id, accept,
+                    accept ? { notes } : { reason: offerReason },
+                  );
+                  apiMessage = r?.message || null;
+                  return r;
+                }, accept ? 'Offer accepted' : 'Offer declined');
+                if (ok) {
+                  if (apiMessage) toast.success(apiMessage);
+                  setOfferOpen(false);
+                  setOfferReason('');
+                }
               }}
             />
           )}
@@ -383,11 +473,20 @@ const ApprovalBoard = ({ currentUser }) => {
 const CaseDetail = ({
   c, busy, readOnly, isDoctor, isAdminSide, notes, setNotes,
   rejectOpen, setRejectOpen, rejectReason, setRejectReason,
-  onClose, onToggleItem, onSetMode, onDoctorApprove, onAdminConfirm, onReject,
+  offerOpen, setOfferOpen, offerReason, setOfferReason,
+  onClose, onToggleItem, onSetMode, onDoctorApprove, onAdminConfirm, onReject, onRespondOffer,
 }) => {
   const outstanding = (c.checklist || []).filter(i => i.required && !i.checked).length;
   const gateOpen = c.checklist_complete;
-  const terminal = c.stage === 'approved' || c.stage === 'rejected';
+  const terminal = ['approved', 'rejected', 'declined'].includes(c.stage);
+
+  // Which side of the offer we are. The server decides; these mirror its answer
+  // so no button is shown that the API would refuse.
+  const receiving = c.side === 'recipient';
+  const canAnswerOffer = c.can_answer_offer && (isAdminSide || isDoctor);
+  // The donor side owns the checklist and the sign-offs; the receiving side owns
+  // only the offer answer.
+  const donorSideLocked = readOnly || terminal || receiving;
 
   // Which button, if any, this user could press right now — and if not, why not.
   const doctorTurn = c.requires_multi_user && c.stage === 'doctor';
@@ -395,7 +494,15 @@ const CaseDetail = ({
 
   const blockedReason = () => {
     if (terminal) return null;
+    if (receiving) {
+      return canAnswerOffer
+        ? null
+        : 'The procuring hospital is still completing its verification checklist. You will be asked to accept or decline once it is done.';
+    }
     if (!gateOpen) return `${outstanding} required checklist item${outstanding === 1 ? '' : 's'} still outstanding.`;
+    if (c.stage === 'offer') {
+      return `Offered to ${c.recipient_hospital_name || 'the receiving hospital'}, which holds the recipient's record. Sign-off cannot proceed until they accept.`;
+    }
     if (isDoctor && !doctorTurn) return 'This case is waiting on the hospital admin, not clinical review.';
     if (isAdminSide && !adminTurn) return 'This case is waiting on clinical sign-off from a doctor.';
     if (!isDoctor && !isAdminSide) return 'Your role can view this case but not act on it.';
@@ -450,15 +557,15 @@ const CaseDetail = ({
                 style={{
                   display: 'flex', alignItems: 'flex-start', gap: '9px', padding: '7px 10px',
                   border: '1px solid var(--border)', borderRadius: '6px', fontSize: '12.5px',
-                  cursor: readOnly || terminal ? 'default' : 'pointer',
+                  cursor: donorSideLocked ? 'default' : 'pointer',
                   background: item.checked ? '#f2fbf7' : 'transparent',
-                  opacity: readOnly || terminal ? 0.85 : 1,
+                  opacity: donorSideLocked ? 0.85 : 1,
                 }}
               >
                 <input
                   type="checkbox"
                   checked={!!item.checked}
-                  disabled={readOnly || terminal}
+                  disabled={donorSideLocked}
                   onChange={e => onToggleItem(item.key, e.target.checked)}
                   style={{ marginTop: '2px' }}
                 />
@@ -509,8 +616,8 @@ const CaseDetail = ({
               : <>Open for <strong style={{ color: 'var(--text1)' }}>{humanDuration(c.elapsed_seconds)}</strong></>}
           </div>
 
-          {/* Approval mode */}
-          {!terminal && !readOnly && (isAdminSide) && (
+          {/* Approval mode — the procuring hospital's own workflow choice */}
+          {!terminal && !readOnly && isAdminSide && !receiving && (
             <div style={{
               padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '6px',
               marginBottom: '12px', fontSize: '12px',
@@ -533,18 +640,115 @@ const CaseDetail = ({
           {terminal ? (
             <div style={{
               padding: '10px 12px', borderRadius: '6px', fontSize: '12.5px',
-              background: c.stage === 'approved' ? '#f2fbf7' : '#fdf3f1',
-              border: `1px solid ${c.stage === 'approved' ? '#b8e6d2' : '#f0c4bb'}`,
-              color: c.stage === 'approved' ? '#0a6e4d' : '#8f2716',
+              background: c.stage === 'approved' ? '#f2fbf7' : c.stage === 'declined' ? '#fdf9f0' : '#fdf3f1',
+              border: `1px solid ${c.stage === 'approved' ? '#b8e6d2' : c.stage === 'declined' ? '#ead9b6' : '#f0c4bb'}`,
+              color: c.stage === 'approved' ? '#0a6e4d' : c.stage === 'declined' ? '#7a5610' : '#8f2716',
             }}>
-              {c.stage === 'approved'
-                ? <>✓ Approved. Donor and recipient have been notified.</>
-                : <>✕ Rejected by {c.rejected_by || '—'}.<div style={{ marginTop: '4px' }}><strong>Reason:</strong> {c.rejection_reason}</div></>}
+              {c.stage === 'approved' && <>✓ Approved. Donor and recipient have been notified.</>}
+              {c.stage === 'rejected' && (
+                <>✕ Rejected by {c.rejected_by || '—'}.<div style={{ marginTop: '4px' }}><strong>Reason:</strong> {c.rejection_reason}</div></>
+              )}
+              {c.stage === 'declined' && (
+                <>
+                  ↪ Offer declined by the receiving hospital.
+                  <div style={{ marginTop: '4px' }}><strong>Reason:</strong> {c.offer_notes || '—'}</div>
+                  <div style={{ marginTop: '4px', fontSize: '11.5px' }}>
+                    The recipient stays on the waiting list. Where another suitable candidate
+                    existed, the organ was offered on automatically.
+                  </div>
+                </>
+              )}
             </div>
           ) : readOnly ? (
             <div style={{ fontSize: '12px', color: 'var(--text3)', fontStyle: 'italic' }}>
               👁 Oversight view — approval actions are disabled for your role.
             </div>
+          ) : receiving ? (
+            /* The receiving hospital's only action: answer the offer. It owns the
+               patient's consent and fitness, not the procuring hospital's paperwork. */
+            <>
+              <div style={{
+                padding: '10px 12px', borderRadius: '6px', fontSize: '12.5px', marginBottom: '10px',
+                background: '#e9f6f8', border: '1px solid #bfe0e5', color: '#0b5d68',
+              }}>
+                <strong>Organ offered to your hospital.</strong>
+                <div style={{ marginTop: '4px' }}>
+                  {c.hospital_name || 'Another centre'} has matched a {c.organ || 'organ'} to your
+                  patient {c.recipient?.label || ''}. Your hospital decides whether to accept it —
+                  they cannot proceed without your answer.
+                </div>
+                <div style={{ marginTop: '5px', fontSize: '11.5px' }}>
+                  Donor identity is not disclosed. Use the verification checklist for the
+                  clinical facts you need.
+                </div>
+              </div>
+
+              {blocked && (
+                <div style={{
+                  fontSize: '11.5px', color: '#8a6100', background: '#fff8ec',
+                  border: '1px solid #f0d9a8', borderRadius: '5px', padding: '7px 9px', marginBottom: '8px',
+                }}>
+                  ⚠ {blocked}
+                </div>
+              )}
+
+              {canAnswerOffer && (
+                <>
+                  <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => onRespondOffer(true)}
+                      style={{ fontSize: '12.5px' }}
+                    >
+                      {busy ? '…' : '✓ Accept offer'}
+                    </button>
+                    <button
+                      className="btn btn-outline"
+                      disabled={busy}
+                      onClick={() => setOfferOpen(o => !o)}
+                      style={{ fontSize: '12.5px', color: '#8a6d3b', borderColor: '#ead9b6' }}
+                    >
+                      ↪ Decline offer
+                    </button>
+                  </div>
+
+                  {offerOpen && (
+                    <div style={{ marginTop: '10px', padding: '10px', border: '1px solid #ead9b6', borderRadius: '6px', background: '#fdf9f0' }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', marginBottom: '6px', color: '#7a5610' }}>
+                        Why are you declining? (minimum {minReason} characters)
+                      </div>
+                      <textarea
+                        className="form-input"
+                        value={offerReason}
+                        onChange={e => setOfferReason(e.target.value)}
+                        rows={3}
+                        placeholder="e.g. patient currently unfit for surgery, or has an active infection. Recorded permanently and sent to the procuring hospital."
+                        style={{ width: '100%', fontSize: '12px', resize: 'vertical' }}
+                        disabled={busy}
+                      />
+                      <div style={{ fontSize: '11px', color: 'var(--text3)', margin: '6px 0' }}>
+                        Declining does not remove your patient from the waiting list. The organ
+                        will be offered to the next-ranked candidate automatically.
+                      </div>
+                      <div style={{ display: 'flex', gap: '7px', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-primary"
+                          disabled={busy || offerReason.trim().length < minReason}
+                          onClick={() => onRespondOffer(false)}
+                          style={{ fontSize: '12.5px', background: '#8a6d3b', borderColor: '#8a6d3b' }}
+                        >
+                          {busy ? '…' : 'Confirm decline'}
+                        </button>
+                        <span style={{ fontSize: '11px', color: offerReason.trim().length < minReason ? '#c5371f' : 'var(--text3)' }}>
+                          {offerReason.trim().length}/{minReason}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </>
           ) : (
             <>
               <textarea
@@ -656,8 +860,12 @@ const TrailStep = ({ n, title, done, detail }) => (
 const PerformanceTab = ({ metrics, loading }) => {
   const bars = useMemo(() => {
     if (!metrics?.hospitals?.length) return [];
-    const max = Math.max(...metrics.hospitals.map(h => h.avg_seconds), 1);
-    return metrics.hospitals.map(h => ({ ...h, pct: Math.round((h.avg_seconds / max) * 100) }));
+    // Bars measure the hospital's OWN time, matching how the API ranks them.
+    // Charting wall-clock while ranking on own time would put the bars in a
+    // different order from the numbers beside them.
+    const own = (h) => h.own_avg_seconds ?? h.avg_seconds;
+    const max = Math.max(...metrics.hospitals.map(own), 1);
+    return metrics.hospitals.map(h => ({ ...h, pct: Math.round((own(h) / max) * 100) }));
   }, [metrics]);
 
   if (loading) return <div className="card" style={{ padding: '28px', textAlign: 'center', color: 'var(--text3)' }}>Loading…</div>;
@@ -679,25 +887,31 @@ const PerformanceTab = ({ metrics, loading }) => {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '14px' }}>
         <SummaryCard label="Cases Approved" value={n.approved} sub={`across ${n.hospitals} hospital${n.hospitals === 1 ? '' : 's'}`} />
         <SummaryCard label="Network Median" value={humanDuration(n.median_seconds)} sub="allocation → approval" />
-        <SummaryCard label="Network Average" value={humanDuration(n.avg_seconds)} sub="allocation → approval" />
+        <SummaryCard
+          label="Cross-Hospital"
+          value={n.total_cases ? `${Math.round((n.cross_hospital / n.total_cases) * 100)}%` : '—'}
+          sub={`${n.cross_hospital ?? 0} of ${n.total_cases ?? 0} cases`}
+        />
         {mine
           ? <SummaryCard
               label="Your Average"
-              value={humanDuration(mine.avg_seconds)}
-              sub={`rank ${mine.rank} of ${n.hospitals} · ${mine.approved} approved`}
-              accent={mine.avg_seconds <= n.avg_seconds ? '#0eb07a' : '#e8900a'}
+              value={humanDuration(mine.own_avg_seconds ?? mine.avg_seconds)}
+              sub={mine.offer_wait_avg
+                ? `rank ${mine.rank} of ${n.hospitals} · excl. ${humanDuration(mine.offer_wait_avg)} offer wait`
+                : `rank ${mine.rank} of ${n.hospitals} · ${mine.approved} approved`}
+              accent={(mine.own_avg_seconds ?? mine.avg_seconds) <= n.avg_seconds ? '#0eb07a' : '#e8900a'}
             />
           : <SummaryCard label="Scope" value="All hospitals" sub="oversight view" />}
       </div>
 
       <HelpPanel title="Reading these numbers">
-        <p><strong>What is measured:</strong> wall-clock time from the moment the allocation decision was recorded to the moment the case received its final confirmation. It is a measure of how fast a hospital's governance process moves, not of clinical quality.</p>
+        <p><strong>What is measured:</strong> time from the moment the allocation decision was recorded to the moment the case received its final confirmation, <strong>minus</strong> any time spent waiting for another hospital to answer an organ offer. Allocation is cross-hospital, so wall-clock time would rank a hospital on how fast its partners reply rather than on its own process. The offer wait is shown separately where there was one.</p>
         <p style={{ marginTop: '8px' }}><strong>Median vs. average:</strong> the median is the more honest headline — one case left open over a weekend drags the average badly, while the median tells you what a typical case looks like. Compare your median against the network median first.</p>
         <p style={{ marginTop: '8px' }}><strong>Faster is not automatically better.</strong> A very low average alongside a high rejection rate can mean cases are being waved through. Read this next to the pipeline breakdown below.</p>
       </HelpPanel>
 
       <div className="card" style={{ marginBottom: '14px' }}>
-        <div style={{ fontSize: '13px', fontWeight: '700', marginBottom: '10px' }}>Hospital comparison — average time to approval</div>
+        <div style={{ fontSize: '13px', fontWeight: '700', marginBottom: '10px' }}>Hospital comparison — own processing time</div>
         {bars.map(h => (
           <div key={h.hospital_id} style={{ marginBottom: '9px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px' }}>
@@ -705,7 +919,9 @@ const PerformanceTab = ({ metrics, loading }) => {
                 #{h.rank} {h.hospital_name}{h.is_you && <span style={{ color: 'var(--accent)' }}> (you)</span>}
               </span>
               <span style={{ color: 'var(--text3)' }}>
-                avg {humanDuration(h.avg_seconds)} · median {humanDuration(h.median_seconds)} · {h.approved} case{h.approved === 1 ? '' : 's'}
+                own {humanDuration(h.own_avg_seconds ?? h.avg_seconds)}
+                {h.offer_wait_avg != null && <> · offer wait {humanDuration(h.offer_wait_avg)}</>}
+                {' · '}median {humanDuration(h.median_seconds)} · {h.approved} case{h.approved === 1 ? '' : 's'}
               </span>
             </div>
             <div style={{ height: '7px', background: 'var(--border)', borderRadius: '4px', overflow: 'hidden' }}>

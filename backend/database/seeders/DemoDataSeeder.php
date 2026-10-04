@@ -470,17 +470,40 @@ class DemoDataSeeder extends Seeder
         return [$donorPayload, $payloads, $organ];
     }
 
-    /** Push the seeded approval cases across the whole Module 7 pipeline. */
+    /**
+     * Push the seeded approval cases across the whole Module 7 pipeline.
+     *
+     * Most seeded cases are cross-hospital, because the allocation engine matches
+     * network-wide. Those must travel through the offer stage rather than jumping
+     * from checklist to doctor: a cross-hospital case sitting at 'doctor' with no
+     * offer on record is exactly the state the two-sided board was built to make
+     * impossible, and seeding it would quietly reintroduce the defect in every
+     * fresh demo.
+     *
+     * The spread is chosen so the board demonstrates all seven stages, including
+     * one offer still awaiting an answer and one that was declined.
+     */
     private function advanceApprovals(): void
     {
         $cases = CaseApproval::where('stage', 'checklist')->get();
         if ($cases->isEmpty()) return;
 
-        $advanced = ['checklist' => 0, 'doctor' => 0, 'admin' => 0, 'approved' => 0, 'rejected' => 0];
+        $advanced = [
+            'checklist' => 0, 'offer' => 0, 'doctor' => 0, 'admin' => 0,
+            'approved' => 0, 'rejected' => 0, 'declined' => 0,
+        ];
+
+        $targets = ['checklist', 'offer', 'doctor', 'admin', 'approved', 'rejected', 'declined'];
 
         foreach ($cases as $i => $case) {
             $doctor = User::where('role', 'doctor')->where('linked_hospital_id', $case->hospital_id)->first();
-            $target = ['checklist', 'doctor', 'admin', 'approved', 'rejected'][$i % 5];
+            $target = $targets[$i % count($targets)];
+
+            // A same-hospital case has no counterparty, so it can never sit at the
+            // offer stage or be declined. Send those down the internal path.
+            if (!$case->isCrossHospital() && in_array($target, ['offer', 'declined'], true)) {
+                $target = 'approved';
+            }
 
             if ($target === 'checklist') { $advanced['checklist']++; continue; }
 
@@ -491,6 +514,47 @@ class DemoDataSeeder extends Seeder
                 'checked_at' => now()->subHours(rand(2, 60))->toIso8601String(),
             ])->all();
             $case->checklist = $checklist;
+
+            // Cross-hospital cases are offered as soon as the checklist clears.
+            if ($case->isCrossHospital()) {
+                $case->offer_sent_at = now()->subHours(rand(3, 40));
+            }
+
+            // Waiting on the receiving centre - the actionable queue on their side.
+            if ($target === 'offer') {
+                $case->stage = 'offer';
+                $case->save();
+                $advanced['offer']++;
+                continue;
+            }
+
+            // The receiving centre said no. Left as a terminal record; the demo's
+            // re-offer chain is exercised live from the UI rather than pre-baked,
+            // so the organ is not silently double-allocated here.
+            if ($target === 'declined') {
+                $respondedAt = $case->offer_sent_at->copy()->addHours(rand(1, 6));
+                $case->fill([
+                    'stage'              => 'declined',
+                    'offer_responded_at' => $respondedAt,
+                    'offer_response_by'  => $case->recipient_hospital_id,
+                    'offer_notes'        => 'Recipient is currently unfit for surgery following a chest infection; declining this offer and remaining on the list.',
+                    'offer_seconds'      => max(60, $case->offer_sent_at->diffInSeconds($respondedAt)),
+                ]);
+                $case->save();
+                $advanced['declined']++;
+                continue;
+            }
+
+            // Everything beyond this point needs the offer accepted first.
+            if ($case->isCrossHospital()) {
+                $respondedAt = $case->offer_sent_at->copy()->addMinutes(rand(25, 300));
+                $case->fill([
+                    'offer_responded_at' => $respondedAt,
+                    'offer_response_by'  => $case->recipient_hospital_id,
+                    'offer_notes'        => 'Patient fit, consented and admitted. Accepting the offer.',
+                    'offer_seconds'      => max(60, $case->offer_sent_at->diffInSeconds($respondedAt)),
+                ]);
+            }
 
             if ($target === 'rejected') {
                 $case->fill([

@@ -33,3 +33,12 @@ Schedule::command('organs:check-cold-chain')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// An offer nobody answers is the failure mode the two-sided approval board
+// introduced: before it existed a hospital could complete an approval alone, so
+// nothing could block indefinitely. Same cadence and the same idempotency
+// approach as the cold-chain sweep, because it is the same clock at stake.
+Schedule::command('offers:check-stalled')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

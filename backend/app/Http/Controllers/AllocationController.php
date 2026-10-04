@@ -224,8 +224,8 @@ class AllocationController extends Controller
 
         return response()->json([
             'simulation_run_id' => $simRun->id,
-            'original'          => $originalResults,
-            'simulated'         => $rerank,
+            'original'          => $this->scrubResults($originalResults, $hospitalId),
+            'simulated'         => $this->scrubResults($rerank, $hospitalId),
             'comparison'        => $comparison,
         ]);
     }
@@ -259,7 +259,10 @@ class AllocationController extends Controller
             ->exists();
         if (!$donorBelongs) abort(403, 'Run not visible to your hospital.');
 
-        return response()->json(['data' => $run]);
+        $payload = $run->toArray();
+        $payload['results'] = $this->scrubResults($run->results, $hospitalId);
+
+        return response()->json(['data' => $payload]);
     }
 
     /** GET /api/allocation/eligible-donors — list donors for the dropdown (hospital-scoped) */
@@ -542,9 +545,55 @@ class AllocationController extends Controller
     }
 
     /**
+     * Strip cross-hospital identity out of a stored ranking before it is served.
+     *
+     * loadRecipientPayloads() no longer puts these fields in new runs, but runs
+     * recorded before that change still hold the name, email and diagnosis of every
+     * candidate in the network, and `results` is served whole by showRun() and
+     * simulate(). Minimising on the read path as well means a historical row cannot
+     * leak through an endpoint even if the scrub command has not been run - and it
+     * keeps the guarantee true for any future code path that reaches for `results`.
+     *
+     * `is_cross_hospital` is recomputed from hospital_id rather than trusted from
+     * the snapshot, so a row written before that flag existed is still handled.
+     */
+    private function scrubResults(?array $results, int $donorHospitalId): array
+    {
+        return array_map(function ($r) use ($donorHospitalId) {
+            $same = isset($r['hospital_id']) && (int) $r['hospital_id'] === $donorHospitalId;
+            if ($same) return $r;
+
+            $r['name']              = null;
+            $r['email']             = null;
+            $r['diagnosis']         = null;
+            $r['match_code']        = $r['match_code'] ?? ('REC-' . ($r['user_id'] ?? '?'));
+            $r['identity_withheld'] = true;
+
+            return $r;
+        }, $results ?? []);
+    }
+
+    /**
      * Load ALL approved recipients across the network (cross-hospital pool).
      * Each payload includes the recipient's hospital info + distance from the donor's hospital.
      * `$donorHospitalId` is the donor's hospital — used to compute distance and flag cross-hospital matches.
+     *
+     * MINIMISED ACROSS THE TENANT BOUNDARY. This previously returned name, email
+     * and diagnosis for every approved recipient in the country to any
+     * hospital-linked admin who ran an allocation — a cross-tenant disclosure of
+     * identified clinical data, and a wider one than the super-admin case that was
+     * already closed on data-minimisation grounds, because there are many hospitals
+     * and one supervisor.
+     *
+     * The scoring fields stay: AllocationService::rank() reads blood type, organ,
+     * urgency, waitlist days, survival estimate and age, and none of them identifies
+     * a person on its own. Name, email and diagnosis are display-only — verified
+     * against the service, which never reads them — so withholding them changes no
+     * ranking. `user_id` stays because the caller needs it to action the match; it
+     * is a surrogate key, not personal data.
+     *
+     * Candidates at the donor's OWN hospital keep full detail: that hospital
+     * already holds their record.
      */
     private function loadRecipientPayloads(int $donorHospitalId): array
     {
@@ -577,8 +626,13 @@ class AllocationController extends Controller
 
             return [
                 'user_id'             => $u->id,
-                'name'                => $u->name,
-                'email'               => $u->email,
+                // Identity only within the donor's own hospital; a stable
+                // pseudonym otherwise, so two centres can still discuss the same
+                // candidate without either naming them.
+                'name'                => $sameHospital ? $u->name : null,
+                'email'               => $sameHospital ? $u->email : null,
+                'match_code'          => $u->unique_id ?: "REC-{$u->id}",
+                'identity_withheld'   => !$sameHospital,
                 'blood_type'          => $rp?->blood_type,
                 'organ_needed'        => $rp?->organ_needed,
                 'urgency_score'       => $rp?->urgency_score ?? 5.0,
@@ -586,7 +640,7 @@ class AllocationController extends Controller
                 'survival_estimate'   => $rp?->survival_estimate,
                 'age'                 => $age,
                 'gender'              => $cp?->gender,
-                'diagnosis'           => $rp?->diagnosis,
+                'diagnosis'           => $sameHospital ? $rp?->diagnosis : null,
                 'hospital_id'         => $u->preferred_hospital_id,
                 'hospital_name'       => $recHospital?->hospital_name ?? '—',
                 'hospital_city'       => $recHospital?->city ?? '—',

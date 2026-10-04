@@ -166,6 +166,7 @@ Route::middleware(['auth:sanctum', 'verified.email', 'not.banned', 'audit'])->gr
     Route::get('/approvals/{id}',                [CaseApprovalController::class, 'show'])->whereNumber('id')->name('approvals.show');
     Route::post('/approvals/{id}/checklist',     [CaseApprovalController::class, 'updateChecklist'])->whereNumber('id')->name('approvals.checklist');
     Route::patch('/approvals/{id}/mode',         [CaseApprovalController::class, 'setMode'])->whereNumber('id')->name('approvals.mode');
+    Route::post('/approvals/{id}/offer-respond', [CaseApprovalController::class, 'respondToOffer'])->whereNumber('id')->name('approvals.offer-respond');
     Route::post('/approvals/{id}/doctor-approve',[CaseApprovalController::class, 'doctorApprove'])->whereNumber('id')->name('approvals.doctor-approve');
     Route::post('/approvals/{id}/admin-confirm', [CaseApprovalController::class, 'adminConfirm'])->whereNumber('id')->name('approvals.admin-confirm');
     Route::post('/approvals/{id}/reject',        [CaseApprovalController::class, 'reject'])->whereNumber('id')->name('approvals.reject');
