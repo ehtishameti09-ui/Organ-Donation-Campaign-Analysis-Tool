@@ -111,6 +111,23 @@ class GoogleAuthController extends Controller
      */
     public function callback(Request $request)
     {
+        // The user dismissed Google's consent screen (clicked Cancel) or Google
+        // returned an error. Either way there is NO authorization `code` to
+        // exchange. Calling Socialite anyway makes it POST an empty code to
+        // Google, which replies "400 Bad Request: Missing required parameter:
+        // code" — and that raw message used to surface to the user. Handle it
+        // here instead, before any token exchange is attempted.
+        if ($request->filled('error') || !$request->filled('code')) {
+            // `access_denied` is a deliberate cancel, not a failure — send the
+            // user quietly back to login with no alarming error toast. Any other
+            // error (or a bare missing code) gets a single friendly message.
+            if ($request->get('error') === 'access_denied' || !$request->filled('error')) {
+                return redirect(config('services.frontend_url').'/');
+            }
+            $err = urlencode('Google sign-in was cancelled or could not be completed. Please try again.');
+            return redirect(config('services.frontend_url').'/?error='.$err);
+        }
+
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Throwable $e) {
@@ -120,7 +137,9 @@ class GoogleAuthController extends Controller
                 'message' => $e->getMessage(),
                 'exception' => get_class($e),
             ]);
-            $err = urlencode($e->getMessage());
+            // Never leak Google's raw HTTP error to the user — the real cause is
+            // in the log above. Show a single, friendly, actionable message.
+            $err = urlencode('Google sign-in could not be completed. Please try again, or sign in with your email and password.');
             return redirect(config('services.frontend_url').'/?error='.$err);
         }
 
