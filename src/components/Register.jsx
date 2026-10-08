@@ -3,6 +3,7 @@ import { registerUser, registerBasicAccount, addActivity, validateEmail, validat
 import VerifiedCredentialsStep from './VerifiedCredentialsStep';
 import GoogleAuthButton from './GoogleAuthButton';
 import { toast } from '../utils/toast';
+import { API_BASE } from '../config';
 
 // ============================================================
 // HOSPITAL DOCUMENT CONFIG (only used for hospital flow now)
@@ -178,7 +179,7 @@ const Register = ({ onRegistrationSuccess, onBackToLogin }) => {
   const [publicStats, setPublicStats] = useState({ transplants: null, activeDonors: null, hospitals: null });
   useEffect(() => {
     const fetchStats = () =>
-      fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
+      fetch(`${API_BASE}/stats/public`, { headers: { 'Accept': 'application/json' } })
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setPublicStats(d); })
         .catch(() => {});

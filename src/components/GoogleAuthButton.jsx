@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getGoogleOAuthStatus } from '../utils/api';
 import { toast } from '../utils/toast';
-
-const API_ORIGIN = 'http://localhost:8000';
+import { API_ORIGIN } from '../config';
 
 const GoogleMark = () => (
   <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">

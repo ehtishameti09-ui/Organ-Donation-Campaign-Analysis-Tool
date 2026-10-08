@@ -4,6 +4,7 @@ import { useEmailField, EmailFieldError } from './EmailField';
 import { sendPasswordResetLinkViaAPI, verifyResetCodeViaAPI, resetPasswordViaAPI, resendTwoFactorLoginCode } from '../utils/api';
 import { toast } from '../utils/toast';
 import GoogleAuthButton from './GoogleAuthButton';
+import { API_BASE } from '../config';
 
 const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [email, setEmail] = useState('');
@@ -23,7 +24,7 @@ const Login = ({ onLoginSuccess, onCreateAccount }) => {
   const [publicStats, setPublicStats] = useState({ transplants: null, activeDonors: null, hospitals: null });
   useEffect(() => {
     const fetchStats = () =>
-      fetch('http://localhost:8000/api/stats/public', { headers: { 'Accept': 'application/json' } })
+      fetch(`${API_BASE}/stats/public`, { headers: { 'Accept': 'application/json' } })
         .then(r => r.ok ? r.json() : null)
         .then(d => { if (d) setPublicStats(d); })
         .catch(() => {});

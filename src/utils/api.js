@@ -1,5 +1,6 @@
-// API Service - Communicates with Laravel backend at localhost:8000
-const API_BASE = 'http://localhost:8000/api';
+// API Service - Communicates with the Laravel backend.
+// The URL comes from VITE_API_BASE at build time; see src/config.js.
+import { API_BASE } from '../config';
 
 // Helper to add auth token to requests
 const getHeaders = (includeAuth = true) => {

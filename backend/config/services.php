@@ -38,7 +38,10 @@ return [
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
-        'redirect' => env('GOOGLE_REDIRECT_URI', 'http://localhost:8000/api/auth/google/callback'),
+        // Default matches the registered route name: routes/api.php declares
+        // /api/oauth/google/callback, not /api/auth/... . The old default here sent
+        // anyone who relied on it into a redirect_uri_mismatch from Google.
+        'redirect' => env('GOOGLE_REDIRECT_URI', 'http://localhost:8000/api/oauth/google/callback'),
     ],
 
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),

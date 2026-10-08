@@ -197,6 +197,7 @@ export const capitalizeName = (value) => {
 // Returns { ok: bool, error?: string, e164?: string, national?: string, country?: string }
 // `e164` is the canonical form ("+923001234567") suitable for storage.
 import { parsePhoneNumberFromString, isValidPhoneNumber } from 'libphonenumber-js/min';
+import { API_BASE } from '../config';
 export const validatePhone = (phone, defaultCountry = 'PK') => {
   if (!phone || typeof phone !== 'string') return { ok: false, error: 'Phone number is required.' };
   const raw = phone.trim();
@@ -334,7 +335,7 @@ export const logout = async () => {
 
   // 3. Tell the server to revoke the token in the background — fire-and-forget, explicit token
   if (token) {
-    fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost:8000/api'}/logout`, {
+    fetch(`${API_BASE}/logout`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

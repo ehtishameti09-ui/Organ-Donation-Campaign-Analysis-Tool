@@ -1,0 +1,31 @@
+# Line endings.
+#
+# This repo is developed on Windows with core.autocrlf=true, which rewrites files
+# to CRLF on checkout. For most files that is harmless. For a few it is fatal:
+#
+#   - A shell script with CRLF endings has "\r" attached to its shebang, so Linux
+#     tries to run the interpreter "/usr/bin/env bash\r", which does not exist.
+#     Docker reports this as "no such file or directory" while pointing at a file
+#     that is plainly there - one of the more confusing build failures going.
+#   - Dockerfiles and YAML are read by Linux tooling that does not expect CR.
+#
+# Forcing LF on these makes a local Docker build on Windows behave the same as the
+# host's build from GitHub.
+
+* text=auto
+
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+.env.example text eol=lf
+
+# Binary - never touch.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.woff binary
+*.woff2 binary

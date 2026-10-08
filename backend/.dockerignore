@@ -1,0 +1,41 @@
+# Keep secrets and local state out of the image.
+#
+# .env is the important one. Laravel reads it in preference to real environment
+# variables, so a copy baked into the image would silently override everything the
+# host injects - pointing the deployed app at localhost MySQL - as well as shipping
+# the app key, mail password and Google client secret inside a distributable image.
+.env
+.env.*
+!.env.example
+
+# Resolved in the builder stage and copied across; never from the local machine,
+# where it may contain dev-only packages and platform-specific binaries.
+vendor/
+
+# Local caches that would mask the host's configuration.
+bootstrap/cache/*.php
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/logs/*
+
+# Uploaded documents and database dumps. Demo files locally, but uploads belong on
+# a persistent volume or in object storage rather than inside an image that gets
+# pushed to a registry - and baking them in would make every deploy reset them to
+# whatever was on the build machine.
+storage/app/public/*
+storage/app/private/*
+*.sql
+*.sql.gz
+
+# Dev tooling with no role at runtime.
+tests/
+phpunit.xml
+.phpunit.result.cache
+.git/
+.gitignore
+.idea/
+.vscode/
+node_modules/
+scripts/
+README.md

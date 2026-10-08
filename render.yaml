@@ -1,0 +1,112 @@
+# Render blueprint for the ODCAT backend.
+#
+# Render reads this when you create a Blueprint from the repository, so the
+# service is defined here rather than clicked together in the dashboard - which
+# means it is reviewable, and recreating the service after a mistake is one click
+# instead of twenty form fields.
+#
+# The React frontend is NOT here. It goes on Vercel, which serves static assets
+# from a CDN for free and never sleeps. See DEPLOYMENT.md.
+#
+# Render's free plan has no managed MySQL (only Postgres), so the database comes
+# from a separate free MySQL provider - Aiven and Clever Cloud both offer one.
+# Its credentials go in as environment variables below.
+
+services:
+  - type: web
+    name: odcat-api
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # Apache binds to $PORT, which Render injects; see docker/entrypoint.sh.
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: APP_NAME
+        value: ODCAT
+      - key: APP_ENV
+        value: production
+
+      # Never true on a public instance: Laravel's debug page prints the stack
+      # trace, loaded config and environment variables of any request that
+      # throws - including database credentials.
+      - key: APP_DEBUG
+        value: "false"
+
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: warning
+
+      # sync=false means "ask me in the dashboard". These must not be committed.
+      # Generate the key with:  php artisan key:generate --show
+      - key: APP_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+
+      # Used to build the CORS allow-list (config/cors.php) and the links in
+      # outbound email. Set it to the Vercel URL.
+      - key: FRONTEND_URL
+        sync: false
+
+      - key: DB_CONNECTION
+        value: mysql
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_DATABASE
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+
+      # Free MySQL providers generally require TLS and reject plaintext.
+      - key: MYSQL_ATTR_SSL_CA
+        value: /etc/ssl/certs/ca-certificates.crt
+
+      # The container filesystem is wiped on deploy, so file-backed sessions and
+      # cache would not survive one. The database survives; use it.
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+
+      # Registration emails a verification link, so without working SMTP nobody
+      # can finish signing up. Gmail needs an App Password, not the account one.
+      - key: MAIL_MAILER
+        value: smtp
+      - key: MAIL_HOST
+        sync: false
+      - key: MAIL_PORT
+        sync: false
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: MAIL_FROM_ADDRESS
+        sync: false
+
+      # Optional. Leave unset and the "Continue with Google" button hides itself.
+      # If you do set it, add the deployed callback URL in the Google Cloud
+      # console or Google returns redirect_uri_mismatch.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+
+      # Runs the cold-chain and stalled-offer sweeps inside the web container.
+      # Only fires while the instance is awake - a free instance sleeps after
+      # ~15 minutes idle. Set to "false" if you drive them by external cron.
+      - key: RUN_SCHEDULER
+        value: "true"
